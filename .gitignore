@@ -29,3 +29,13 @@ package-lock.json
 # Build files
 dist/
 build/
+
+# BNA Plugin Logs
+logs/*.log
+logs/*.old
+
+
+# BNA Plugin Logs
+logs/*.log
+logs/*.old
+

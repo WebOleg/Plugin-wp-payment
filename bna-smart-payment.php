@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BNA Smart Payment Gateway
  * Plugin URI: https://bnasmartpayment.com
- * Description: WooCommerce payment gateway integration for BNA Smart Payment system with iframe support and webhooks.
+ * Description: WooCommerce payment gateway integration for BNA Smart Payment system with iframe support.
  * Version: 1.0.0
  * Author: BNA Smart Payment
  * Author URI: https://bnasmartpayment.com
@@ -34,16 +34,8 @@ define('BNA_SMART_PAYMENT_PLUGIN_BASENAME', plugin_basename(__FILE__));
  */
 class BNA_Smart_Payment {
 
-    /**
-     * Plugin instance
-     * @var BNA_Smart_Payment
-     */
     private static $instance = null;
 
-    /**
-     * Get plugin instance
-     * @return BNA_Smart_Payment
-     */
     public static function get_instance() {
         if (null === self::$instance) {
             self::$instance = new self();
@@ -51,78 +43,66 @@ class BNA_Smart_Payment {
         return self::$instance;
     }
 
-    /**
-     * Constructor
-     */
     private function __construct() {
         $this->init_hooks();
         $this->load_dependencies();
     }
 
-    /**
-     * Initialize WordPress hooks
-     */
     private function init_hooks() {
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
-
         add_action('plugins_loaded', array($this, 'init'));
         add_action('init', array($this, 'load_textdomain'));
     }
 
-    /**
-     * Load required files
-     */
     private function load_dependencies() {
+        // Load logger first
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/helpers/class-bna-logger.php';
+        BNA_Logger::init();
+        
+        // Core classes
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-activator.php';
-        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-api.php';
+        
+        // Helpers
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/helpers/class-bna-woocommerce-helper.php';
+        
+        // Services
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/services/class-bna-api-service.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/services/class-bna-iframe-service.php';
+        
+        // Controllers
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/controllers/class-bna-payment-controller.php';
     }
 
-    /**
-     * Initialize the plugin after all plugins are loaded
-     */
     public function init() {
-        // Check if WooCommerce is active
+        BNA_Logger::info('BNA Plugin initializing');
+
         if (!$this->is_woocommerce_active()) {
+            BNA_Logger::error('WooCommerce not active');
             add_action('admin_notices', array($this, 'woocommerce_missing_notice'));
             return;
         }
 
-        // Load gateway class
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-gateway.php';
-
-        // Register payment gateway
         add_filter('woocommerce_payment_gateways', array($this, 'add_gateway_class'));
+        
+        new BNA_Payment_Controller();
+        BNA_Logger::info('BNA Plugin initialized successfully');
     }
 
-    /**
-     * Check if WooCommerce is active
-     * @return bool
-     */
     private function is_woocommerce_active() {
         return class_exists('WooCommerce');
     }
 
-    /**
-     * Display notice if WooCommerce is not active
-     */
     public function woocommerce_missing_notice() {
-        echo '<div class="error"><p><strong>BNA Smart Payment Gateway requires active WooCommerce plugin to work.</strong></p></div>';
+        echo '<div class="error"><p><strong>BNA Smart Payment Gateway requires WooCommerce to be installed and active.</strong></p></div>';
     }
 
-    /**
-     * Add gateway to WooCommerce
-     * @param array $gateways
-     * @return array
-     */
     public function add_gateway_class($gateways) {
         $gateways[] = 'BNA_Gateway';
         return $gateways;
     }
 
-    /**
-     * Load text domain for translations
-     */
     public function load_textdomain() {
         load_plugin_textdomain(
             'bna-smart-payment', 
@@ -131,20 +111,16 @@ class BNA_Smart_Payment {
         );
     }
 
-    /**
-     * Plugin activation
-     */
     public function activate() {
+        BNA_Logger::info('BNA Plugin activated');
         BNA_Activator::activate();
     }
 
-    /**
-     * Plugin deactivation
-     */
     public function deactivate() {
+        BNA_Logger::info('BNA Plugin deactivated');
         BNA_Activator::deactivate();
     }
 }
 
-// Initialize the plugin
+// Initialize plugin
 BNA_Smart_Payment::get_instance();

@@ -1,6 +1,8 @@
 <?php
 /**
  * BNA Smart Payment Gateway class
+ * 
+ * Simplified gateway focused only on WooCommerce integration
  *
  * @package BnaSmartPayment
  */
@@ -80,11 +82,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'default'     => 'Secure online payments via BNA Smart Payment',
                 'desc_tip'    => true,
             ),
-            'api_settings' => array(
-                'title'       => 'API Settings',
-                'type'        => 'title',
-                'description' => 'Configure your BNA Smart Payment API connection settings.',
-            ),
             'environment' => array(
                 'title'       => 'Environment',
                 'type'        => 'select',
@@ -114,7 +111,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'iframe_id' => array(
                 'title'       => 'iFrame ID',
                 'type'        => 'text',
-                'description' => 'Your iFrame ID from BNA Merchant Portal for payment iframe integration.',
+                'description' => 'Your iFrame ID from BNA Merchant Portal.',
                 'default'     => '',
                 'desc_tip'    => true,
             ),
@@ -122,12 +119,11 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     /**
-     * Process admin options and save API credentials globally
+     * Process admin options and save globally
      */
     public function process_admin_options() {
         $saved = parent::process_admin_options();
 
-        // Save API credentials as global options for API class to use
         if ($saved) {
             update_option('bna_smart_payment_environment', $this->get_option('environment'));
             update_option('bna_smart_payment_access_key', $this->get_option('access_key'));
@@ -140,20 +136,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
     /**
      * Check if gateway is available
-     * @return bool True if gateway is available, false otherwise
      */
     public function is_available() {
         if ($this->enabled !== 'yes') {
             return false;
         }
 
-        // Check if API credentials are set
-        if (empty($this->access_key) || empty($this->secret_key)) {
-            return false;
-        }
-
-        // Check if iframe ID is set
-        if (empty($this->iframe_id)) {
+        if (empty($this->access_key) || empty($this->secret_key) || empty($this->iframe_id)) {
             return false;
         }
 
@@ -162,8 +151,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
     /**
      * Process payment
-     * @param int $order_id WooCommerce order ID
-     * @return array Payment result array
      */
     public function process_payment($order_id) {
         $order = wc_get_order($order_id);
@@ -174,35 +161,29 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
 
         // Mark order as pending payment
-        $order->update_status('pending', 'Awaiting BNA Smart Payment.');
+        BNA_WooCommerce_Helper::update_order_status($order, 'pending', 'Awaiting BNA Smart Payment.');
 
-        // Store order data for later use
+        // Store payment method info
         $order->add_meta_data('_bna_payment_method', 'iframe');
-        $order->add_meta_data('_bna_iframe_id', $this->iframe_id);
         $order->save();
 
-        // Return success and redirect to payment page
+        // Redirect to payment page
         return array(
             'result'   => 'success',
-            'redirect' => $this->get_return_url($order)
+            'redirect' => BNA_WooCommerce_Helper::get_payment_url($order)
         );
     }
 
     /**
-     * Display payment fields on checkout page
+     * Payment fields on checkout page
      */
     public function payment_fields() {
-        // Display description if set
         if ($this->description) {
             echo '<p>' . wp_kses_post($this->description) . '</p>';
         }
 
-        // Note: iframe implementation will be added in next phase
-        echo '<div id="bna-payment-iframe-container">';
-        echo '<p><em>Payment iframe will be displayed here during checkout.</em></p>';
-        if (!empty($this->iframe_id)) {
-            echo '<p><small>iFrame ID: ' . esc_html($this->iframe_id) . '</small></p>';
-        }
+        echo '<div class="bna-payment-info">';
+        echo '<p><small>' . __('You will be redirected to a secure payment form.', 'bna-smart-payment') . '</small></p>';
         echo '</div>';
     }
 
@@ -211,18 +192,18 @@ class BNA_Gateway extends WC_Payment_Gateway {
      */
     public function admin_options() {
         echo '<h3>BNA Smart Payment</h3>';
-        echo '<p>Accept payments through BNA Smart Payment gateway.</p>';
+        echo '<p>Accept payments through BNA Smart Payment gateway with iframe integration.</p>';
         
-        // Show status message
-        if (!empty($this->access_key) && !empty($this->secret_key) && !empty($this->iframe_id)) {
-            echo '<div class="notice notice-success"><p><strong>Status:</strong> All API credentials and iFrame ID are configured</p></div>';
+        // Status check
+        $missing = array();
+        if (empty($this->access_key)) $missing[] = 'Access Key';
+        if (empty($this->secret_key)) $missing[] = 'Secret Key';
+        if (empty($this->iframe_id)) $missing[] = 'iFrame ID';
+        
+        if (empty($missing)) {
+            echo '<div class="notice notice-success"><p><strong>Status:</strong> Gateway configured and ready</p></div>';
         } else {
-            $missing = array();
-            if (empty($this->access_key)) $missing[] = 'Access Key';
-            if (empty($this->secret_key)) $missing[] = 'Secret Key';
-            if (empty($this->iframe_id)) $missing[] = 'iFrame ID';
-            
-            echo '<div class="notice notice-warning"><p><strong>Missing configuration:</strong> ' . implode(', ', $missing) . '</p></div>';
+            echo '<div class="notice notice-warning"><p><strong>Missing:</strong> ' . implode(', ', $missing) . '</p></div>';
         }
 
         echo '<table class="form-table">';
