@@ -17,6 +17,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+*.sublime-*
 
 # Composer
 vendor/
@@ -25,17 +26,42 @@ composer.lock
 # Node modules (if used)
 node_modules/
 package-lock.json
+yarn.lock
 
 # Build files
 dist/
 build/
+*.min.js
+*.min.css
 
 # BNA Plugin Logs
 logs/*.log
 logs/*.old
+logs/debug-*.log
 
+# Temporary files
+*.tmp
+*.bak
+*.cache
+*~
 
-# BNA Plugin Logs
-logs/*.log
-logs/*.old
+# OS generated files
+.DS_Store?
+ehthumbs.db
+Icon?
 
+# Testing
+phpunit.xml
+.phpunit.result.cache
+tests/_output/*
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Backup files
+*.sql
+*.backup
+<< 'EOF'
+"

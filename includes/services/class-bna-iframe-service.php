@@ -15,6 +15,12 @@ class BNA_iFrame_Service {
         $this->api_service = new BNA_API_Service();
     }
 
+    /**
+     * Generate checkout token for order
+     *
+     * @param WC_Order $order
+     * @return array|WP_Error
+     */
     public function generate_checkout_token($order) {
         BNA_Logger::info('Generating checkout token for order: ' . $order->get_id());
 
@@ -29,7 +35,7 @@ class BNA_iFrame_Service {
             return new WP_Error('missing_iframe_id', 'iFrame ID not configured');
         }
 
-        // Prepare checkout payload - removed currency and metadata per API validation
+        // Prepare checkout payload according to API requirements
         $checkout_data = array(
             'iframeId' => $iframe_id,
             'customerInfo' => $this->prepare_customer_data($order),
@@ -58,6 +64,12 @@ class BNA_iFrame_Service {
         return $response;
     }
 
+    /**
+     * Get iframe URL with token
+     *
+     * @param string $token
+     * @return string
+     */
     public function get_iframe_url($token) {
         if (empty($token)) {
             return '';
@@ -67,12 +79,19 @@ class BNA_iFrame_Service {
         return $base_url . '/v1/checkout/' . $token;
     }
 
+    /**
+     * Prepare customer data for API
+     *
+     * @param WC_Order $order
+     * @return array
+     */
     private function prepare_customer_data($order) {
         $customer_info = array(
             'type' => 'Personal',
             'email' => $order->get_billing_email(),
-            'firstName' => $order->get_billing_first_name(),
-            'lastName' => $order->get_billing_last_name(),
+            'firstName' => $order->get_billing_first_name() ?: 'Customer',
+            'lastName' => $order->get_billing_last_name() ?: 'Customer',
+            'birthDate' => $this->get_customer_birth_date($order), // Required field
         );
 
         // Add phone if available
@@ -81,19 +100,16 @@ class BNA_iFrame_Service {
             $customer_info['phoneCode'] = '+1';
         }
 
-        // Add address - streetNumber CANNOT be empty per API validation
+        // Add address if available
         if ($order->get_billing_address_1()) {
-            $street_address = $order->get_billing_address_1();
-            $street_number = $this->extract_street_number($street_address);
-            
             $customer_info['address'] = array(
-                'streetName' => $street_address,
-                'streetNumber' => $street_number, // Must not be empty
+                'streetName' => $order->get_billing_address_1(),
+                'streetNumber' => $this->extract_street_number($order->get_billing_address_1()),
                 'apartment' => $order->get_billing_address_2() ?: '',
-                'city' => $order->get_billing_city(),
-                'province' => $order->get_billing_state(),
-                'country' => $order->get_billing_country(),
-                'postalCode' => $order->get_billing_postcode()
+                'city' => $order->get_billing_city() ?: 'Unknown',
+                'province' => $order->get_billing_state() ?: 'Unknown',
+                'country' => $order->get_billing_country() ?: 'US',
+                'postalCode' => $order->get_billing_postcode() ?: '00000'
             );
         }
 
@@ -101,34 +117,68 @@ class BNA_iFrame_Service {
     }
 
     /**
+     * Get customer birth date or default
+     *
+     * @param WC_Order $order
+     * @return string
+     */
+    private function get_customer_birth_date($order) {
+        // Try to get from order meta
+        $birth_date = $order->get_meta('_billing_birth_date');
+
+        if (!empty($birth_date)) {
+            return date('Y-m-d', strtotime($birth_date));
+        }
+
+        // Try to get from user meta
+        $user_id = $order->get_user_id();
+        if ($user_id) {
+            $birth_date = get_user_meta($user_id, 'billing_birth_date', true);
+            if (!empty($birth_date)) {
+                return date('Y-m-d', strtotime($birth_date));
+            }
+        }
+
+        // Default birth date (25 years ago, format: YYYY-MM-DD)
+        return date('Y-m-d', strtotime('-25 years'));
+    }
+
+    /**
      * Extract street number from address or return default
+     *
+     * @param string $address
+     * @return string
      */
     private function extract_street_number($address) {
         // Try to extract number from beginning of address
         if (preg_match('/^(\d+)/', $address, $matches)) {
             return $matches[1];
         }
-        
-        // If no number found, use default - cannot be empty
+
+        // If no number found, use default (cannot be empty)
         return '1';
     }
 
+    /**
+     * Prepare order items for API
+     *
+     * @param WC_Order $order
+     * @return array
+     */
     private function prepare_order_items($order) {
         $items = array();
-        
+
         foreach ($order->get_items() as $item_id => $item) {
             $product = $item->get_product();
-            
-            // SKU cannot be empty per API validation
-            $sku = '';
+
+            // Generate SKU if missing (required field)
+            $sku = 'ITEM-' . $item_id;
             if ($product && $product->get_sku()) {
                 $sku = $product->get_sku();
-            } else {
-                $sku = 'ITEM-' . $item_id; // Generate SKU if missing
             }
-            
+
             $items[] = array(
-                'sku' => $sku, // Must not be empty
+                'sku' => $sku, // Cannot be empty
                 'description' => $item->get_name(),
                 'quantity' => (int) $item->get_quantity(),
                 'price' => (float) $order->get_item_total($item),
