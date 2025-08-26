@@ -22,16 +22,12 @@ class BNA_iFrame_Service {
      * @return array|WP_Error
      */
     public function generate_checkout_token($order) {
-        BNA_Logger::info('Generating checkout token for order: ' . $order->get_id());
-
         if (!$order || !$order instanceof WC_Order) {
-            BNA_Logger::error('Invalid order provided');
             return new WP_Error('invalid_order', 'Invalid order provided');
         }
 
         $iframe_id = get_option('bna_smart_payment_iframe_id');
         if (empty($iframe_id)) {
-            BNA_Logger::error('iFrame ID not configured');
             return new WP_Error('missing_iframe_id', 'iFrame ID not configured');
         }
 
@@ -43,12 +39,9 @@ class BNA_iFrame_Service {
             'subtotal' => (float) $order->get_total()
         );
 
-        BNA_Logger::debug('Checkout data: ' . wp_json_encode($checkout_data));
-
         $response = $this->api_service->make_request('v1/checkout', 'POST', $checkout_data);
 
         if (is_wp_error($response)) {
-            BNA_Logger::error('Token generation failed: ' . $response->get_error_message());
             return $response;
         }
 
@@ -56,9 +49,6 @@ class BNA_iFrame_Service {
             $order->add_meta_data('_bna_checkout_token', $response['token']);
             $order->add_meta_data('_bna_checkout_generated_at', current_time('timestamp'));
             $order->save();
-            BNA_Logger::info('Token generated successfully: ' . substr($response['token'], 0, 10) . '...');
-        } else {
-            BNA_Logger::error('No token in API response');
         }
 
         return $response;
@@ -91,7 +81,7 @@ class BNA_iFrame_Service {
             'email' => $order->get_billing_email(),
             'firstName' => $order->get_billing_first_name() ?: 'Customer',
             'lastName' => $order->get_billing_last_name() ?: 'Customer',
-            'birthDate' => $this->get_customer_birth_date($order), // Required field
+            'birthDate' => $this->get_customer_birth_date($order),
         );
 
         // Add phone if available
@@ -139,7 +129,7 @@ class BNA_iFrame_Service {
             }
         }
 
-        // Default birth date (25 years ago, format: YYYY-MM-DD)
+        // Default birth date (25 years ago)
         return date('Y-m-d', strtotime('-25 years'));
     }
 
@@ -155,7 +145,7 @@ class BNA_iFrame_Service {
             return $matches[1];
         }
 
-        // If no number found, use default (cannot be empty)
+        // If no number found, use default
         return '1';
     }
 
@@ -171,14 +161,14 @@ class BNA_iFrame_Service {
         foreach ($order->get_items() as $item_id => $item) {
             $product = $item->get_product();
 
-            // Generate SKU if missing (required field)
+            // Generate SKU if missing
             $sku = 'ITEM-' . $item_id;
             if ($product && $product->get_sku()) {
                 $sku = $product->get_sku();
             }
 
             $items[] = array(
-                'sku' => $sku, // Cannot be empty
+                'sku' => $sku,
                 'description' => $item->get_name(),
                 'quantity' => (int) $item->get_quantity(),
                 'price' => (float) $order->get_item_total($item),
