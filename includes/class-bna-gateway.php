@@ -1,8 +1,4 @@
 <?php
-/**
- * BNA Smart Payment Gateway
- */
-
 if (!defined('ABSPATH')) {
     exit;
 }
@@ -181,20 +177,32 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'customer_email' => $order->get_billing_email()
         ]);
 
-        // Prepare order for BNA processing
-        $this->prepare_order($order);
+        try {
+            // Prepare order for BNA processing
+            $this->prepare_order($order);
 
-        $redirect_url = BNA_URL_Handler::get_payment_url($order);
+            $redirect_url = BNA_URL_Handler::get_payment_url($order);
 
-        BNA_Logger::info('Payment process completed, redirecting to payment page', [
-            'order_id' => $order->get_id(),
-            'redirect_url' => $redirect_url
-        ]);
+            BNA_Logger::info('Payment process completed, redirecting to payment page', [
+                'order_id' => $order->get_id(),
+                'redirect_url' => $redirect_url
+            ]);
 
-        return array(
-            'result' => 'success',
-            'redirect' => $redirect_url
-        );
+            return array(
+                'result' => 'success',
+                'redirect' => $redirect_url
+            );
+
+        } catch (Exception $e) {
+            BNA_Logger::error('Payment processing error', [
+                'order_id' => $order->get_id(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            wc_add_notice('Payment processing error. Please try again.', 'error');
+            return array('result' => 'fail');
+        }
     }
 
     private function prepare_order($order) {
@@ -266,45 +274,5 @@ class BNA_Gateway extends WC_Payment_Gateway {
         if (empty($this->secret_key)) $missing[] = 'Secret Key';
         if (empty($this->iframe_id)) $missing[] = 'iFrame ID';
         return $missing;
-    }
-
-    /**
-     * Handle successful payment (for webhooks later)
-     */
-    public function handle_payment_success($order, $transaction_data) {
-        BNA_Logger::info('Handling payment success', [
-            'order_id' => $order->get_id(),
-            'transaction_id' => $transaction_data['id'] ?? 'not_provided'
-        ]);
-
-        $order->payment_complete($transaction_data['id'] ?? '');
-        $order->add_order_note(sprintf(
-            'BNA Payment completed successfully. Transaction ID: %s',
-            $transaction_data['id'] ?? 'N/A'
-        ));
-
-        BNA_Logger::info('Payment success handled', [
-            'order_id' => $order->get_id(),
-            'final_status' => $order->get_status()
-        ]);
-    }
-
-    /**
-     * Handle failed payment (for webhooks later)
-     */
-    public function handle_payment_failure($order, $error_data) {
-        BNA_Logger::error('Handling payment failure', [
-            'order_id' => $order->get_id(),
-            'error_code' => $error_data['code'] ?? 'unknown',
-            'error_message' => $error_data['message'] ?? 'No message'
-        ]);
-
-        $error_message = $error_data['message'] ?? 'Payment failed';
-        $order->update_status('failed', 'BNA Payment failed: ' . $error_message);
-
-        BNA_Logger::info('Payment failure handled', [
-            'order_id' => $order->get_id(),
-            'final_status' => $order->get_status()
-        ]);
     }
 }
