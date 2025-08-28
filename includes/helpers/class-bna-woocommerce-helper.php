@@ -1,32 +1,18 @@
 <?php
 /**
- * BNA Smart Payment WooCommerce Helper
- * 
- * Helper functions for WooCommerce integration with logging
- *
- * @package BnaSmartPayment
+ * BNA WooCommerce Helper V2
+ * Enhanced with new logging system
  */
 
-// Prevent direct access
-if (!defined('ABSPATH')) {
-    exit;
-}
+if (!defined('ABSPATH')) exit;
 
-/**
- * Class BNA_WooCommerce_Helper
- * Helper functions for WooCommerce operations
- */
 class BNA_WooCommerce_Helper {
 
     /**
      * Validate order and order key
-     * 
-     * @param int $order_id
-     * @param string $order_key
-     * @return WC_Order|false
      */
     public static function validate_order($order_id, $order_key) {
-        BNA_Logger::debug('Validating order', [
+        bna_wc_debug('Validating order', [
             'order_id' => $order_id,
             'order_key_length' => strlen($order_key)
         ]);
@@ -34,14 +20,14 @@ class BNA_WooCommerce_Helper {
         $order = wc_get_order($order_id);
         
         if (!$order) {
-            BNA_Logger::error('Order not found during validation', [
+            bna_wc_error('Order not found during validation', [
                 'order_id' => $order_id
             ]);
             return false;
         }
 
         if ($order->get_order_key() !== $order_key) {
-            BNA_Logger::error('Order key validation failed', [
+            bna_wc_error('Order key validation failed', [
                 'order_id' => $order_id,
                 'provided_key_length' => strlen($order_key),
                 'expected_key_length' => strlen($order->get_order_key())
@@ -49,10 +35,11 @@ class BNA_WooCommerce_Helper {
             return false;
         }
 
-        BNA_Logger::debug('Order validation successful', [
+        bna_wc_debug('Order validation successful', [
             'order_id' => $order->get_id(),
             'order_status' => $order->get_status(),
-            'order_total' => $order->get_total()
+            'order_total' => $order->get_total(),
+            'customer_email' => $order->get_billing_email()
         ]);
 
         return $order;
@@ -60,13 +47,9 @@ class BNA_WooCommerce_Helper {
 
     /**
      * Get order by meta value
-     * 
-     * @param string $meta_key
-     * @param string $meta_value
-     * @return WC_Order|false
      */
     public static function get_order_by_meta($meta_key, $meta_value) {
-        BNA_Logger::debug('Searching order by meta', [
+        bna_wc_debug('Searching order by meta', [
             'meta_key' => $meta_key,
             'meta_value_length' => strlen($meta_value)
         ]);
@@ -83,7 +66,7 @@ class BNA_WooCommerce_Helper {
         ));
 
         if (empty($orders)) {
-            BNA_Logger::debug('No order found with meta', [
+            bna_wc_debug('No order found with meta', [
                 'meta_key' => $meta_key,
                 'meta_value' => $meta_value
             ]);
@@ -91,9 +74,10 @@ class BNA_WooCommerce_Helper {
         }
 
         $order = $orders[0];
-        BNA_Logger::debug('Order found by meta', [
+        bna_wc_debug('Order found by meta', [
             'order_id' => $order->get_id(),
-            'meta_key' => $meta_key
+            'meta_key' => $meta_key,
+            'order_status' => $order->get_status()
         ]);
 
         return $order;
@@ -101,37 +85,34 @@ class BNA_WooCommerce_Helper {
 
     /**
      * Add order note with BNA prefix
-     * 
-     * @param WC_Order $order
-     * @param string $note
-     * @param bool $is_customer_note
      */
     public static function add_order_note($order, $note, $is_customer_note = false) {
         if (!$order) {
-            BNA_Logger::error('Cannot add order note - no order provided');
+            bna_wc_error('Cannot add order note - no order provided', [
+                'note_preview' => substr($note, 0, 50)
+            ]);
             return;
         }
 
         $formatted_note = '[BNA Smart Payment] ' . $note;
         $order->add_order_note($formatted_note, $is_customer_note);
 
-        BNA_Logger::debug('Order note added', [
+        bna_wc_debug('Order note added', [
             'order_id' => $order->get_id(),
             'note_length' => strlen($note),
-            'is_customer_note' => $is_customer_note
+            'is_customer_note' => $is_customer_note,
+            'note_preview' => substr($note, 0, 100)
         ]);
     }
 
     /**
      * Update order status with BNA note
-     * 
-     * @param WC_Order $order
-     * @param string $status
-     * @param string $note
      */
     public static function update_order_status($order, $status, $note = '') {
         if (!$order) {
-            BNA_Logger::error('Cannot update order status - no order provided');
+            bna_wc_error('Cannot update order status - no order provided', [
+                'target_status' => $status
+            ]);
             return;
         }
 
@@ -140,23 +121,21 @@ class BNA_WooCommerce_Helper {
         
         $order->update_status($status, $formatted_note);
 
-        BNA_Logger::info('Order status updated', [
+        bna_wc_log('Order status updated', [
             'order_id' => $order->get_id(),
             'old_status' => $old_status,
             'new_status' => $status,
-            'note' => $note
+            'note' => $note,
+            'update_successful' => $order->get_status() === $status
         ]);
     }
 
     /**
      * Get payment URL for order
-     * 
-     * @param WC_Order $order
-     * @return string
      */
     public static function get_payment_url($order) {
         if (!$order) {
-            BNA_Logger::error('Cannot generate payment URL - no order provided');
+            bna_wc_error('Cannot generate payment URL - no order provided');
             return wc_get_checkout_url();
         }
 
@@ -166,7 +145,7 @@ class BNA_WooCommerce_Helper {
             'order_key' => $order->get_order_key()
         ), wc_get_checkout_url());
 
-        BNA_Logger::debug('Payment URL generated', [
+        bna_wc_debug('Payment URL generated', [
             'order_id' => $order->get_id(),
             'url_length' => strlen($payment_url)
         ]);
@@ -176,9 +155,6 @@ class BNA_WooCommerce_Helper {
 
     /**
      * Check if order is paid via BNA
-     * 
-     * @param WC_Order $order
-     * @return bool
      */
     public static function is_bna_order($order) {
         if (!$order) {
@@ -187,7 +163,7 @@ class BNA_WooCommerce_Helper {
 
         $is_bna = $order->get_payment_method() === 'bna_smart_payment';
 
-        BNA_Logger::debug('BNA order check', [
+        bna_wc_debug('BNA order check', [
             'order_id' => $order->get_id(),
             'payment_method' => $order->get_payment_method(),
             'is_bna_order' => $is_bna
@@ -198,9 +174,6 @@ class BNA_WooCommerce_Helper {
 
     /**
      * Get order currency formatted for BNA API
-     * 
-     * @param WC_Order $order
-     * @return string
      */
     public static function get_order_currency($order) {
         $currency = get_woocommerce_currency(); // Default
@@ -212,9 +185,10 @@ class BNA_WooCommerce_Helper {
             }
         }
 
-        BNA_Logger::debug('Order currency retrieved', [
+        bna_wc_debug('Order currency retrieved', [
             'order_id' => $order ? $order->get_id() : 'no_order',
-            'currency' => $currency
+            'currency' => $currency,
+            'wc_default' => get_woocommerce_currency()
         ]);
 
         return $currency;
@@ -222,9 +196,6 @@ class BNA_WooCommerce_Helper {
 
     /**
      * Check if order has BNA payment token
-     * 
-     * @param WC_Order $order
-     * @return bool
      */
     public static function has_bna_token($order) {
         if (!$order) {
@@ -234,7 +205,7 @@ class BNA_WooCommerce_Helper {
         $token = $order->get_meta('_bna_checkout_token');
         $has_token = !empty($token);
 
-        BNA_Logger::debug('BNA token check', [
+        bna_wc_debug('BNA token check', [
             'order_id' => $order->get_id(),
             'has_token' => $has_token,
             'token_length' => $has_token ? strlen($token) : 0
@@ -245,43 +216,45 @@ class BNA_WooCommerce_Helper {
 
     /**
      * Clear BNA payment data from order
-     * 
-     * @param WC_Order $order
      */
     public static function clear_bna_payment_data($order) {
         if (!$order) {
-            BNA_Logger::error('Cannot clear BNA data - no order provided');
+            bna_wc_error('Cannot clear BNA data - no order provided');
             return;
         }
 
-        BNA_Logger::debug('Clearing BNA payment data', [
-            'order_id' => $order->get_id()
+        bna_wc_debug('Clearing BNA payment data', [
+            'order_id' => $order->get_id(),
+            'current_status' => $order->get_status()
         ]);
 
+        // Clear token data
         $order->delete_meta_data('_bna_checkout_token');
         $order->delete_meta_data('_bna_checkout_generated_at');
+        
+        // Clear other BNA data
         $order->delete_meta_data('_bna_payment_method');
         $order->delete_meta_data('_bna_payment_started_at');
+        $order->delete_meta_data('_bna_customer_id');
+        
         $order->save();
 
-        BNA_Logger::info('BNA payment data cleared', [
-            'order_id' => $order->get_id()
+        bna_wc_log('BNA payment data cleared', [
+            'order_id' => $order->get_id(),
+            'cleared_at' => current_time('c')
         ]);
     }
 
     /**
      * Get order items formatted for BNA API
-     * 
-     * @param WC_Order $order
-     * @return array
      */
     public static function get_formatted_order_items($order) {
         if (!$order) {
-            BNA_Logger::error('Cannot format order items - no order provided');
+            bna_wc_error('Cannot format order items - no order provided');
             return array();
         }
 
-        BNA_Logger::debug('Formatting order items for API', [
+        bna_wc_debug('Formatting order items for API', [
             'order_id' => $order->get_id(),
             'items_count' => count($order->get_items())
         ]);
@@ -295,15 +268,15 @@ class BNA_WooCommerce_Helper {
                 'id' => $item_id,
                 'name' => $item->get_name(),
                 'quantity' => $item->get_quantity(),
-                'price' => $order->get_item_total($item),
-                'total' => $order->get_line_total($item),
-                'sku' => $product ? $product->get_sku() : 'N/A'
+                'price' => (float) $order->get_item_total($item),
+                'total' => (float) $order->get_line_total($item),
+                'sku' => $product && $product->get_sku() ? $product->get_sku() : 'N/A'
             );
 
             $formatted_items[] = $formatted_item;
         }
 
-        BNA_Logger::debug('Order items formatted', [
+        bna_wc_debug('Order items formatted', [
             'order_id' => $order->get_id(),
             'formatted_items_count' => count($formatted_items),
             'total_amount' => array_sum(array_column($formatted_items, 'total'))
@@ -314,12 +287,9 @@ class BNA_WooCommerce_Helper {
 
     /**
      * Validate order for BNA payment processing
-     * 
-     * @param WC_Order $order
-     * @return array Array with 'valid' => bool, 'errors' => array
      */
     public static function validate_order_for_bna($order) {
-        BNA_Logger::debug('Validating order for BNA payment', [
+        bna_wc_debug('Validating order for BNA payment', [
             'order_id' => $order ? $order->get_id() : 'null'
         ]);
 
@@ -327,7 +297,7 @@ class BNA_WooCommerce_Helper {
 
         if (!$order) {
             $errors[] = 'Order not found';
-            BNA_Logger::error('Order validation failed - no order provided');
+            bna_wc_error('Order validation failed - no order provided');
             return array('valid' => false, 'errors' => $errors);
         }
 
@@ -352,13 +322,21 @@ class BNA_WooCommerce_Helper {
             $errors[] = 'Order status not valid for payment processing';
         }
 
+        // Check if already paid
+        if ($order->is_paid()) {
+            $errors[] = 'Order is already paid';
+        }
+
         $is_valid = empty($errors);
 
-        BNA_Logger::info('Order validation completed', [
+        bna_wc_log('Order validation completed', [
             'order_id' => $order->get_id(),
             'is_valid' => $is_valid,
             'errors_count' => count($errors),
-            'errors' => $errors
+            'errors' => $errors,
+            'order_total' => $order->get_total(),
+            'order_status' => $order->get_status(),
+            'is_paid' => $order->is_paid()
         ]);
 
         return array(
@@ -369,16 +347,13 @@ class BNA_WooCommerce_Helper {
 
     /**
      * Get BNA payment timeline for order
-     * 
-     * @param WC_Order $order
-     * @return array
      */
     public static function get_payment_timeline($order) {
         if (!$order) {
             return array();
         }
 
-        BNA_Logger::debug('Getting payment timeline', [
+        bna_wc_debug('Getting payment timeline', [
             'order_id' => $order->get_id()
         ]);
 
@@ -412,11 +387,28 @@ class BNA_WooCommerce_Helper {
         }
 
         // Payment completed
-        if ($order->is_paid()) {
+        $payment_completed = $order->get_meta('_bna_payment_completed_at');
+        if ($payment_completed) {
+            $timeline[] = array(
+                'event' => 'payment_completed',
+                'timestamp' => $payment_completed,
+                'description' => 'Payment completed'
+            );
+        } elseif ($order->is_paid()) {
             $timeline[] = array(
                 'event' => 'payment_completed',
                 'timestamp' => $order->get_date_paid() ? $order->get_date_paid()->getTimestamp() : time(),
                 'description' => 'Payment completed'
+            );
+        }
+
+        // Payment failed
+        $payment_failed = $order->get_meta('_bna_payment_failed_at');
+        if ($payment_failed) {
+            $timeline[] = array(
+                'event' => 'payment_failed',
+                'timestamp' => $payment_failed,
+                'description' => 'Payment failed: ' . ($order->get_meta('_bna_failure_reason') ?: 'Unknown reason')
             );
         }
 
@@ -425,11 +417,37 @@ class BNA_WooCommerce_Helper {
             return $a['timestamp'] - $b['timestamp'];
         });
 
-        BNA_Logger::debug('Payment timeline generated', [
+        bna_wc_debug('Payment timeline generated', [
             'order_id' => $order->get_id(),
             'timeline_events' => count($timeline)
         ]);
 
         return $timeline;
+    }
+
+    /**
+     * Get order payment method details
+     */
+    public static function get_payment_method_details($order) {
+        if (!$order) {
+            return null;
+        }
+
+        $details = [
+            'method' => $order->get_payment_method(),
+            'method_title' => $order->get_payment_method_title(),
+            'is_bna' => self::is_bna_order($order),
+            'has_token' => self::has_bna_token($order),
+            'transaction_id' => $order->get_transaction_id(),
+            'bna_customer_id' => $order->get_meta('_bna_customer_id'),
+            'bna_transaction_id' => $order->get_meta('_bna_transaction_id')
+        ];
+
+        bna_wc_debug('Payment method details retrieved', [
+            'order_id' => $order->get_id(),
+            'details' => $details
+        ]);
+
+        return $details;
     }
 }

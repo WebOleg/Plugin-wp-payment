@@ -1,6 +1,7 @@
 <?php
 /**
- * BNA Webhook Initialization
+ * BNA Webhook Initialization V2
+ * Updated to use new logging system
  */
 
 if (!defined('ABSPATH')) {
@@ -24,11 +25,10 @@ class BNA_Webhook_Init {
     }
 
     private function load_dependencies() {
-        // Load trait first
-        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/webhooks/traits/trait-bna-webhook-logger.php';
+        // Load new timing trait
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/logging/trait-bna-webhook-timing.php';
 
         // Load core classes
-        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/webhooks/class-bna-webhook-validator.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/webhooks/class-bna-webhook-router.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/webhooks/class-bna-webhook-handler.php';
 
@@ -37,12 +37,12 @@ class BNA_Webhook_Init {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/webhooks/handlers/class-bna-subscription-webhook.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/webhooks/handlers/class-bna-customer-webhook.php';
 
-        BNA_Logger::debug('Webhook dependencies loaded');
+        bna_webhook_debug('Webhook dependencies loaded');
     }
 
     private function init_hooks() {
         add_action('rest_api_init', [$this, 'register_rest_routes']);
-        BNA_Logger::debug('Webhook hooks initialized');
+        bna_webhook_debug('Webhook hooks initialized');
     }
 
     public function register_rest_routes() {
@@ -68,7 +68,7 @@ class BNA_Webhook_Init {
             'permission_callback' => '__return_true'
         ]);
 
-        BNA_Logger::debug('Webhook REST routes registered', [
+        bna_webhook_debug('Webhook REST routes registered', [
             'webhook_url' => home_url('/wp-json/bna/v1/webhook'),
             'test_url' => home_url('/wp-json/bna/v1/webhook/test'),
             'status_url' => home_url('/wp-json/bna/v1/webhook/status')
@@ -81,16 +81,23 @@ class BNA_Webhook_Init {
     }
 
     public function test_webhook_endpoint(WP_REST_Request $request) {
-        $debug_enabled = get_option('bna_debug_enabled', false);
+        $webhook_logger = BNA_Webhook_Logger::instance();
+        $debug_enabled = $webhook_logger->is_enabled();
         
         if (!$debug_enabled) {
             return [
                 'status' => 'info',
-                'message' => 'Debug mode is disabled. Enable it in BNA Debug settings.',
-                'debug_url' => admin_url('admin.php?page=bna-debug'),
+                'message' => 'Webhook logging is disabled. Enable it in BNA Debug settings.',
+                'debug_url' => admin_url('admin.php?page=bna-debug-v2&tab=webhooks'),
                 'webhook_url' => self::get_webhook_url()
             ];
         }
+
+        // Log test webhook
+        bna_webhook_log('Webhook test endpoint accessed', [
+            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
+        ]);
 
         return [
             'status' => 'success',
@@ -115,6 +122,7 @@ class BNA_Webhook_Init {
             'plugin_version' => BNA_SMART_PAYMENT_VERSION,
             'wordpress_version' => get_bloginfo('version'),
             'server_time' => current_time('c'),
+            'logging_enabled' => BNA_Webhook_Logger::instance()->is_enabled(),
             'supported_events' => self::get_webhook_config()['events']
         ];
     }
@@ -131,6 +139,7 @@ class BNA_Webhook_Init {
                 'transaction.declined', 
                 'transaction.canceled',
                 'subscription.created',
+                'subscription.processed',
                 'customer.created'
             ],
             'secret' => get_option('bna_smart_payment_webhook_secret', '')

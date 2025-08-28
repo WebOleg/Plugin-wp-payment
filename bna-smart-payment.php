@@ -3,7 +3,7 @@
  * Plugin Name: BNA Smart Payment Gateway
  * Plugin URI: https://bnasmartpayment.com
  * Description: WooCommerce payment gateway for BNA Smart Payment with iframe and webhooks.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: BNA Smart Payment
  * Text Domain: bna-smart-payment
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('BNA_SMART_PAYMENT_VERSION', '1.1.0');
+define('BNA_SMART_PAYMENT_VERSION', '1.2.0');
 define('BNA_SMART_PAYMENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -43,7 +43,10 @@ class BNA_Smart_Payment {
     }
 
     private function load_dependencies() {
-        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/system/class-bna-logger.php';
+        // Load new logging system
+        $this->load_logging_system();
+        
+        // Load core classes
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-activator.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/helpers/class-bna-woocommerce-helper.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/helpers/class-bna-url-handler.php';
@@ -53,12 +56,31 @@ class BNA_Smart_Payment {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/controllers/class-bna-payment-controller.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/webhooks/class-bna-webhook-init.php';
 
+        // Load admin interfaces
         if (is_admin()) {
-            require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/admin/class-bna-debug-admin.php';
-            BNA_Debug_Admin::init();
+            require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/admin/class-bna-debug-admin-v2.php';
+            BNA_Debug_Admin_V2::init();
         }
 
-        BNA_Logger::debug('All dependencies loaded', ['version' => BNA_SMART_PAYMENT_VERSION]);
+        bna_api_debug('All dependencies loaded', ['version' => BNA_SMART_PAYMENT_VERSION]);
+    }
+
+    /**
+     * Load new logging system
+     */
+    private function load_logging_system() {
+        // Core logging files
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/logging/interface-bna-logger.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/logging/abstract-bna-logger.php';
+        
+        // Specific loggers
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/logging/class-bna-woocommerce-logger.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/logging/class-bna-api-logger.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/logging/class-bna-webhook-logger.php';
+        
+        // Manager and traits
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/logging/class-bna-logger-manager.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/logging/trait-bna-webhook-timing.php';
     }
 
     public function add_query_vars($vars) {
@@ -74,7 +96,7 @@ class BNA_Smart_Payment {
             'index.php?bna_payment=process&order_id=$matches[1]&order_key=$matches[2]',
             'top'
         );
-        BNA_Logger::debug('URL rewrite rules initialized');
+        bna_api_debug('URL rewrite rules initialized');
     }
 
     public function init() {
@@ -83,16 +105,16 @@ class BNA_Smart_Payment {
             return;
         }
 
-        BNA_Logger::debug('WooCommerce found, loading gateway');
+        bna_wc_debug('WooCommerce found, loading gateway');
 
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-gateway.php';
         add_filter('woocommerce_payment_gateways', array($this, 'add_gateway_class'));
         add_action('wp_enqueue_scripts', array($this, 'load_frontend_assets'));
 
-        BNA_Logger::info('BNA Smart Payment plugin loaded', [
+        bna_wc_log('BNA Smart Payment plugin loaded', [
             'version' => BNA_SMART_PAYMENT_VERSION,
             'webhook_enabled' => true,
-            'debug_enabled' => get_option('bna_debug_enabled', false)
+            'loggers_enabled' => bna_logger()->is_any_enabled()
         ]);
     }
 
@@ -104,10 +126,15 @@ class BNA_Smart_Payment {
         $order = BNA_URL_Handler::get_order_from_request();
 
         if (!$order || !BNA_WooCommerce_Helper::is_bna_order($order)) {
+            bna_wc_error('Invalid payment request', [
+                'has_order' => !empty($order),
+                'is_bna_order' => $order ? BNA_WooCommerce_Helper::is_bna_order($order) : false
+            ]);
             BNA_URL_Handler::redirect_to_checkout();
             return;
         }
 
+        bna_wc_log('Processing payment request', ['order_id' => $order->get_id()]);
         $this->display_payment_page($order);
     }
 
@@ -117,17 +144,20 @@ class BNA_Smart_Payment {
             $payment_data = $payment_controller->get_payment_data($order);
 
             if (!$payment_data) {
+                bna_wc_error('Payment data generation failed', ['order_id' => $order->get_id()]);
                 wc_add_notice('Unable to process payment. Please try again.', 'error');
                 BNA_URL_Handler::redirect_to_checkout();
                 return;
             }
 
+            bna_wc_log('Payment page displayed', ['order_id' => $order->get_id()]);
             $this->load_payment_template($order, $payment_data);
 
         } catch (Exception $e) {
-            BNA_Logger::error('Payment page display error', [
+            bna_wc_error('Payment page display error', [
                 'order_id' => $order->get_id(),
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             
             wc_add_notice('Payment processing error. Please try again.', 'error');
@@ -151,6 +181,8 @@ class BNA_Smart_Payment {
         if (BNA_URL_Handler::is_payment_request() || is_checkout()) {
             wp_enqueue_style('bna-payment-css', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/payment.css', array(), BNA_SMART_PAYMENT_VERSION);
             wp_enqueue_script('bna-payment-js', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/js/payment.js', array('jquery'), BNA_SMART_PAYMENT_VERSION, true);
+            
+            bna_api_debug('Frontend assets loaded');
         }
     }
 
@@ -165,20 +197,28 @@ class BNA_Smart_Payment {
 
     public function activate() {
         BNA_Activator::activate();
-        BNA_Logger::enable();
+        
+        // Initialize logging system
+        $manager = BNA_Logger_Manager::instance();
+        $manager->enable_all(); // Enable all loggers on activation
         
         if (false === get_option('bna_smart_payment_webhook_secret')) {
             add_option('bna_smart_payment_webhook_secret', wp_generate_password(32, false));
         }
         
         flush_rewrite_rules();
-        BNA_Logger::info('BNA Smart Payment plugin activated', ['version' => BNA_SMART_PAYMENT_VERSION]);
+        
+        bna_wc_log('BNA Smart Payment plugin activated', [
+            'version' => BNA_SMART_PAYMENT_VERSION,
+            'loggers_enabled' => true
+        ]);
     }
 
     public function deactivate() {
         BNA_Activator::deactivate();
         flush_rewrite_rules();
-        BNA_Logger::info('BNA Smart Payment plugin deactivated');
+        
+        bna_wc_log('BNA Smart Payment plugin deactivated');
     }
 }
 

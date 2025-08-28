@@ -1,6 +1,6 @@
 <?php
 /**
- * BNA Webhook Router
+ * BNA Webhook Router V2
  * Routes webhook events to appropriate handlers
  */
 
@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
 
 class BNA_Webhook_Router {
 
-    use BNA_Webhook_Logger;
+    use BNA_Webhook_Timing;
 
     private $handlers = [];
 
@@ -28,7 +28,7 @@ class BNA_Webhook_Router {
             'customer' => new BNA_Customer_Webhook()
         ];
 
-        BNA_Logger::debug('Webhook handlers registered', [
+        bna_webhook_debug('Webhook handlers registered', [
             'handlers' => array_keys($this->handlers)
         ]);
     }
@@ -48,7 +48,7 @@ class BNA_Webhook_Router {
             return new WP_Error('no_handler', $error);
         }
 
-        BNA_Logger::debug('Routing webhook to handler', [
+        bna_webhook_debug('Routing webhook to handler', [
             'event_type' => $event_type,
             'handler_type' => $handler_type
         ]);
@@ -85,7 +85,7 @@ class BNA_Webhook_Router {
             return 'subscription';
         }
         
-        if (strpos($event_type, 'customer.') === 0) {
+        if (strpos($event_type, 'customer.') === 0 || strpos($event_type, 'payment_method.') === 0) {
             return 'customer';
         }
 

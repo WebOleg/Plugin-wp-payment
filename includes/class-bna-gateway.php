@@ -1,7 +1,10 @@
 <?php
-if (!defined('ABSPATH')) {
-    exit;
-}
+/**
+ * BNA Gateway V2
+ * Enhanced with new logging system
+ */
+
+if (!defined('ABSPATH')) exit;
 
 class BNA_Gateway extends WC_Payment_Gateway {
 
@@ -18,9 +21,10 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->load_settings();
         $this->init_hooks();
 
-        BNA_Logger::debug('BNA Gateway initialized', [
+        bna_wc_debug('BNA Gateway initialized', [
             'gateway_id' => $this->id,
-            'enabled' => $this->enabled
+            'enabled' => $this->enabled,
+            'has_credentials' => $this->has_required_settings()
         ]);
     }
 
@@ -33,18 +37,21 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->secret_key = $this->get_option('secret_key');
         $this->iframe_id = $this->get_option('iframe_id');
 
-        BNA_Logger::debug('Gateway settings loaded', [
+        bna_wc_debug('Gateway settings loaded', [
             'enabled' => $this->enabled,
             'environment' => $this->environment,
             'has_access_key' => !empty($this->access_key),
             'has_secret_key' => !empty($this->secret_key),
-            'has_iframe_id' => !empty($this->iframe_id)
+            'has_iframe_id' => !empty($this->iframe_id),
+            'title' => $this->title
         ]);
     }
 
     private function init_hooks() {
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
         add_action('wp_enqueue_scripts', array($this, 'checkout_scripts'));
+        
+        bna_wc_debug('Gateway hooks initialized');
     }
 
     public function init_form_fields() {
@@ -77,7 +84,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
                     'dev' => 'Development',
                     'staging' => 'Staging (Test)',
                     'production' => 'Production (Live)'
-                )
+                ),
+                'description' => 'Select the environment for API calls.'
             ),
             'access_key' => array(
                 'title' => 'Access Key',
@@ -101,18 +109,20 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     public function process_admin_options() {
-        BNA_Logger::info('Processing admin options update');
+        bna_wc_log('Processing gateway admin options update');
 
         $saved = parent::process_admin_options();
         
         if ($saved) {
             $this->save_global_options();
-            BNA_Logger::info('Admin options saved successfully', [
+            
+            bna_wc_log('Gateway admin options saved successfully', [
                 'environment' => $this->get_option('environment'),
-                'has_credentials' => !empty($this->get_option('access_key')) && !empty($this->get_option('secret_key'))
+                'has_credentials' => !empty($this->get_option('access_key')) && !empty($this->get_option('secret_key')),
+                'has_iframe_id' => !empty($this->get_option('iframe_id'))
             ]);
         } else {
-            BNA_Logger::error('Failed to save admin options');
+            bna_wc_error('Failed to save gateway admin options');
         }
 
         return $saved;
@@ -124,45 +134,54 @@ class BNA_Gateway extends WC_Payment_Gateway {
         update_option('bna_smart_payment_secret_key', $this->get_option('secret_key'));
         update_option('bna_smart_payment_iframe_id', $this->get_option('iframe_id'));
 
-        BNA_Logger::debug('Global options updated');
+        bna_wc_debug('Global gateway options updated');
     }
 
     public function is_available() {
-        $is_available = $this->enabled === 'yes' && $this->has_required_settings();
+        $has_wc = class_exists('WooCommerce');
+        $is_enabled = $this->enabled === 'yes';
+        $has_settings = $this->has_required_settings();
+        $is_available = $has_wc && $is_enabled && $has_settings;
         
-        BNA_Logger::debug('Gateway availability check', [
-            'enabled' => $this->enabled === 'yes',
-            'has_required_settings' => $this->has_required_settings(),
+        bna_wc_debug('Gateway availability check', [
+            'has_woocommerce' => $has_wc,
+            'is_enabled' => $is_enabled,
+            'has_required_settings' => $has_settings,
             'is_available' => $is_available
         ]);
+
+        if (!$is_available && $is_enabled) {
+            bna_wc_error('Gateway not available despite being enabled', [
+                'missing_settings' => $this->get_missing_settings()
+            ]);
+        }
 
         return $is_available;
     }
 
     private function has_required_settings() {
-        $has_settings = !empty($this->access_key) && !empty($this->secret_key) && !empty($this->iframe_id);
+        $required = [
+            'access_key' => !empty($this->access_key),
+            'secret_key' => !empty($this->secret_key),
+            'iframe_id' => !empty($this->iframe_id)
+        ];
         
-        if (!$has_settings) {
-            BNA_Logger::warning('Missing required gateway settings', [
-                'has_access_key' => !empty($this->access_key),
-                'has_secret_key' => !empty($this->secret_key),
-                'has_iframe_id' => !empty($this->iframe_id)
-            ]);
-        }
-
-        return $has_settings;
+        return array_reduce($required, function($carry, $item) {
+            return $carry && $item;
+        }, true);
     }
 
     public function process_payment($order_id) {
-        BNA_Logger::info('Processing payment started', [
+        bna_wc_log('Processing payment started', [
             'order_id' => $order_id,
-            'gateway_id' => $this->id
+            'gateway_id' => $this->id,
+            'method' => 'iframe'
         ]);
 
         $order = wc_get_order($order_id);
         
         if (!$order) {
-            BNA_Logger::error('Order not found for payment processing', [
+            bna_wc_error('Order not found for payment processing', [
                 'order_id' => $order_id
             ]);
             
@@ -170,22 +189,41 @@ class BNA_Gateway extends WC_Payment_Gateway {
             return array('result' => 'fail');
         }
 
-        BNA_Logger::debug('Order found for processing', [
+        // Log order details
+        bna_wc_debug('Order found for processing', [
             'order_id' => $order->get_id(),
             'order_total' => $order->get_total(),
             'order_status' => $order->get_status(),
-            'customer_email' => $order->get_billing_email()
+            'customer_email' => $order->get_billing_email(),
+            'customer_name' => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name()
         ]);
 
         try {
+            // Validate order first
+            $payment_controller = new BNA_Payment_Controller();
+            $validation = $payment_controller->validate_order_for_payment($order);
+            
+            if (!$validation['valid']) {
+                bna_wc_error('Order validation failed', [
+                    'order_id' => $order->get_id(),
+                    'errors' => $validation['errors']
+                ]);
+                
+                foreach ($validation['errors'] as $error) {
+                    wc_add_notice($error, 'error');
+                }
+                return array('result' => 'fail');
+            }
+
             // Prepare order for BNA processing
             $this->prepare_order($order);
 
             $redirect_url = BNA_URL_Handler::get_payment_url($order);
 
-            BNA_Logger::info('Payment process completed, redirecting to payment page', [
+            bna_wc_log('Payment process completed, redirecting to payment page', [
                 'order_id' => $order->get_id(),
-                'redirect_url' => $redirect_url
+                'redirect_url' => $redirect_url,
+                'success' => true
             ]);
 
             return array(
@@ -194,9 +232,11 @@ class BNA_Gateway extends WC_Payment_Gateway {
             );
 
         } catch (Exception $e) {
-            BNA_Logger::error('Payment processing error', [
+            bna_wc_error('Payment processing exception', [
                 'order_id' => $order->get_id(),
-                'error' => $e->getMessage(),
+                'exception_message' => $e->getMessage(),
+                'exception_file' => $e->getFile(),
+                'exception_line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
 
@@ -206,65 +246,76 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     private function prepare_order($order) {
-        BNA_Logger::debug('Preparing order for BNA payment', [
+        bna_wc_debug('Preparing order for BNA payment', [
             'order_id' => $order->get_id(),
             'current_status' => $order->get_status()
         ]);
 
-        // Update order status
-        BNA_WooCommerce_Helper::update_order_status($order, 'pending', 'Awaiting BNA Smart Payment.');
+        // Update order status if needed
+        if ($order->get_status() !== 'pending') {
+            $order->update_status('pending', 'Awaiting BNA Smart Payment.');
+        }
         
         // Add meta data
         $order->add_meta_data('_bna_payment_method', 'iframe');
         $order->add_meta_data('_bna_payment_started_at', current_time('timestamp'));
         $order->save();
 
-        BNA_Logger::info('Order prepared for BNA payment', [
+        bna_wc_log('Order prepared for BNA payment', [
             'order_id' => $order->get_id(),
-            'new_status' => $order->get_status()
+            'new_status' => $order->get_status(),
+            'payment_method' => 'iframe'
         ]);
     }
 
     public function checkout_scripts() {
+        if (is_admin()) return;
+        
         wp_enqueue_style('bna-payment', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/payment.css', array(), BNA_SMART_PAYMENT_VERSION);
         wp_enqueue_script('bna-payment', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/js/payment.js', array('jquery'), BNA_SMART_PAYMENT_VERSION, true);
 
-        BNA_Logger::debug('Checkout scripts enqueued');
+        bna_wc_debug('Gateway checkout scripts enqueued');
     }
 
     public function payment_fields() {
         if ($this->description) {
             echo '<p>' . wp_kses_post($this->description) . '</p>';
         }
-        echo '<p><small>You will be redirected to complete your payment.</small></p>';
+        echo '<p><small>You will be redirected to complete your payment securely.</small></p>';
 
-        BNA_Logger::debug('Payment fields displayed');
+        bna_wc_debug('Payment fields displayed');
     }
 
     public function admin_options() {
         echo '<h3>BNA Smart Payment</h3>';
-        echo '<p>Accept payments through BNA Smart Payment gateway.</p>';
+        echo '<p>Accept payments through BNA Smart Payment gateway with secure iFrame integration.</p>';
         
         $this->display_status_notice();
+        $this->display_debug_info();
 
         echo '<table class="form-table">';
         $this->generate_settings_html();
         echo '</table>';
 
-        BNA_Logger::debug('Admin options page displayed');
+        bna_wc_debug('Admin options page displayed');
     }
 
     private function display_status_notice() {
         $missing = $this->get_missing_settings();
         
         if (empty($missing)) {
-            echo '<div class="notice notice-success"><p><strong>Status:</strong> Gateway configured and ready</p></div>';
-            BNA_Logger::debug('Gateway status: configured and ready');
+            echo '<div class="notice notice-success"><p><strong>Status:</strong> ✅ Gateway configured and ready</p></div>';
         } else {
             echo '<div class="notice notice-warning"><p><strong>Missing:</strong> ' . implode(', ', $missing) . '</p></div>';
-            BNA_Logger::warning('Gateway status: missing configuration', [
-                'missing_settings' => $missing
-            ]);
+        }
+    }
+
+    private function display_debug_info() {
+        if (bna_logger('woocommerce')->is_enabled()) {
+            echo '<div class="notice notice-info">';
+            echo '<p><strong>Debug:</strong> Logging is enabled. ';
+            echo '<a href="' . admin_url('admin.php?page=bna-debug-v2&tab=woocommerce') . '">View Logs</a></p>';
+            echo '</div>';
         }
     }
 
