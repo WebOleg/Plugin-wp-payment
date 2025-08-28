@@ -1,7 +1,7 @@
 <?php
 /**
  * BNA Gateway V2
- * Enhanced with new logging system
+ * Enhanced with new logging system and customer detail toggles
  */
 
 if (!defined('ABSPATH')) exit;
@@ -37,20 +37,30 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->secret_key = $this->get_option('secret_key');
         $this->iframe_id = $this->get_option('iframe_id');
 
+        // Customer detail toggles
+        $this->enable_phone = $this->get_option('enable_phone');
+        $this->enable_billing_address = $this->get_option('enable_billing_address');
+        $this->enable_birthdate = $this->get_option('enable_birthdate');
+
         bna_wc_debug('Gateway settings loaded', [
             'enabled' => $this->enabled,
             'environment' => $this->environment,
             'has_access_key' => !empty($this->access_key),
             'has_secret_key' => !empty($this->secret_key),
             'has_iframe_id' => !empty($this->iframe_id),
-            'title' => $this->title
+            'title' => $this->title,
+            'customer_toggles' => [
+                'phone' => $this->enable_phone,
+                'billing_address' => $this->enable_billing_address,
+                'birthdate' => $this->enable_birthdate
+            ]
         ]);
     }
 
     private function init_hooks() {
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
         add_action('wp_enqueue_scripts', array($this, 'checkout_scripts'));
-        
+
         bna_wc_debug('Gateway hooks initialized');
     }
 
@@ -105,6 +115,32 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'description' => 'Your iFrame ID from BNA Portal.',
                 'default' => '',
             ),
+            'customer_details_section' => array(
+                'title' => 'Customer Details',
+                'type' => 'title',
+                'description' => 'Configure which customer details to collect in the payment form.',
+            ),
+            'enable_phone' => array(
+                'title' => 'Phone Number',
+                'type' => 'checkbox',
+                'label' => 'Enable phone number field',
+                'default' => 'no',
+                'description' => 'Show phone number field in the payment form.'
+            ),
+            'enable_billing_address' => array(
+                'title' => 'Billing Address',
+                'type' => 'checkbox',
+                'label' => 'Enable billing address fields',
+                'default' => 'no',
+                'description' => 'Show billing address fields in the payment form.'
+            ),
+            'enable_birthdate' => array(
+                'title' => 'Birth Date',
+                'type' => 'checkbox',
+                'label' => 'Enable birthdate field',
+                'default' => 'yes',
+                'description' => 'Show birthdate field in the payment form.'
+            ),
         );
     }
 
@@ -112,14 +148,19 @@ class BNA_Gateway extends WC_Payment_Gateway {
         bna_wc_log('Processing gateway admin options update');
 
         $saved = parent::process_admin_options();
-        
+
         if ($saved) {
             $this->save_global_options();
-            
+
             bna_wc_log('Gateway admin options saved successfully', [
                 'environment' => $this->get_option('environment'),
                 'has_credentials' => !empty($this->get_option('access_key')) && !empty($this->get_option('secret_key')),
-                'has_iframe_id' => !empty($this->get_option('iframe_id'))
+                'has_iframe_id' => !empty($this->get_option('iframe_id')),
+                'customer_toggles' => [
+                    'phone' => $this->get_option('enable_phone'),
+                    'billing_address' => $this->get_option('enable_billing_address'),
+                    'birthdate' => $this->get_option('enable_birthdate')
+                ]
             ]);
         } else {
             bna_wc_error('Failed to save gateway admin options');
@@ -134,6 +175,11 @@ class BNA_Gateway extends WC_Payment_Gateway {
         update_option('bna_smart_payment_secret_key', $this->get_option('secret_key'));
         update_option('bna_smart_payment_iframe_id', $this->get_option('iframe_id'));
 
+        // Save customer detail toggles
+        update_option('bna_smart_payment_enable_phone', $this->get_option('enable_phone'));
+        update_option('bna_smart_payment_enable_billing_address', $this->get_option('enable_billing_address'));
+        update_option('bna_smart_payment_enable_birthdate', $this->get_option('enable_birthdate'));
+
         bna_wc_debug('Global gateway options updated');
     }
 
@@ -142,7 +188,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $is_enabled = $this->enabled === 'yes';
         $has_settings = $this->has_required_settings();
         $is_available = $has_wc && $is_enabled && $has_settings;
-        
+
         bna_wc_debug('Gateway availability check', [
             'has_woocommerce' => $has_wc,
             'is_enabled' => $is_enabled,
@@ -165,7 +211,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'secret_key' => !empty($this->secret_key),
             'iframe_id' => !empty($this->iframe_id)
         ];
-        
+
         return array_reduce($required, function($carry, $item) {
             return $carry && $item;
         }, true);
@@ -179,12 +225,12 @@ class BNA_Gateway extends WC_Payment_Gateway {
         ]);
 
         $order = wc_get_order($order_id);
-        
+
         if (!$order) {
             bna_wc_error('Order not found for payment processing', [
                 'order_id' => $order_id
             ]);
-            
+
             wc_add_notice('Order not found.', 'error');
             return array('result' => 'fail');
         }
@@ -202,13 +248,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
             // Validate order first
             $payment_controller = new BNA_Payment_Controller();
             $validation = $payment_controller->validate_order_for_payment($order);
-            
+
             if (!$validation['valid']) {
                 bna_wc_error('Order validation failed', [
                     'order_id' => $order->get_id(),
                     'errors' => $validation['errors']
                 ]);
-                
+
                 foreach ($validation['errors'] as $error) {
                     wc_add_notice($error, 'error');
                 }
@@ -255,7 +301,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         if ($order->get_status() !== 'pending') {
             $order->update_status('pending', 'Awaiting BNA Smart Payment.');
         }
-        
+
         // Add meta data
         $order->add_meta_data('_bna_payment_method', 'iframe');
         $order->add_meta_data('_bna_payment_started_at', current_time('timestamp'));
@@ -270,7 +316,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
     public function checkout_scripts() {
         if (is_admin()) return;
-        
+
         wp_enqueue_style('bna-payment', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/payment.css', array(), BNA_SMART_PAYMENT_VERSION);
         wp_enqueue_script('bna-payment', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/js/payment.js', array('jquery'), BNA_SMART_PAYMENT_VERSION, true);
 
@@ -289,7 +335,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
     public function admin_options() {
         echo '<h3>BNA Smart Payment</h3>';
         echo '<p>Accept payments through BNA Smart Payment gateway with secure iFrame integration.</p>';
-        
+
         $this->display_status_notice();
         $this->display_debug_info();
 
@@ -302,7 +348,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
     private function display_status_notice() {
         $missing = $this->get_missing_settings();
-        
+
         if (empty($missing)) {
             echo '<div class="notice notice-success"><p><strong>Status:</strong> ✅ Gateway configured and ready</p></div>';
         } else {
@@ -325,5 +371,16 @@ class BNA_Gateway extends WC_Payment_Gateway {
         if (empty($this->secret_key)) $missing[] = 'Secret Key';
         if (empty($this->iframe_id)) $missing[] = 'iFrame ID';
         return $missing;
+    }
+
+    /**
+     * Get customer detail toggles for API
+     */
+    public function get_customer_detail_settings() {
+        return [
+            'phone' => $this->enable_phone === 'yes',
+            'billing_address' => $this->enable_billing_address === 'yes',
+            'birthdate' => $this->enable_birthdate === 'yes'
+        ];
     }
 }
