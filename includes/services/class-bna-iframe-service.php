@@ -1,7 +1,7 @@
 <?php
 /**
- * BNA iFrame Service V2
- * Enhanced with new logging system
+ * BNA iFrame Service V3
+ * Updated to use BNA_Checkout_Payload class
  */
 
 if (!defined('ABSPATH')) exit;
@@ -14,6 +14,9 @@ class BNA_iFrame_Service {
         bna_api_debug('iFrame Service initialized');
     }
 
+    /**
+     * Generate checkout token using payload class
+     */
     public function generate_checkout_token($order) {
         $iframe_id = get_option('bna_smart_payment_iframe_id');
         if (empty($iframe_id)) {
@@ -38,20 +41,15 @@ class BNA_iFrame_Service {
             return $customer_result;
         }
 
-        // Prepare checkout data
-        $checkout_data = [
-            'iframeId' => $iframe_id,
-            'customerId' => $customer_result['id'],
-            'items' => $this->prepare_order_items($order),
-            'subtotal' => (float) $order->get_total()
-        ];
+        // Create payload using new class
+        $payload_generator = new BNA_Checkout_Payload($order, $customer_result['id']);
+        $checkout_data = $payload_generator->get_payload();
 
-        bna_api_log('Creating checkout token', [
+        bna_api_log('Creating checkout token with payload class', [
             'order_id' => $order->get_id(),
             'customer_id' => $customer_result['id'],
             'customer_action' => $customer_result['action'],
-            'items_count' => count($checkout_data['items']),
-            'subtotal' => $checkout_data['subtotal']
+            'payload_keys' => array_keys($checkout_data)
         ]);
 
         // Make API request
@@ -74,8 +72,14 @@ class BNA_iFrame_Service {
             return new WP_Error('invalid_response', 'Token not found in response');
         }
 
-        // Store customer ID in order
+        // Store customer ID and birthdate in order meta
         $order->add_meta_data('_bna_customer_id', $customer_result['id']);
+        
+        // Store birthdate if provided in checkout
+        if (isset($_POST['bna_customer_birthdate'])) {
+            $order->add_meta_data('_bna_customer_birthdate', sanitize_text_field($_POST['bna_customer_birthdate']));
+        }
+        
         $order->save();
 
         bna_api_log('Checkout token generated successfully', [
@@ -87,6 +91,9 @@ class BNA_iFrame_Service {
         return $response;
     }
 
+    /**
+     * Get or create customer (simplified - no duplicate logic)
+     */
     private function get_or_create_customer($order) {
         $email = $order->get_billing_email();
         
@@ -103,8 +110,7 @@ class BNA_iFrame_Service {
                     if (strtolower($customer['email']) === strtolower($email)) {
                         bna_api_log('Found existing customer', [
                             'customer_id' => $customer['id'],
-                            'email' => $customer['email'],
-                            'status' => $customer['status'] ?? 'unknown'
+                            'email' => $customer['email']
                         ]);
                         return ['id' => $customer['id'], 'action' => 'found'];
                     }
@@ -112,35 +118,21 @@ class BNA_iFrame_Service {
             }
         }
 
-        // Create new customer
+        // Create new customer using payload class
+        $customer_payload = new BNA_Checkout_Payload($order);
+        $customer_data = $customer_payload->get_customer_info();
+
+        if (empty($customer_data)) {
+            bna_api_error('Customer data generation failed', [
+                'email' => $email
+            ]);
+            return new WP_Error('customer_data_failed', 'Customer data generation failed');
+        }
+
         bna_api_log('Creating new customer', [
             'email' => $email,
-            'first_name' => $order->get_billing_first_name(),
-            'last_name' => $order->get_billing_last_name()
+            'customer_data_keys' => array_keys($customer_data)
         ]);
-        
-        $customer_data = [
-            'type' => 'Personal',
-            'email' => $email,
-            'firstName' => $order->get_billing_first_name() ?: 'Customer',
-            'lastName' => $order->get_billing_last_name() ?: 'Customer',
-            'phoneCode' => '+1',
-            'phoneNumber' => $this->format_phone_number($order->get_billing_phone()),
-            'birthDate' => date('Y-m-d', strtotime('-25 years'))
-        ];
-
-        // Add address if available
-        if ($order->get_billing_address_1()) {
-            $customer_data['address'] = [
-                'streetName' => $order->get_billing_address_1(),
-                'streetNumber' => '',
-                'apartment' => $order->get_billing_address_2() ?: '',
-                'city' => $order->get_billing_city() ?: 'Unknown',
-                'province' => $order->get_billing_state() ?: 'Unknown',
-                'country' => $order->get_billing_country() ?: 'CA',
-                'postalCode' => $order->get_billing_postcode() ?: 'A1A1A1'
-            ];
-        }
 
         $create_result = $this->api_service->make_request('v1/customers', 'POST', $customer_data);
 
@@ -155,8 +147,7 @@ class BNA_iFrame_Service {
         if (isset($create_result['id'])) {
             bna_api_log('Customer created successfully', [
                 'customer_id' => $create_result['id'],
-                'email' => $email,
-                'type' => $customer_data['type']
+                'email' => $email
             ]);
             return ['id' => $create_result['id'], 'action' => 'created'];
         }
@@ -169,75 +160,9 @@ class BNA_iFrame_Service {
         return new WP_Error('customer_failed', 'Customer setup failed');
     }
 
-    private function prepare_order_items($order) {
-        $items = [];
-        
-        bna_api_debug('Preparing order items', [
-            'order_id' => $order->get_id(),
-            'items_count' => count($order->get_items())
-        ]);
-        
-        foreach ($order->get_items() as $item_id => $item) {
-            $product = $item->get_product();
-            
-            $formatted_item = [
-                'sku' => $product && $product->get_sku() ? $product->get_sku() : 'ITEM-' . $item_id,
-                'description' => $item->get_name(),
-                'quantity' => $item->get_quantity(),
-                'price' => (float) $order->get_item_total($item),
-                'amount' => (float) $order->get_line_total($item)
-            ];
-            
-            $items[] = $formatted_item;
-        }
-
-        // Add shipping as item if exists
-        if ($order->get_shipping_total() > 0) {
-            $items[] = [
-                'sku' => 'SHIPPING',
-                'description' => 'Shipping',
-                'quantity' => 1,
-                'price' => (float) $order->get_shipping_total(),
-                'amount' => (float) $order->get_shipping_total()
-            ];
-        }
-
-        // Add taxes as item if exists  
-        if ($order->get_total_tax() > 0) {
-            $items[] = [
-                'sku' => 'TAX',
-                'description' => 'Tax',
-                'quantity' => 1,
-                'price' => (float) $order->get_total_tax(),
-                'amount' => (float) $order->get_total_tax()
-            ];
-        }
-
-        bna_api_debug('Order items prepared', [
-            'total_items' => count($items),
-            'total_amount' => array_sum(array_column($items, 'amount'))
-        ]);
-        
-        return $items;
-    }
-
-    private function format_phone_number($phone) {
-        if (empty($phone)) {
-            return '1234567890';
-        }
-        
-        // Remove all non-digits
-        $phone = preg_replace('/\D/', '', $phone);
-        
-        // Ensure it's at least 10 digits
-        if (strlen($phone) < 10) {
-            $phone = str_pad($phone, 10, '0', STR_PAD_RIGHT);
-        }
-        
-        // Take only first 10 digits
-        return substr($phone, 0, 10);
-    }
-
+    /**
+     * Get iframe URL
+     */
     public function get_iframe_url($token) {
         $url = $this->api_service->get_api_url() . '/v1/checkout/' . $token;
         

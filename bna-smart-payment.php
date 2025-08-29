@@ -3,7 +3,7 @@
  * Plugin Name: BNA Smart Payment Gateway
  * Plugin URI: https://bnasmartpayment.com
  * Description: WooCommerce payment gateway for BNA Smart Payment with iframe and webhooks.
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: BNA Smart Payment
  * Text Domain: bna-smart-payment
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('BNA_SMART_PAYMENT_VERSION', '1.2.0');
+define('BNA_SMART_PAYMENT_VERSION', '1.3.0');
 define('BNA_SMART_PAYMENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -51,9 +51,18 @@ class BNA_Smart_Payment {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/helpers/class-bna-woocommerce-helper.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/helpers/class-bna-url-handler.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/helpers/class-bna-template-handler.php';
+        
+        // Load services
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/services/class-bna-api-service.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/services/class-bna-iframe-service.php';
+        
+        // Load schemas
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/schemas/class-bna-checkout-payload.php';
+        
+        // Load controllers
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/controllers/class-bna-payment-controller.php';
+        
+        // Load webhooks
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/webhooks/class-bna-webhook-init.php';
 
         // Load admin interfaces

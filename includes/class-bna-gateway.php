@@ -1,7 +1,7 @@
 <?php
 /**
- * BNA Gateway V2
- * Enhanced with new logging system and customer detail toggles
+ * BNA Gateway V4
+ * Birthdate field integrated into WooCommerce checkout fields
  */
 
 if (!defined('ABSPATH')) exit;
@@ -11,7 +11,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
     public function __construct() {
         $this->id = 'bna_smart_payment';
         $this->icon = '';
-        $this->has_fields = true;
+        $this->has_fields = false; // No custom payment fields
         $this->method_title = 'BNA Smart Payment';
         $this->method_description = 'Accept payments through BNA Smart Payment system.';
         $this->supports = array('products');
@@ -45,10 +45,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         bna_wc_debug('Gateway settings loaded', [
             'enabled' => $this->enabled,
             'environment' => $this->environment,
-            'has_access_key' => !empty($this->access_key),
-            'has_secret_key' => !empty($this->secret_key),
-            'has_iframe_id' => !empty($this->iframe_id),
-            'title' => $this->title,
             'customer_toggles' => [
                 'phone' => $this->enable_phone,
                 'billing_address' => $this->enable_billing_address,
@@ -60,8 +56,94 @@ class BNA_Gateway extends WC_Payment_Gateway {
     private function init_hooks() {
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
         add_action('wp_enqueue_scripts', array($this, 'checkout_scripts'));
+        
+        // Add birthdate field to checkout if enabled
+        if ($this->is_birthdate_enabled()) {
+            add_filter('woocommerce_billing_fields', array($this, 'add_birthdate_billing_field'));
+            add_action('woocommerce_checkout_process', array($this, 'validate_birthdate_field'));
+            add_action('woocommerce_checkout_update_order_meta', array($this, 'save_birthdate_field'));
+        }
 
         bna_wc_debug('Gateway hooks initialized');
+    }
+
+    /**
+     * Add birthdate field to billing fields
+     */
+    public function add_birthdate_billing_field($fields) {
+        $fields['billing_birthdate'] = array(
+            'label'     => __('Date of Birth', 'bna-smart-payment'),
+            'placeholder' => __('YYYY-MM-DD', 'bna-smart-payment'),
+            'required'  => true,
+            'class'     => array('form-row-wide'),
+            'type'      => 'date',
+            'priority'  => 25, // After email, before phone
+            'validate'  => array('required'),
+            'custom_attributes' => array(
+                'max' => date('Y-m-d', strtotime('-18 years'))
+            )
+        );
+
+        bna_wc_debug('Birthdate field added to billing fields');
+        return $fields;
+    }
+
+    /**
+     * Validate birthdate field during checkout
+     */
+    public function validate_birthdate_field() {
+        // Only validate if BNA payment method is selected
+        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            return;
+        }
+
+        if (empty($_POST['billing_birthdate'])) {
+            wc_add_notice(__('Date of birth is required for BNA Smart Payment.', 'bna-smart-payment'), 'error');
+            return;
+        }
+
+        $birthdate = sanitize_text_field($_POST['billing_birthdate']);
+        $birth_timestamp = strtotime($birthdate);
+
+        if ($birth_timestamp === false) {
+            wc_add_notice(__('Please enter a valid date of birth.', 'bna-smart-payment'), 'error');
+            return;
+        }
+
+        // Check minimum age (18 years)
+        $eighteen_years_ago = strtotime('-18 years');
+        if ($birth_timestamp > $eighteen_years_ago) {
+            wc_add_notice(__('You must be at least 18 years old to use BNA Smart Payment.', 'bna-smart-payment'), 'error');
+            return;
+        }
+
+        // Check if date is not in future
+        if ($birth_timestamp > time()) {
+            wc_add_notice(__('Birth date cannot be in the future.', 'bna-smart-payment'), 'error');
+            return;
+        }
+
+        bna_wc_debug('Birthdate validation passed', [
+            'birthdate' => $birthdate,
+            'age_valid' => true
+        ]);
+    }
+
+    /**
+     * Save birthdate field to order meta
+     */
+    public function save_birthdate_field($order_id) {
+        if (!empty($_POST['billing_birthdate'])) {
+            $order = wc_get_order($order_id);
+            $birthdate = sanitize_text_field($_POST['billing_birthdate']);
+            $order->add_meta_data('_billing_birthdate', $birthdate);
+            $order->save();
+
+            bna_wc_debug('Birthdate saved to order', [
+                'order_id' => $order_id,
+                'birthdate' => $birthdate
+            ]);
+        }
     }
 
     public function init_form_fields() {
@@ -118,52 +200,39 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'customer_details_section' => array(
                 'title' => 'Customer Details',
                 'type' => 'title',
-                'description' => 'Configure which customer details to collect in the payment form.',
+                'description' => 'Configure which customer details to collect and send to BNA API.',
             ),
             'enable_phone' => array(
                 'title' => 'Phone Number',
                 'type' => 'checkbox',
-                'label' => 'Enable phone number field',
+                'label' => 'Send phone number to BNA API',
                 'default' => 'no',
-                'description' => 'Show phone number field in the payment form.'
+                'description' => 'Include phone number in payment data.'
             ),
             'enable_billing_address' => array(
                 'title' => 'Billing Address',
                 'type' => 'checkbox',
-                'label' => 'Enable billing address fields',
+                'label' => 'Send billing address to BNA API',
                 'default' => 'no',
-                'description' => 'Show billing address fields in the payment form.'
+                'description' => 'Include billing address in payment data.'
             ),
             'enable_birthdate' => array(
                 'title' => 'Birth Date',
                 'type' => 'checkbox',
-                'label' => 'Enable birthdate field',
+                'label' => 'Require customer birth date',
                 'default' => 'yes',
-                'description' => 'Show birthdate field in the payment form.'
+                'description' => 'Add required birthdate field to checkout and send to BNA API.'
             ),
         );
     }
 
     public function process_admin_options() {
         bna_wc_log('Processing gateway admin options update');
-
         $saved = parent::process_admin_options();
 
         if ($saved) {
             $this->save_global_options();
-
-            bna_wc_log('Gateway admin options saved successfully', [
-                'environment' => $this->get_option('environment'),
-                'has_credentials' => !empty($this->get_option('access_key')) && !empty($this->get_option('secret_key')),
-                'has_iframe_id' => !empty($this->get_option('iframe_id')),
-                'customer_toggles' => [
-                    'phone' => $this->get_option('enable_phone'),
-                    'billing_address' => $this->get_option('enable_billing_address'),
-                    'birthdate' => $this->get_option('enable_birthdate')
-                ]
-            ]);
-        } else {
-            bna_wc_error('Failed to save gateway admin options');
+            bna_wc_log('Gateway admin options saved successfully');
         }
 
         return $saved;
@@ -174,8 +243,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         update_option('bna_smart_payment_access_key', $this->get_option('access_key'));
         update_option('bna_smart_payment_secret_key', $this->get_option('secret_key'));
         update_option('bna_smart_payment_iframe_id', $this->get_option('iframe_id'));
-
-        // Save customer detail toggles
         update_option('bna_smart_payment_enable_phone', $this->get_option('enable_phone'));
         update_option('bna_smart_payment_enable_billing_address', $this->get_option('enable_billing_address'));
         update_option('bna_smart_payment_enable_birthdate', $this->get_option('enable_birthdate'));
@@ -184,93 +251,45 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     public function is_available() {
-        $has_wc = class_exists('WooCommerce');
-        $is_enabled = $this->enabled === 'yes';
-        $has_settings = $this->has_required_settings();
-        $is_available = $has_wc && $is_enabled && $has_settings;
-
-        bna_wc_debug('Gateway availability check', [
-            'has_woocommerce' => $has_wc,
-            'is_enabled' => $is_enabled,
-            'has_required_settings' => $has_settings,
-            'is_available' => $is_available
-        ]);
-
-        if (!$is_available && $is_enabled) {
-            bna_wc_error('Gateway not available despite being enabled', [
-                'missing_settings' => $this->get_missing_settings()
-            ]);
-        }
-
-        return $is_available;
+        return $this->enabled === 'yes' && 
+               class_exists('WooCommerce') && 
+               $this->has_required_settings();
     }
 
     private function has_required_settings() {
-        $required = [
-            'access_key' => !empty($this->access_key),
-            'secret_key' => !empty($this->secret_key),
-            'iframe_id' => !empty($this->iframe_id)
-        ];
+        return !empty($this->access_key) && 
+               !empty($this->secret_key) && 
+               !empty($this->iframe_id);
+    }
 
-        return array_reduce($required, function($carry, $item) {
-            return $carry && $item;
-        }, true);
+    private function is_birthdate_enabled() {
+        return get_option('bna_smart_payment_enable_birthdate') === 'yes';
     }
 
     public function process_payment($order_id) {
-        bna_wc_log('Processing payment started', [
-            'order_id' => $order_id,
-            'gateway_id' => $this->id,
-            'method' => 'iframe'
-        ]);
+        bna_wc_log('Processing payment started', ['order_id' => $order_id]);
 
         $order = wc_get_order($order_id);
-
         if (!$order) {
-            bna_wc_error('Order not found for payment processing', [
-                'order_id' => $order_id
-            ]);
-
             wc_add_notice('Order not found.', 'error');
             return array('result' => 'fail');
         }
 
-        // Log order details
-        bna_wc_debug('Order found for processing', [
-            'order_id' => $order->get_id(),
-            'order_total' => $order->get_total(),
-            'order_status' => $order->get_status(),
-            'customer_email' => $order->get_billing_email(),
-            'customer_name' => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name()
-        ]);
-
         try {
-            // Validate order first
             $payment_controller = new BNA_Payment_Controller();
             $validation = $payment_controller->validate_order_for_payment($order);
 
             if (!$validation['valid']) {
-                bna_wc_error('Order validation failed', [
-                    'order_id' => $order->get_id(),
-                    'errors' => $validation['errors']
-                ]);
-
                 foreach ($validation['errors'] as $error) {
                     wc_add_notice($error, 'error');
                 }
                 return array('result' => 'fail');
             }
 
-            // Prepare order for BNA processing
             $this->prepare_order($order);
-
             $redirect_url = BNA_URL_Handler::get_payment_url($order);
 
-            bna_wc_log('Payment process completed, redirecting to payment page', [
-                'order_id' => $order->get_id(),
-                'redirect_url' => $redirect_url,
-                'success' => true
-            ]);
+            bna_wc_log('Payment process completed', ['order_id' => $order->get_id()]);
 
             return array(
                 'result' => 'success',
@@ -280,10 +299,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         } catch (Exception $e) {
             bna_wc_error('Payment processing exception', [
                 'order_id' => $order->get_id(),
-                'exception_message' => $e->getMessage(),
-                'exception_file' => $e->getFile(),
-                'exception_line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
+                'error' => $e->getMessage()
             ]);
 
             wc_add_notice('Payment processing error. Please try again.', 'error');
@@ -292,26 +308,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     private function prepare_order($order) {
-        bna_wc_debug('Preparing order for BNA payment', [
-            'order_id' => $order->get_id(),
-            'current_status' => $order->get_status()
-        ]);
-
-        // Update order status if needed
         if ($order->get_status() !== 'pending') {
             $order->update_status('pending', 'Awaiting BNA Smart Payment.');
         }
 
-        // Add meta data
         $order->add_meta_data('_bna_payment_method', 'iframe');
         $order->add_meta_data('_bna_payment_started_at', current_time('timestamp'));
         $order->save();
-
-        bna_wc_log('Order prepared for BNA payment', [
-            'order_id' => $order->get_id(),
-            'new_status' => $order->get_status(),
-            'payment_method' => 'iframe'
-        ]);
     }
 
     public function checkout_scripts() {
@@ -319,36 +322,19 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         wp_enqueue_style('bna-payment', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/payment.css', array(), BNA_SMART_PAYMENT_VERSION);
         wp_enqueue_script('bna-payment', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/js/payment.js', array('jquery'), BNA_SMART_PAYMENT_VERSION, true);
-
-        bna_wc_debug('Gateway checkout scripts enqueued');
-    }
-
-    public function payment_fields() {
-        if ($this->description) {
-            echo '<p>' . wp_kses_post($this->description) . '</p>';
-        }
-        echo '<p><small>You will be redirected to complete your payment securely.</small></p>';
-
-        bna_wc_debug('Payment fields displayed');
     }
 
     public function admin_options() {
         echo '<h3>BNA Smart Payment</h3>';
         echo '<p>Accept payments through BNA Smart Payment gateway with secure iFrame integration.</p>';
-
         $this->display_status_notice();
-        $this->display_debug_info();
-
         echo '<table class="form-table">';
         $this->generate_settings_html();
         echo '</table>';
-
-        bna_wc_debug('Admin options page displayed');
     }
 
     private function display_status_notice() {
         $missing = $this->get_missing_settings();
-
         if (empty($missing)) {
             echo '<div class="notice notice-success"><p><strong>Status:</strong> ✅ Gateway configured and ready</p></div>';
         } else {
@@ -356,31 +342,11 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    private function display_debug_info() {
-        if (bna_logger('woocommerce')->is_enabled()) {
-            echo '<div class="notice notice-info">';
-            echo '<p><strong>Debug:</strong> Logging is enabled. ';
-            echo '<a href="' . admin_url('admin.php?page=bna-debug-v2&tab=woocommerce') . '">View Logs</a></p>';
-            echo '</div>';
-        }
-    }
-
     private function get_missing_settings() {
         $missing = array();
         if (empty($this->access_key)) $missing[] = 'Access Key';
-        if (empty($this->secret_key)) $missing[] = 'Secret Key';
+        if (empty($this->secret_key)) $missing[] = 'Secret Key';  
         if (empty($this->iframe_id)) $missing[] = 'iFrame ID';
         return $missing;
-    }
-
-    /**
-     * Get customer detail toggles for API
-     */
-    public function get_customer_detail_settings() {
-        return [
-            'phone' => $this->enable_phone === 'yes',
-            'billing_address' => $this->enable_billing_address === 'yes',
-            'birthdate' => $this->enable_birthdate === 'yes'
-        ];
     }
 }
