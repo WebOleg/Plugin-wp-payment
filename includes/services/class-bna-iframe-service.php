@@ -1,7 +1,7 @@
 <?php
 /**
- * BNA iFrame Service V3
- * Updated to use BNA_Checkout_Payload class
+ * BNA iFrame Service V4 - Fixed
+ * Properly handles existing vs new customer logic
  */
 
 if (!defined('ABSPATH')) exit;
@@ -15,7 +15,7 @@ class BNA_iFrame_Service {
     }
 
     /**
-     * Generate checkout token using payload class
+     * Generate checkout token
      */
     public function generate_checkout_token($order) {
         $iframe_id = get_option('bna_smart_payment_iframe_id');
@@ -30,35 +30,33 @@ class BNA_iFrame_Service {
             'iframe_id' => $iframe_id
         ]);
 
-        // Get or create customer
-        $customer_result = $this->get_or_create_customer($order);
-        
-        if (is_wp_error($customer_result)) {
-            bna_api_error('Customer setup failed for checkout', [
+        // Try to find existing customer first
+        $existing_customer_id = $this->find_existing_customer($order);
+
+        if ($existing_customer_id) {
+            // Use existing customer
+            bna_api_log('Using existing customer for checkout', [
                 'order_id' => $order->get_id(),
-                'error' => $customer_result->get_error_message()
+                'customer_id' => $existing_customer_id
             ]);
-            return $customer_result;
+
+            $checkout_data = $this->create_checkout_payload($order, $existing_customer_id);
+        } else {
+            // Create new customer via customerInfo in checkout
+            bna_api_log('Will create new customer via checkout', [
+                'order_id' => $order->get_id(),
+                'customer_email' => $order->get_billing_email()
+            ]);
+
+            $checkout_data = $this->create_checkout_payload($order, null);
         }
 
-        // Create payload using new class
-        $payload_generator = new BNA_Checkout_Payload($order, $customer_result['id']);
-        $checkout_data = $payload_generator->get_payload();
-
-        bna_api_log('Creating checkout token with payload class', [
-            'order_id' => $order->get_id(),
-            'customer_id' => $customer_result['id'],
-            'customer_action' => $customer_result['action'],
-            'payload_keys' => array_keys($checkout_data)
-        ]);
-
-        // Make API request
+        // Make checkout API request
         $response = $this->api_service->make_request('v1/checkout', 'POST', $checkout_data);
 
         if (is_wp_error($response)) {
             bna_api_error('Checkout token generation failed', [
                 'order_id' => $order->get_id(),
-                'customer_id' => $customer_result['id'],
                 'error' => $response->get_error_message()
             ]);
             return $response;
@@ -72,19 +70,16 @@ class BNA_iFrame_Service {
             return new WP_Error('invalid_response', 'Token not found in response');
         }
 
-        // Store customer ID and birthdate in order meta
-        $order->add_meta_data('_bna_customer_id', $customer_result['id']);
-        
-        // Store birthdate if provided in checkout
-        if (isset($_POST['bna_customer_birthdate'])) {
-            $order->add_meta_data('_bna_customer_birthdate', sanitize_text_field($_POST['bna_customer_birthdate']));
+        // Store customer data in order meta if we used existing customer
+        if ($existing_customer_id) {
+            $order->add_meta_data('_bna_customer_id', $existing_customer_id);
         }
-        
+
         $order->save();
 
         bna_api_log('Checkout token generated successfully', [
             'order_id' => $order->get_id(),
-            'customer_id' => $customer_result['id'],
+            'used_existing_customer' => !empty($existing_customer_id),
             'token_length' => strlen($response['token'])
         ]);
 
@@ -92,72 +87,62 @@ class BNA_iFrame_Service {
     }
 
     /**
-     * Get or create customer (simplified - no duplicate logic)
+     * Try to find existing customer by email
      */
-    private function get_or_create_customer($order) {
+    private function find_existing_customer($order) {
         $email = $order->get_billing_email();
-        
-        bna_api_debug('Looking up customer', ['email' => $email]);
-        
-        // Search existing customers
+
+        bna_api_debug('Searching for existing customer', ['email' => $email]);
+
+        // Search existing customers by email
         $customers = $this->api_service->make_request('v1/customers', 'GET', [
             'email' => $email
         ]);
 
-        if (!is_wp_error($customers) && isset($customers['data']) && !empty($customers['data'])) {
-            foreach ($customers['data'] as $customer) {
-                if (isset($customer['id']) && isset($customer['email'])) {
-                    if (strtolower($customer['email']) === strtolower($email)) {
-                        bna_api_log('Found existing customer', [
-                            'customer_id' => $customer['id'],
-                            'email' => $customer['email']
-                        ]);
-                        return ['id' => $customer['id'], 'action' => 'found'];
-                    }
+        if (is_wp_error($customers)) {
+            bna_api_debug('Customer search failed', [
+                'error' => $customers->get_error_message()
+            ]);
+            return null;
+        }
+
+        if (!isset($customers['data']) || empty($customers['data'])) {
+            bna_api_debug('No existing customers found', ['email' => $email]);
+            return null;
+        }
+
+        // Find matching customer
+        foreach ($customers['data'] as $customer) {
+            if (isset($customer['id'], $customer['email'])) {
+                if (strtolower($customer['email']) === strtolower($email)) {
+                    bna_api_log('Found existing customer', [
+                        'customer_id' => $customer['id'],
+                        'email' => $customer['email']
+                    ]);
+                    return $customer['id'];
                 }
             }
         }
 
-        // Create new customer using payload class
-        $customer_payload = new BNA_Checkout_Payload($order);
-        $customer_data = $customer_payload->get_customer_info();
+        bna_api_debug('No matching customer found', ['email' => $email]);
+        return null;
+    }
 
-        if (empty($customer_data)) {
-            bna_api_error('Customer data generation failed', [
-                'email' => $email
-            ]);
-            return new WP_Error('customer_data_failed', 'Customer data generation failed');
-        }
+    /**
+     * Create checkout payload using the fixed payload class
+     */
+    private function create_checkout_payload($order, $customer_id = null) {
+        $payload_generator = new BNA_Checkout_Payload($order, $customer_id);
+        $checkout_data = $payload_generator->get_payload();
 
-        bna_api_log('Creating new customer', [
-            'email' => $email,
-            'customer_data_keys' => array_keys($customer_data)
+        bna_api_log('Checkout payload created', [
+            'order_id' => $order->get_id(),
+            'has_customer_id' => !empty($customer_id),
+            'has_customer_info' => isset($checkout_data['customerInfo']),
+            'payload_keys' => array_keys($checkout_data)
         ]);
 
-        $create_result = $this->api_service->make_request('v1/customers', 'POST', $customer_data);
-
-        if (is_wp_error($create_result)) {
-            bna_api_error('Customer creation failed', [
-                'email' => $email,
-                'error' => $create_result->get_error_message()
-            ]);
-            return $create_result;
-        }
-
-        if (isset($create_result['id'])) {
-            bna_api_log('Customer created successfully', [
-                'customer_id' => $create_result['id'],
-                'email' => $email
-            ]);
-            return ['id' => $create_result['id'], 'action' => 'created'];
-        }
-
-        bna_api_error('Customer creation response invalid', [
-            'email' => $email,
-            'response_keys' => array_keys($create_result)
-        ]);
-        
-        return new WP_Error('customer_failed', 'Customer setup failed');
+        return $checkout_data;
     }
 
     /**
@@ -165,13 +150,13 @@ class BNA_iFrame_Service {
      */
     public function get_iframe_url($token) {
         $url = $this->api_service->get_api_url() . '/v1/checkout/' . $token;
-        
+
         bna_api_debug('iFrame URL generated', [
             'token_length' => strlen($token),
             'url_length' => strlen($url),
             'environment' => $this->api_service->get_status()['environment']
         ]);
-        
+
         return $url;
     }
 
@@ -180,7 +165,7 @@ class BNA_iFrame_Service {
      */
     public function test_iframe_config() {
         $iframe_id = get_option('bna_smart_payment_iframe_id');
-        
+
         if (empty($iframe_id)) {
             bna_api_error('iFrame test failed - no iframe ID configured');
             return false;

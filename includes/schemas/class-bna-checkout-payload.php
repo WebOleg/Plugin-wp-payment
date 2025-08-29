@@ -1,7 +1,7 @@
 <?php
 /**
- * BNA Checkout Payload Schema V4
- * Only send non-empty address fields
+ * BNA Checkout Payload Schema V5 - Fixed
+ * Fixes: street number optional, customerId conflict, city validation
  */
 
 if (!defined('ABSPATH')) exit;
@@ -26,24 +26,25 @@ class BNA_Checkout_Payload {
             'items' => $this->get_items()
         ];
 
-        // Add customer ID if available
+        // EITHER use existing customer ID OR send customer info, not both
         if (!empty($this->customer_id)) {
+            // Use existing customer
             $payload['customerId'] = $this->customer_id;
-        }
-
-        // Add customer info based on toggles
-        $customer_info = $this->get_customer_info();
-        if (!empty($customer_info)) {
-            $payload['customerInfo'] = $customer_info;
+        } else {
+            // Send customer info to create new customer
+            $customer_info = $this->get_customer_info();
+            if (!empty($customer_info)) {
+                $payload['customerInfo'] = $customer_info;
+            }
         }
 
         return $payload;
     }
 
     /**
-     * Get customer info based on admin toggle settings
+     * Get customer info for new customer creation
      */
-    private function get_customer_info() {
+    public function get_customer_info() {
         $customer_info = [
             'type' => 'Personal',
             'email' => $this->order->get_billing_email(),
@@ -51,13 +52,13 @@ class BNA_Checkout_Payload {
             'lastName' => $this->order->get_billing_last_name() ?: 'Customer'
         ];
 
-        // Add phone if toggle enabled
+        // Add phone if enabled
         if ($this->is_phone_enabled() && !empty($this->order->get_billing_phone())) {
             $customer_info['phoneCode'] = '+1';
             $customer_info['phoneNumber'] = $this->format_phone_number($this->order->get_billing_phone());
         }
 
-        // Add birthdate if toggle enabled
+        // Add birthdate if enabled
         if ($this->is_birthdate_enabled()) {
             $birthdate = $this->get_customer_birthdate();
             if ($birthdate) {
@@ -65,7 +66,7 @@ class BNA_Checkout_Payload {
             }
         }
 
-        // Add billing address if toggle enabled AND address is valid
+        // Add address if enabled and valid
         if ($this->is_billing_address_enabled() && $this->has_valid_billing_address()) {
             $customer_info['address'] = $this->get_clean_billing_address();
         }
@@ -74,14 +75,113 @@ class BNA_Checkout_Payload {
     }
 
     /**
-     * Get order items formatted for BNA API
+     * Check if address is valid for BNA API
+     */
+    private function has_valid_billing_address() {
+        $street = trim($this->order->get_billing_address_1());
+        $city = trim($this->order->get_billing_city());
+
+        // Minimum requirements: street and valid city
+        if (empty($street) || empty($city)) {
+            return false;
+        }
+
+        // City must pass BNA validation pattern
+        return $this->is_valid_city_name($city);
+    }
+
+    /**
+     * Get clean address - only include fields that have values
+     */
+    private function get_clean_billing_address() {
+        $street = trim($this->order->get_billing_address_1());
+        $city = $this->clean_city_name($this->order->get_billing_city());
+
+        $address = [
+            'streetName' => $street,
+            'city' => $city,
+            'province' => $this->order->get_billing_state() ?: 'Unknown',
+            'country' => $this->order->get_billing_country() ?: 'CA',
+            'postalCode' => $this->order->get_billing_postcode() ?: 'A1A1A1'
+        ];
+
+        // Only add street number if we can extract it
+        $street_number = $this->extract_street_number($street);
+        if (!empty($street_number)) {
+            $address['streetNumber'] = $street_number;
+        }
+        // If no street number - don't include the field at all
+
+        // Only add apartment if it exists
+        $apartment = trim($this->order->get_billing_address_2());
+        if (!empty($apartment)) {
+            $address['apartment'] = $apartment;
+        }
+
+        return $address;
+    }
+
+    /**
+     * Validate city name against BNA pattern: /^[\da-zA-ZÀ-ÖØ-öø-ÿ\s-]+$/u
+     */
+    private function is_valid_city_name($city) {
+        if (empty($city)) return false;
+        return preg_match('/^[\da-zA-ZÀ-ÖØ-öø-ÿ\s-]+$/u', $city);
+    }
+
+    /**
+     * Clean city name - remove invalid characters
+     */
+    private function clean_city_name($city) {
+        if (empty($city)) {
+            return 'Unknown';
+        }
+
+        // Remove all characters that don't match BNA pattern
+        $clean_city = preg_replace('/[^\da-zA-ZÀ-ÖØ-öø-ÿ\s-]/u', '', $city);
+        $clean_city = trim($clean_city);
+
+        if (empty($clean_city)) {
+            return 'Unknown';
+        }
+
+        return $clean_city;
+    }
+
+    /**
+     * Try to extract street number from address
+     */
+    private function extract_street_number($street) {
+        if (empty($street)) {
+            return '';
+        }
+
+        // Look for numbers at the beginning of address
+        if (preg_match('/^(\d+)/', trim($street), $matches)) {
+            return $matches[1];
+        }
+
+        // Look for numbers anywhere in the string as fallback
+        if (preg_match('/(\d+)/', $street, $matches)) {
+            return $matches[1];
+        }
+
+        // If no numbers found, generate a fallback for BNA API
+        // You can uncomment this if you want to always send an address:
+        // return '123';
+
+        return '';
+    }
+
+    /**
+     * Get order items
      */
     private function get_items() {
         $items = [];
 
         foreach ($this->order->get_items() as $item_id => $item) {
             $product = $item->get_product();
-            
+
             $items[] = [
                 'sku' => $product && $product->get_sku() ? $product->get_sku() : 'ITEM-' . $item_id,
                 'description' => $item->get_name(),
@@ -91,7 +191,7 @@ class BNA_Checkout_Payload {
             ];
         }
 
-        // Add taxes if exists
+        // Add tax if exists
         if ($this->order->get_total_tax() > 0) {
             $items[] = [
                 'sku' => 'TAX',
@@ -106,108 +206,21 @@ class BNA_Checkout_Payload {
     }
 
     /**
-     * Check if order has valid billing address
-     */
-    private function has_valid_billing_address() {
-        $street = $this->order->get_billing_address_1();
-        $city = $this->order->get_billing_city();
-        
-        // Need at least street and valid city
-        if (empty($street) || empty($city)) {
-            return false;
-        }
-
-        // City must pass BNA validation pattern
-        return $this->is_valid_city_name($city);
-    }
-
-    /**
-     * Get clean billing address with only non-empty fields
-     */
-    private function get_clean_billing_address() {
-        $street = $this->order->get_billing_address_1();
-        $city = $this->clean_city_name($this->order->get_billing_city());
-        
-        // Start with required fields
-        $address = [
-            'streetName' => $street,
-            'city' => $city,
-            'province' => $this->order->get_billing_state() ?: 'Unknown',
-            'country' => $this->order->get_billing_country() ?: 'CA',
-            'postalCode' => $this->order->get_billing_postcode() ?: 'A1A1A1'
-        ];
-
-        // Add optional fields only if they have values
-        $streetNumber = $this->extract_street_number($street);
-        if (!empty($streetNumber)) {
-            $address['streetNumber'] = $streetNumber;
-        }
-
-        $apartment = $this->order->get_billing_address_2();
-        if (!empty($apartment)) {
-            $address['apartment'] = $apartment;
-        }
-
-        return $address;
-    }
-
-    /**
-     * Validate city name against BNA pattern
-     */
-    private function is_valid_city_name($city) {
-        return preg_match('/^[\da-zA-ZÀ-ÖØ-öø-ÿ\s-]+$/u', $city);
-    }
-
-    /**
-     * Clean city name to match BNA validation
-     */
-    private function clean_city_name($city) {
-        if (empty($city)) {
-            return 'Unknown';
-        }
-
-        // Remove invalid characters (keep only: digits, latin letters, accented chars, spaces, hyphens)
-        $clean_city = preg_replace('/[^\da-zA-ZÀ-ÖØ-öø-ÿ\s-]/u', '', $city);
-        
-        if (empty(trim($clean_city))) {
-            return 'Unknown';
-        }
-        
-        return trim($clean_city);
-    }
-
-    /**
-     * Extract street number from address
-     */
-    private function extract_street_number($street) {
-        if (empty($street)) {
-            return '';
-        }
-
-        // Look for numbers at the beginning
-        if (preg_match('/^(\d+)/', $street, $matches)) {
-            return $matches[1];
-        }
-
-        return '';
-    }
-
-    /**
-     * Get customer birthdate from order
+     * Get customer birthdate
      */
     private function get_customer_birthdate() {
-        // Try order meta first
+        // From order meta
         $birthdate = $this->order->get_meta('_billing_birthdate');
         if (!empty($birthdate)) {
             return $birthdate;
         }
 
-        // Try POST data
+        // From POST data
         if (isset($_POST['billing_birthdate']) && !empty($_POST['billing_birthdate'])) {
             return sanitize_text_field($_POST['billing_birthdate']);
         }
 
-        // Default fallback
+        // Fallback
         return date('Y-m-d', strtotime('-25 years'));
     }
 
@@ -227,13 +240,13 @@ class BNA_Checkout_Payload {
         if (empty($phone)) {
             return '1234567890';
         }
-        
+
         $phone = preg_replace('/\D/', '', $phone);
-        
+
         if (strlen($phone) < 10) {
             $phone = str_pad($phone, 10, '0', STR_PAD_RIGHT);
         }
-        
+
         return substr($phone, 0, 10);
     }
 }
