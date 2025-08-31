@@ -1,7 +1,7 @@
 <?php
 /**
  * BNA API Handler
- * Fixed version with proper streetNumber extraction
+ * Updated version - no shipping, taxes, or additionalInfo
  */
 
 if (!defined('ABSPATH')) {
@@ -132,6 +132,7 @@ class BNA_API {
 
     /**
      * Build customer info object for checkout payload
+     * Updated: No additionalInfo sent
      */
     private function build_customer_info($order) {
         // Required fields
@@ -179,15 +180,7 @@ class BNA_API {
         // ALWAYS add address with streetNumber - required by BNA API
         $customer_info['address'] = $this->build_address($order);
 
-        // Add additional info for tracking
-        $customer_info['additionalInfo'] = array(
-            'field1' => 'WooCommerce Store Data',
-            'field2' => 'Order Number ' . $order->get_order_number(),
-            'field3' => 'BNA Payment Gateway Plugin',
-            'field4' => 'WordPress Integration Module',
-            'field5' => 'Plugin Version ' . BNA_SMART_PAYMENT_VERSION . ' Active',
-            'field6' => 'Customer Checkout Information'
-        );
+        // REMOVED: additionalInfo is no longer sent
 
         bna_debug('Customer info built', array(
             'order_id' => $order->get_id(),
@@ -422,10 +415,12 @@ class BNA_API {
 
     /**
      * Get order items for BNA API
+     * Updated: NO shipping or taxes included
      */
     private function get_order_items($order) {
         $items = array();
 
+        // Only add actual products - no shipping or taxes
         foreach ($order->get_items() as $item_id => $item) {
             $product = $item->get_product();
 
@@ -438,32 +433,14 @@ class BNA_API {
             );
         }
 
-        // Add shipping if exists
-        if ($order->get_shipping_total() > 0) {
-            $items[] = array(
-                'sku' => 'SHIPPING',
-                'description' => 'Shipping',
-                'quantity' => 1,
-                'price' => (float) $order->get_shipping_total(),
-                'amount' => (float) $order->get_shipping_total()
-            );
-        }
+        // REMOVED: Shipping and taxes are no longer added to items
 
-        // Add tax if exists
-        if ($order->get_total_tax() > 0) {
-            $items[] = array(
-                'sku' => 'TAX',
-                'description' => 'Tax',
-                'quantity' => 1,
-                'price' => (float) $order->get_total_tax(),
-                'amount' => (float) $order->get_total_tax()
-            );
-        }
-
-        bna_debug('Order items created', array(
+        bna_debug('Order items created (products only)', array(
             'order_id' => $order->get_id(),
             'items_count' => count($items),
-            'total_amount' => array_sum(array_column($items, 'amount'))
+            'total_amount' => array_sum(array_column($items, 'amount')),
+            'shipping_excluded' => true,
+            'tax_excluded' => true
         ));
 
         return $items;
