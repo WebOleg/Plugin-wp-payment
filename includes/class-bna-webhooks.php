@@ -1,7 +1,7 @@
 <?php
 /**
  * BNA Webhooks Handler
- * Simple webhook processing for BNA Smart Payment
+ * Processes webhook notifications from BNA Smart Payment
  */
 
 if (!defined('ABSPATH')) {
@@ -27,7 +27,6 @@ class BNA_Webhooks {
             'permission_callback' => '__return_true'
         ));
         
-        // Test endpoint
         register_rest_route('bna/v1', '/webhook/test', array(
             'methods' => 'GET',
             'callback' => array(__CLASS__, 'test_endpoint'),
@@ -37,6 +36,8 @@ class BNA_Webhooks {
     
     /**
      * Main webhook handler
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response
      */
     public static function handle_webhook($request) {
         $start_time = microtime(true);
@@ -53,15 +54,7 @@ class BNA_Webhooks {
         }
         
         try {
-            // Extract transaction data
-            $transaction = null;
-            if (isset($payload['data']['transaction'])) {
-                $transaction = $payload['data']['transaction'];
-            } elseif (isset($payload['transaction'])) {
-                $transaction = $payload['transaction'];
-            } else {
-                $transaction = $payload;
-            }
+            $transaction = self::extract_transaction_data($payload);
             
             if (empty($transaction['id'])) {
                 throw new Exception('Invalid transaction structure');
@@ -72,8 +65,7 @@ class BNA_Webhooks {
             $processing_time = round((microtime(true) - $start_time) * 1000, 2);
             bna_log('Webhook processed successfully', array(
                 'transaction_id' => $transaction['id'],
-                'processing_time_ms' => $processing_time,
-                'result' => $result
+                'processing_time_ms' => $processing_time
             ));
             
             return new WP_REST_Response($result, 200);
@@ -90,14 +82,33 @@ class BNA_Webhooks {
     }
     
     /**
+     * Extract transaction data from webhook payload
+     * @param array $payload
+     * @return array
+     */
+    private static function extract_transaction_data($payload) {
+        if (isset($payload['data']['transaction'])) {
+            return $payload['data']['transaction'];
+        }
+        
+        if (isset($payload['transaction'])) {
+            return $payload['transaction'];
+        }
+        
+        return $payload;
+    }
+    
+    /**
      * Process webhook based on transaction status
+     * @param array $transaction
+     * @param array $full_payload
+     * @return array
      */
     private static function process_webhook($transaction, $full_payload) {
         $transaction_id = $transaction['id'];
         $status = strtolower($transaction['status'] ?? 'unknown');
         $customer_id = $transaction['customerId'] ?? null;
         
-        // Find order by customer ID
         $order = self::find_order($customer_id, $transaction_id);
         
         if (!$order) {
@@ -108,7 +119,6 @@ class BNA_Webhooks {
             );
         }
         
-        // Prevent duplicate processing
         if ($order->is_paid()) {
             bna_log('Duplicate payment prevented', array(
                 'order_id' => $order->get_id(),
@@ -122,7 +132,6 @@ class BNA_Webhooks {
             );
         }
         
-        // Process by status
         switch ($status) {
             case 'approved':
                 return self::handle_approved($order, $transaction);
@@ -133,12 +142,6 @@ class BNA_Webhooks {
                 return self::handle_failed($order, $transaction, $status);
                 
             default:
-                bna_debug('Unhandled transaction status', array(
-                    'order_id' => $order->get_id(),
-                    'status' => $status,
-                    'transaction_id' => $transaction_id
-                ));
-                
                 return array(
                     'status' => 'success',
                     'message' => 'Status acknowledged but not processed',
@@ -150,14 +153,15 @@ class BNA_Webhooks {
     
     /**
      * Handle approved payment
+     * @param WC_Order $order
+     * @param array $transaction
+     * @return array
      */
     private static function handle_approved($order, $transaction) {
         $transaction_id = $transaction['id'];
         
-        // Complete payment
         $order->payment_complete($transaction_id);
         
-        // Add order note
         $amount = $transaction['total'] ?? $order->get_total();
         $currency = $transaction['currency'] ?? $order->get_currency();
         $note = sprintf(
@@ -168,7 +172,6 @@ class BNA_Webhooks {
         );
         $order->add_order_note($note);
         
-        // Clear token to prevent reuse
         $order->delete_meta_data('_bna_checkout_token');
         $order->delete_meta_data('_bna_checkout_generated_at');
         $order->add_meta_data('_bna_payment_completed_at', current_time('timestamp'));
@@ -178,36 +181,35 @@ class BNA_Webhooks {
         bna_log('Payment completed', array(
             'order_id' => $order->get_id(),
             'transaction_id' => $transaction_id,
-            'amount' => $amount,
-            'new_status' => $order->get_status()
+            'amount' => $amount
         ));
         
         return array(
             'status' => 'success',
             'order_id' => $order->get_id(),
             'transaction_id' => $transaction_id,
-            'new_status' => $order->get_status(),
             'message' => 'Payment completed'
         );
     }
     
     /**
      * Handle failed payment
+     * @param WC_Order $order
+     * @param array $transaction
+     * @param string $status
+     * @return array
      */
     private static function handle_failed($order, $transaction, $status) {
         $transaction_id = $transaction['id'];
         $reason = $transaction['declineReason'] ?? $transaction['cancelReason'] ?? "Payment {$status}";
         
-        // Update order status
         $order->update_status('failed', "BNA Payment {$status}: {$reason}");
         
-        // Clear token
         $order->delete_meta_data('_bna_checkout_token');
         $order->add_meta_data('_bna_payment_failed_at', current_time('timestamp'));
         $order->add_meta_data('_bna_failure_reason', $reason);
         $order->save();
         
-        // Restore stock
         wc_maybe_increase_stock_levels($order);
         
         bna_error('Payment failed', array(
@@ -228,14 +230,16 @@ class BNA_Webhooks {
     }
     
     /**
-     * Find order by customer ID or transaction data
+     * Find order by customer ID
+     * @param string $customer_id
+     * @param string $transaction_id
+     * @return WC_Order|false
      */
     private static function find_order($customer_id, $transaction_id) {
         if (empty($customer_id)) {
             return false;
         }
         
-        // Find by BNA customer ID
         $orders = wc_get_orders(array(
             'meta_key' => '_bna_customer_id',
             'meta_value' => $customer_id,
@@ -246,24 +250,13 @@ class BNA_Webhooks {
             'order' => 'DESC'
         ));
         
-        if (!empty($orders)) {
-            bna_debug('Order found by BNA customer ID', array(
-                'customer_id' => $customer_id,
-                'order_id' => $orders[0]->get_id()
-            ));
-            return $orders[0];
-        }
-        
-        bna_debug('Order not found', array(
-            'customer_id' => $customer_id,
-            'transaction_id' => $transaction_id
-        ));
-        
-        return false;
+        return !empty($orders) ? $orders[0] : false;
     }
     
     /**
      * Test endpoint
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response
      */
     public static function test_endpoint($request) {
         return new WP_REST_Response(array(
@@ -277,6 +270,7 @@ class BNA_Webhooks {
     
     /**
      * Get webhook URL for BNA portal configuration
+     * @return string
      */
     public static function get_webhook_url() {
         return home_url('/wp-json/bna/v1/webhook');

@@ -1,7 +1,7 @@
 <?php
 /**
- * BNA Simple Logger
- * Single file logging for BNA Smart Payment
+ * BNA Logger
+ * Simple logging functionality for BNA Smart Payment
  */
 
 if (!defined('ABSPATH')) {
@@ -14,13 +14,13 @@ class BNA_Logger {
     
     /**
      * Get log file path
+     * @return string
      */
     private static function get_log_file() {
         if (self::$log_file === null) {
             $upload_dir = wp_upload_dir();
             $log_dir = $upload_dir['basedir'] . '/bna-logs/';
             
-            // Create directory if not exists
             if (!file_exists($log_dir)) {
                 wp_mkdir_p($log_dir);
                 file_put_contents($log_dir . '.htaccess', "deny from all\n");
@@ -35,6 +35,9 @@ class BNA_Logger {
     
     /**
      * Write log entry
+     * @param string $message Log message
+     * @param array $data Additional data to log
+     * @param string $level Log level (INFO, DEBUG, ERROR)
      */
     public static function log($message, $data = [], $level = 'INFO') {
         $timestamp = current_time('Y-m-d H:i:s');
@@ -50,7 +53,9 @@ class BNA_Logger {
     }
     
     /**
-     * Debug log
+     * Debug log (only when WP_DEBUG is enabled)
+     * @param string $message
+     * @param array $data
      */
     public static function debug($message, $data = []) {
         if (defined('WP_DEBUG') && WP_DEBUG) {
@@ -60,6 +65,8 @@ class BNA_Logger {
     
     /**
      * Info log
+     * @param string $message
+     * @param array $data
      */
     public static function info($message, $data = []) {
         self::log($message, $data, 'INFO');
@@ -67,13 +74,17 @@ class BNA_Logger {
     
     /**
      * Error log
+     * @param string $message
+     * @param array $data
      */
     public static function error($message, $data = []) {
         self::log($message, $data, 'ERROR');
     }
     
     /**
-     * Get log contents for admin
+     * Get recent log contents
+     * @param int $lines Number of lines to retrieve
+     * @return string
      */
     public static function get_logs($lines = 500) {
         $log_file = self::get_log_file();
@@ -94,7 +105,8 @@ class BNA_Logger {
     }
     
     /**
-     * Clear logs
+     * Clear all logs
+     * @return bool
      */
     public static function clear() {
         $log_file = self::get_log_file();
@@ -105,7 +117,8 @@ class BNA_Logger {
     }
     
     /**
-     * Get log file size
+     * Get log file size in bytes
+     * @return int
      */
     public static function get_log_size() {
         $log_file = self::get_log_file();
@@ -113,7 +126,9 @@ class BNA_Logger {
     }
 }
 
-// Global helper functions for easy logging
+/**
+ * Global helper functions for easy logging
+ */
 function bna_log($message, $data = []) {
     BNA_Logger::info($message, $data);
 }

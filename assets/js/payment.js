@@ -8,7 +8,6 @@
     var BNA_Payment = {
 
         init: function() {
-            console.log('BNA Payment: Initializing...');
             this.setupIframeHandlers();
             this.setupMessageListener();
         },
@@ -19,33 +18,26 @@
             var $errorContainer = $('#bna-payment-error');
 
             if (!$iframe.length) {
-                console.log('BNA Payment: No iframe found');
                 return;
             }
 
-            // Handle iframe load
             $iframe.on('load', function() {
-                console.log('BNA Payment: iFrame loaded successfully');
                 $loading.fadeOut(300, function() {
                     $iframe.fadeIn(300);
                 });
             });
 
-            // Handle iframe errors
             $iframe.on('error', function() {
-                console.error('BNA Payment: iFrame failed to load');
                 $loading.hide();
                 $errorContainer.show();
             });
 
-            // Timeout handler
             this.setupLoadTimeout($loading, $errorContainer);
         },
 
         setupLoadTimeout: function($loading, $errorContainer) {
             setTimeout(function() {
                 if ($loading.is(':visible')) {
-                    console.warn('BNA Payment: iFrame loading timeout');
                     $loading.hide();
                     $errorContainer.show();
                     $('#bna-error-message').text('Payment form loading timed out. Please refresh the page.');
@@ -57,9 +49,6 @@
             var self = this;
             
             window.addEventListener('message', function(event) {
-                console.log('BNA Payment: Message received:', event.data);
-                
-                // Validate origin for security
                 var allowedOrigins = [
                     'https://dev-api-service.bnasmartpayment.com',
                     'https://stage-api-service.bnasmartpayment.com', 
@@ -67,7 +56,6 @@
                 ];
                 
                 if (allowedOrigins.indexOf(event.origin) === -1) {
-                    console.warn('BNA Payment: Message from untrusted origin:', event.origin);
                     return;
                 }
                 
@@ -78,8 +66,6 @@
         },
 
         handlePaymentMessage: function(data) {
-            console.log('BNA Payment: Handling message type:', data.type);
-            
             switch(data.type) {
                 case 'payment_success':
                     this.handlePaymentSuccess(data.data);
@@ -89,35 +75,23 @@
                 case 'payment_error':
                     this.handlePaymentFailure(data.message);
                     break;
-                    
-                default:
-                    console.log('BNA Payment: Unknown message type:', data.type);
             }
         },
 
         handlePaymentSuccess: function(paymentData) {
-            console.log('BNA Payment: Payment successful, redirecting...');
-            
-            // Show success message briefly
             this.showSuccessMessage();
             
-            // Redirect to thank you page after short delay
             setTimeout(function() {
-                // Get thank you URL from page data or construct it
                 var thankYouUrl = window.bnaPaymentData && window.bnaPaymentData.thankYouUrl;
                 if (thankYouUrl) {
                     window.location.href = thankYouUrl;
                 } else {
-                    // Fallback: reload page to trigger PHP redirect check
                     window.location.reload();
                 }
             }, 2000);
         },
 
         handlePaymentFailure: function(errorMessage) {
-            console.log('BNA Payment: Payment failed:', errorMessage);
-            
-            // Hide iframe and show error
             $('#bna-iframe-container').hide();
             $('#bna-payment-error').show();
             $('#bna-error-message').text(errorMessage || 'Payment failed. Please try again.');
@@ -135,7 +109,6 @@
         }
     };
 
-    // Initialize when document ready
     $(document).ready(function() {
         BNA_Payment.init();
     });

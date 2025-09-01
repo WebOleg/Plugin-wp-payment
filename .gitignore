@@ -23,7 +23,7 @@ Thumbs.db
 vendor/
 composer.lock
 
-# Node modules (if used)
+# Node modules
 node_modules/
 package-lock.json
 yarn.lock
@@ -63,5 +63,3 @@ tests/_output/*
 # Backup files
 *.sql
 *.backup
-<< 'EOF'
-"
