@@ -51,7 +51,7 @@ class BNA_API {
 
         // Try to get or create customer first
         $customer_result = $this->get_or_create_customer($order);
-        
+
         if (is_wp_error($customer_result)) {
             return $customer_result;
         }
@@ -109,7 +109,7 @@ class BNA_API {
                 'customer_id' => $existing_customer_id,
                 'order_id' => $order->get_id()
             ));
-            
+
             return array(
                 'customer_id' => $existing_customer_id,
                 'is_existing' => true
@@ -118,7 +118,7 @@ class BNA_API {
 
         // Try to create new customer
         $customer_data = $this->build_customer_info($order);
-        
+
         if (!$customer_data) {
             return new WP_Error('customer_data_error', 'Failed to build customer data');
         }
@@ -133,36 +133,36 @@ class BNA_API {
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
             $error_data = $response->get_error_data();
-            
+
             // Check if customer already exists (can be 400 or 409 status)
             $is_customer_exists = false;
-            
+
             if (isset($error_data['status']) && ($error_data['status'] === 400 || $error_data['status'] === 409)) {
                 $is_customer_exists = true;
             }
-            
+
             // Also check error message patterns
-            if (stripos($error_message, 'customer already exist') !== false || 
+            if (stripos($error_message, 'customer already exist') !== false ||
                 stripos($error_message, 'customer already exists') !== false) {
                 $is_customer_exists = true;
             }
-            
+
             if ($is_customer_exists) {
                 bna_debug('Customer exists, searching for existing customer', array(
                     'customer_email' => $customer_data['email'],
                     'error_status' => $error_data['status'] ?? 'unknown',
                     'error_message' => $error_message
                 ));
-                
+
                 return $this->find_existing_customer($customer_data['email']);
             }
-            
+
             bna_error('Customer creation failed', array(
                 'error' => $error_message,
                 'customer_email' => $customer_data['email'],
                 'status' => $error_data['status'] ?? 'unknown'
             ));
-            
+
             return $response;
         }
 
@@ -210,7 +210,7 @@ class BNA_API {
 
         // Response could be direct array of customers or nested
         $customers = isset($response['data']) ? $response['data'] : $response;
-        
+
         if (empty($customers) || !is_array($customers)) {
             bna_error('No customers found in search response', array(
                 'email' => $email,
@@ -320,11 +320,21 @@ class BNA_API {
     }
 
     /**
-     * Build address with required streetNumber and postalCode
+     * Build address based on billing address settings
      * @param WC_Order $order
      * @return array
      */
     private function build_address($order) {
+        $enable_billing_address = get_option('bna_smart_payment_enable_billing_address', 'no');
+
+        // If billing address is disabled, return only postal code
+        if ($enable_billing_address !== 'yes') {
+            return array(
+                'postalCode' => $this->format_postal_code($order->get_billing_postcode())
+            );
+        }
+
+        // Full address when billing address is enabled
         $street = trim($order->get_billing_address_1());
         $city = trim($order->get_billing_city());
 
@@ -644,14 +654,14 @@ class BNA_API {
         }
 
         if (isset($parsed_response['error'])) {
-            return is_array($parsed_response['error']) 
-                ? implode(', ', $parsed_response['error']) 
+            return is_array($parsed_response['error'])
+                ? implode(', ', $parsed_response['error'])
                 : $parsed_response['error'];
         }
 
         if (isset($parsed_response['errors'])) {
-            return is_array($parsed_response['errors']) 
-                ? implode(', ', $parsed_response['errors']) 
+            return is_array($parsed_response['errors'])
+                ? implode(', ', $parsed_response['errors'])
                 : $parsed_response['errors'];
         }
 
