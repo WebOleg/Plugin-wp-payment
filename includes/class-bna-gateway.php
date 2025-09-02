@@ -1,9 +1,4 @@
 <?php
-/**
- * BNA Gateway
- * WooCommerce payment gateway for BNA Smart Payment
- */
-
 if (!defined('ABSPATH')) exit;
 
 class BNA_Gateway extends WC_Payment_Gateway {
@@ -31,9 +26,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         ));
     }
 
-    /**
-     * Load settings from options
-     */
     private function load_settings() {
         $this->enabled = $this->get_option('enabled');
         $this->title = $this->get_option('title');
@@ -48,9 +40,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->enable_shipping_address = $this->get_option('enable_shipping_address');
     }
 
-    /**
-     * Initialize hooks
-     */
     private function init_hooks() {
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
 
@@ -68,9 +57,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    /**
-     * Initialize form fields for admin settings
-     */
     public function init_form_fields() {
         $this->form_fields = array(
             'enabled' => array(
@@ -163,9 +149,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         );
     }
 
-    /**
-     * Process admin options and save global settings
-     */
     public function process_admin_options() {
         bna_log('Processing gateway admin options update');
         $saved = parent::process_admin_options();
@@ -186,11 +169,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $saved;
     }
 
-    /**
-     * Add birthdate field to checkout
-     * @param array $fields
-     * @return array
-     */
     public function add_birthdate_field($fields) {
         $fields['billing_birthdate'] = array(
             'label' => __('Date of Birth', 'bna-smart-payment'),
@@ -208,16 +186,10 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $fields;
     }
 
-    /**
-     * Add shipping address section after billing form
-     */
     public function add_shipping_address_section() {
         BNA_Template::load('shipping-address-fields');
     }
 
-    /**
-     * Enqueue shipping address scripts
-     */
     public function enqueue_shipping_scripts() {
         if (!is_checkout()) {
             return;
@@ -231,18 +203,22 @@ class BNA_Gateway extends WC_Payment_Gateway {
             true
         );
 
-        wp_localize_script('bna-shipping-address', 'bna_shipping', array(
+        $countries_obj = new WC_Countries();
+        $countries = $countries_obj->get_countries();
+        $states = $countries_obj->get_states();
+
+        wp_localize_script('bna-shipping-address', 'bna_shipping_data', array(
             'gateway_id' => $this->id,
+            'countries' => $countries,
+            'states' => $states,
             'i18n' => array(
-                'same_as_billing' => __('Same as billing address', 'bna-smart-payment'),
-                'shipping_required' => __('Shipping address is required when different from billing.', 'bna-smart-payment')
+                'select_country' => __('Select Country...', 'bna-smart-payment'),
+                'select_state' => __('Select State/Province...', 'bna-smart-payment'),
+                'no_states' => __('No states available', 'bna-smart-payment')
             )
         ));
     }
 
-    /**
-     * Validate birthdate field during checkout
-     */
     public function validate_birthdate() {
         if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
             return;
@@ -273,9 +249,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    /**
-     * Validate shipping address during checkout
-     */
     public function validate_shipping_address() {
         if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
             return;
@@ -300,10 +273,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    /**
-     * Save birthdate to order meta
-     * @param int $order_id
-     */
     public function save_birthdate($order_id) {
         if (!empty($_POST['billing_birthdate'])) {
             $order = wc_get_order($order_id);
@@ -315,10 +284,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    /**
-     * Save shipping address to order meta
-     * @param int $order_id
-     */
     public function save_shipping_address($order_id) {
         $order = wc_get_order($order_id);
         if (!$order) {
@@ -349,10 +314,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $order->save();
     }
 
-    /**
-     * Display payment page (called from main plugin class)
-     * @param WC_Order $order
-     */
     public function display_payment_page_public($order) {
         try {
             if ($order->is_paid()) {
@@ -381,11 +342,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    /**
-     * Get or create iframe URL for order
-     * @param WC_Order $order
-     * @return string|false
-     */
     private function get_or_create_iframe_url($order) {
         $existing_token = $order->get_meta('_bna_checkout_token');
         $token_generated_at = $order->get_meta('_bna_checkout_generated_at');
@@ -406,11 +362,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $this->create_new_iframe_url($order);
     }
 
-    /**
-     * Create new iframe URL for order
-     * @param WC_Order $order
-     * @return string|false
-     */
     private function create_new_iframe_url($order) {
         bna_log('Creating new checkout token', array('order_id' => $order->get_id()));
 
@@ -441,30 +392,16 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $this->api->get_iframe_url($token);
     }
 
-    /**
-     * Redirect with error message
-     * @param WC_Order $order
-     * @param string $message
-     */
     private function redirect_with_error($order, $message) {
         wc_add_notice($message, 'error');
         wp_safe_redirect(wc_get_checkout_url());
         exit;
     }
 
-    /**
-     * Generate payment URL for order
-     * @param WC_Order $order
-     * @return string
-     */
     private function get_payment_url($order) {
         return home_url('/bna-payment/' . $order->get_id() . '/' . $order->get_order_key() . '/');
     }
 
-    /**
-     * Check if gateway is available for checkout
-     * @return bool
-     */
     public function is_available() {
         if ($this->enabled !== 'yes') {
             return false;
@@ -477,21 +414,12 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $this->has_required_settings();
     }
 
-    /**
-     * Check if all required settings are configured
-     * @return bool
-     */
     private function has_required_settings() {
         return !empty($this->access_key) &&
             !empty($this->secret_key) &&
             !empty($this->iframe_id);
     }
 
-    /**
-     * Process payment (WooCommerce checkout hook)
-     * @param int $order_id
-     * @return array
-     */
     public function process_payment($order_id) {
         bna_log('Processing payment started', array('order_id' => $order_id));
 
@@ -534,11 +462,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    /**
-     * Validate order before payment processing
-     * @param WC_Order $order
-     * @return array
-     */
     private function validate_order_for_payment($order) {
         $errors = array();
 
@@ -569,10 +492,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         );
     }
 
-    /**
-     * Prepare order for payment
-     * @param WC_Order $order
-     */
     private function prepare_order_for_payment($order) {
         if ($order->get_status() !== 'pending') {
             $order->update_status('pending', __('Awaiting BNA Smart Payment.', 'bna-smart-payment'));
@@ -583,9 +502,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $order->save();
     }
 
-    /**
-     * Admin options page
-     */
     public function admin_options() {
         echo '<h2>BNA Smart Payment Gateway</h2>';
         echo '<p>' . __('Accept payments through BNA Smart Payment with secure iframe integration.', 'bna-smart-payment') . '</p>';
@@ -607,10 +523,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         echo '</table>';
     }
 
-    /**
-     * Get missing required settings for status display
-     * @return array
-     */
     private function get_missing_settings() {
         $missing = array();
         if (empty($this->access_key)) $missing[] = __('Access Key', 'bna-smart-payment');

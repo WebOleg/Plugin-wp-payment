@@ -1,9 +1,4 @@
 <?php
-/**
- * BNA API Handler
- * Handles communication with BNA Smart Payment API
- */
-
 if (!defined('ABSPATH')) {
     exit;
 }
@@ -32,11 +27,6 @@ class BNA_API {
         ));
     }
 
-    /**
-     * Generate checkout token for order
-     * @param WC_Order $order
-     * @return array|WP_Error
-     */
     public function generate_checkout_token($order) {
         $iframe_id = get_option('bna_smart_payment_iframe_id');
         if (empty($iframe_id)) {
@@ -49,7 +39,6 @@ class BNA_API {
             'order_total' => $order->get_total()
         ));
 
-        // Try to get or create customer first
         $customer_result = $this->get_or_create_customer($order);
 
         if (is_wp_error($customer_result)) {
@@ -81,7 +70,6 @@ class BNA_API {
             return new WP_Error('invalid_response', 'Token not found in response');
         }
 
-        // Save customer ID to order for webhook processing
         if (!empty($customer_result['customer_id'])) {
             $order->add_meta_data('_bna_customer_id', $customer_result['customer_id']);
             $order->save();
@@ -96,13 +84,7 @@ class BNA_API {
         return $response;
     }
 
-    /**
-     * Get existing customer or create new one
-     * @param WC_Order $order
-     * @return array|WP_Error
-     */
     private function get_or_create_customer($order) {
-        // Check if we already have customer ID saved
         $existing_customer_id = $order->get_meta('_bna_customer_id');
         if (!empty($existing_customer_id)) {
             bna_debug('Using existing customer ID', array(
@@ -116,7 +98,6 @@ class BNA_API {
             );
         }
 
-        // Try to create new customer
         $customer_data = $this->build_customer_info($order);
 
         if (!$customer_data) {
@@ -134,14 +115,12 @@ class BNA_API {
             $error_message = $response->get_error_message();
             $error_data = $response->get_error_data();
 
-            // Check if customer already exists (can be 400 or 409 status)
             $is_customer_exists = false;
 
             if (isset($error_data['status']) && ($error_data['status'] === 400 || $error_data['status'] === 409)) {
                 $is_customer_exists = true;
             }
 
-            // Also check error message patterns
             if (stripos($error_message, 'customer already exist') !== false ||
                 stripos($error_message, 'customer already exists') !== false) {
                 $is_customer_exists = true;
@@ -182,13 +161,7 @@ class BNA_API {
         );
     }
 
-    /**
-     * Find existing customer by email
-     * @param string $email
-     * @return array|WP_Error
-     */
     private function find_existing_customer($email) {
-        // Try to get customer list and find by email
         $response = $this->make_request('v1/customers', 'GET', array(
             'email' => $email,
             'limit' => 1
@@ -202,13 +175,11 @@ class BNA_API {
             return $response;
         }
 
-        // Check if we found customer in response array
         if (empty($response) || !is_array($response)) {
             bna_error('Invalid customer search response format', array('response' => $response));
             return new WP_Error('invalid_search_response', 'Invalid customer search response');
         }
 
-        // Response could be direct array of customers or nested
         $customers = isset($response['data']) ? $response['data'] : $response;
 
         if (empty($customers) || !is_array($customers)) {
@@ -237,12 +208,6 @@ class BNA_API {
         );
     }
 
-    /**
-     * Create checkout payload with customer ID or customer info
-     * @param WC_Order $order
-     * @param array $customer_result
-     * @return array|false
-     */
     private function create_checkout_payload($order, $customer_result) {
         $payload = array(
             'iframeId' => get_option('bna_smart_payment_iframe_id'),
@@ -250,7 +215,6 @@ class BNA_API {
             'items' => $this->get_order_items($order)
         );
 
-        // Use customer ID if available, otherwise use customer info
         if (!empty($customer_result['customer_id'])) {
             $payload['customerId'] = $customer_result['customer_id'];
             bna_debug('Using customer ID in payload', array(
@@ -273,11 +237,6 @@ class BNA_API {
         return $payload;
     }
 
-    /**
-     * Build customer info object for customer creation
-     * @param WC_Order $order
-     * @return array|false
-     */
     private function build_customer_info($order) {
         $email = trim($order->get_billing_email());
         $first_name = $this->clean_name($order->get_billing_first_name());
@@ -316,25 +275,29 @@ class BNA_API {
 
         $customer_info['address'] = $this->build_address($order);
 
+        // Add shipping address if different from billing
+        $shipping_address = $this->build_shipping_address($order);
+        if ($shipping_address) {
+            $customer_info['shippingAddress'] = $shipping_address;
+            
+            bna_debug('Shipping address added to customer info', array(
+                'order_id' => $order->get_id(),
+                'shipping_country' => $shipping_address['country'] ?? 'unknown'
+            ));
+        }
+
         return $customer_info;
     }
 
-    /**
-     * Build address based on billing address settings
-     * @param WC_Order $order
-     * @return array
-     */
     private function build_address($order) {
         $enable_billing_address = get_option('bna_smart_payment_enable_billing_address', 'no');
 
-        // If billing address is disabled, return only postal code
         if ($enable_billing_address !== 'yes') {
             return array(
                 'postalCode' => $this->format_postal_code($order->get_billing_postcode())
             );
         }
 
-        // Full address when billing address is enabled
         $street = trim($order->get_billing_address_1());
         $city = trim($order->get_billing_city());
 
@@ -358,11 +321,46 @@ class BNA_API {
         return $address;
     }
 
-    /**
-     * Extract street number from address
-     * @param string $street
-     * @return string
-     */
+    private function build_shipping_address($order) {
+        if (get_option('bna_smart_payment_enable_shipping_address') !== 'yes') {
+            return null;
+        }
+
+        $same_as_billing = $order->get_meta('_bna_shipping_same_as_billing');
+        if ($same_as_billing === 'yes') {
+            return null;
+        }
+
+        $shipping_country = $order->get_meta('_bna_shipping_country');
+        $shipping_address_1 = $order->get_meta('_bna_shipping_address_1');
+        $shipping_city = $order->get_meta('_bna_shipping_city');
+        $shipping_state = $order->get_meta('_bna_shipping_state');
+        $shipping_postcode = $order->get_meta('_bna_shipping_postcode');
+
+        if (empty($shipping_country) || empty($shipping_address_1) || empty($shipping_city)) {
+            return null;
+        }
+
+        $street_number = $this->extract_street_number($shipping_address_1);
+        $street_name = $this->clean_street_name($shipping_address_1, $street_number);
+
+        $shipping_address = array(
+            'streetNumber' => $street_number,
+            'streetName' => $street_name,
+            'city' => $this->clean_city_name($shipping_city),
+            'province' => $shipping_state ?: 'ON',
+            'country' => $shipping_country ?: 'CA',
+            'postalCode' => $this->format_postal_code($shipping_postcode)
+        );
+
+        $shipping_address_2 = $order->get_meta('_bna_shipping_address_2');
+        if (!empty($shipping_address_2)) {
+            $shipping_address['apartment'] = trim($shipping_address_2);
+        }
+
+        return $shipping_address;
+    }
+
     private function extract_street_number($street) {
         if (empty($street)) {
             return '1';
@@ -381,12 +379,6 @@ class BNA_API {
         return '1';
     }
 
-    /**
-     * Clean street name by removing number
-     * @param string $street
-     * @param string $street_number
-     * @return string
-     */
     private function clean_street_name($street, $street_number) {
         if (empty($street)) {
             return 'Main Street';
@@ -402,11 +394,6 @@ class BNA_API {
         return empty($cleaned) ? 'Main Street' : $cleaned;
     }
 
-    /**
-     * Get clean phone number in North American format
-     * @param WC_Order $order
-     * @return string|false
-     */
     private function get_clean_phone($order) {
         $phone = trim($order->get_billing_phone());
 
@@ -423,11 +410,6 @@ class BNA_API {
         return strlen($phone) === 10 ? $phone : false;
     }
 
-    /**
-     * Get valid birthdate from order
-     * @param WC_Order $order
-     * @return string
-     */
     private function get_valid_birthdate($order) {
         $birthdate = $order->get_meta('_billing_birthdate');
         if ($this->is_valid_birthdate($birthdate)) {
@@ -444,11 +426,6 @@ class BNA_API {
         return '1990-01-01';
     }
 
-    /**
-     * Validate birthdate format and age restrictions
-     * @param string $birthdate
-     * @return bool
-     */
     private function is_valid_birthdate($birthdate) {
         if (empty($birthdate)) {
             return false;
@@ -466,11 +443,6 @@ class BNA_API {
         return $date_obj <= $eighteen_years_ago && $date_obj >= $hundred_twenty_years_ago;
     }
 
-    /**
-     * Clean name fields removing special characters
-     * @param string $name
-     * @return string
-     */
     private function clean_name($name) {
         if (empty($name)) {
             return '';
@@ -482,11 +454,6 @@ class BNA_API {
         return trim($cleaned);
     }
 
-    /**
-     * Clean city name
-     * @param string $city
-     * @return string
-     */
     private function clean_city_name($city) {
         if (empty($city)) {
             return 'Unknown';
@@ -498,11 +465,6 @@ class BNA_API {
         return empty($clean_city) ? 'Unknown' : $clean_city;
     }
 
-    /**
-     * Format postal code for Canadian/US formats
-     * @param string $postal_code
-     * @return string
-     */
     private function format_postal_code($postal_code) {
         if (empty($postal_code)) {
             return 'A1A 1A1';
@@ -521,11 +483,6 @@ class BNA_API {
         return $postal_code ?: 'A1A 1A1';
     }
 
-    /**
-     * Get order items for BNA API (products only, no shipping/taxes)
-     * @param WC_Order $order
-     * @return array
-     */
     private function get_order_items($order) {
         $items = array();
 
@@ -549,22 +506,10 @@ class BNA_API {
         return $items;
     }
 
-    /**
-     * Get iFrame URL with token
-     * @param string $token
-     * @return string
-     */
     public function get_iframe_url($token) {
         return $this->get_api_url() . '/v1/checkout/' . $token;
     }
 
-    /**
-     * Make HTTP request to BNA API
-     * @param string $endpoint
-     * @param string $method
-     * @param array $data
-     * @return array|WP_Error
-     */
     public function make_request($endpoint, $method = 'GET', $data = array()) {
         $start_time = microtime(true);
 
@@ -642,12 +587,6 @@ class BNA_API {
         return $parsed_response;
     }
 
-    /**
-     * Extract error message from API response
-     * @param array $parsed_response
-     * @param int $response_code
-     * @return string
-     */
     private function extract_error_message($parsed_response, $response_code) {
         if (isset($parsed_response['message'])) {
             return $parsed_response['message'];
@@ -668,18 +607,10 @@ class BNA_API {
         return "API request failed with status $response_code";
     }
 
-    /**
-     * Get API URL for current environment
-     * @return string
-     */
     private function get_api_url() {
         return self::ENVIRONMENTS[$this->environment] ?? self::ENVIRONMENTS['staging'];
     }
 
-    /**
-     * Get authorization headers for API requests
-     * @return array
-     */
     private function get_auth_headers() {
         $credentials_string = $this->credentials['access_key'] . ':' . $this->credentials['secret_key'];
         $encoded_credentials = base64_encode($credentials_string);
@@ -691,18 +622,10 @@ class BNA_API {
         );
     }
 
-    /**
-     * Check if API credentials are configured
-     * @return bool
-     */
     private function has_credentials() {
         return !empty($this->credentials['access_key']) && !empty($this->credentials['secret_key']);
     }
 
-    /**
-     * Test API connection
-     * @return bool
-     */
     public function test_connection() {
         $result = $this->make_request('v1/account', 'GET');
 

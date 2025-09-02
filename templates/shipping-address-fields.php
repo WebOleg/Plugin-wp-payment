@@ -27,14 +27,18 @@ if (!defined('ABSPATH')) {
                 <?php _e('Country', 'bna-smart-payment'); ?> 
                 <abbr class="required" title="required">*</abbr>
             </label>
-            <input 
-                type="text" 
-                class="input-text" 
-                name="bna_shipping_country" 
-                id="bna_shipping_country" 
-                value="Canada"
-                readonly
-            />
+            
+            <div class="bna-custom-select" id="bna_country_selector">
+                <div class="bna-select-selected" data-value="">
+                    <span class="bna-select-text">Select Country...</span>
+                    <span class="bna-select-arrow">▼</span>
+                </div>
+                <ul class="bna-select-options" style="display: none;">
+                    <li data-value="">Select Country...</li>
+                </ul>
+            </div>
+            
+            <input type="hidden" name="bna_shipping_country" id="bna_shipping_country" value="" required />
         </p>
 
         <p class="form-row form-row-wide">
@@ -47,6 +51,7 @@ if (!defined('ABSPATH')) {
                 class="input-text" 
                 name="bna_shipping_address_1" 
                 id="bna_shipping_address_1"
+                placeholder="<?php esc_attr_e('House number and street name', 'bna-smart-payment'); ?>"
             />
         </p>
 
@@ -60,10 +65,11 @@ if (!defined('ABSPATH')) {
                 class="input-text" 
                 name="bna_shipping_address_2" 
                 id="bna_shipping_address_2"
+                placeholder="<?php esc_attr_e('Apartment, suite, etc.', 'bna-smart-payment'); ?>"
             />
         </p>
 
-        <p class="form-row form-row-first">
+        <p class="form-row form-row-wide">
             <label for="bna_shipping_city">
                 <?php _e('City', 'bna-smart-payment'); ?> 
                 <abbr class="required" title="required">*</abbr>
@@ -73,21 +79,27 @@ if (!defined('ABSPATH')) {
                 class="input-text" 
                 name="bna_shipping_city" 
                 id="bna_shipping_city"
+                placeholder="<?php esc_attr_e('City', 'bna-smart-payment'); ?>"
             />
         </p>
 
-        <p class="form-row form-row-last">
-            <label for="bna_shipping_province">
+        <p class="form-row form-row-wide">
+            <label for="bna_shipping_state">
                 <?php _e('Province', 'bna-smart-payment'); ?> 
                 <abbr class="required" title="required">*</abbr>
             </label>
-            <input 
-                type="text" 
-                class="input-text" 
-                name="bna_shipping_province" 
-                id="bna_shipping_province"
-                placeholder="<?php esc_attr_e('Province', 'bna-smart-payment'); ?>"
-            />
+            
+            <div class="bna-custom-select" id="bna_province_selector">
+                <div class="bna-select-selected" data-value="">
+                    <span class="bna-select-text">Select Province...</span>
+                    <span class="bna-select-arrow">▼</span>
+                </div>
+                <ul class="bna-select-options" style="display: none;">
+                    <li data-value="">Select Province...</li>
+                </ul>
+            </div>
+            
+            <input type="hidden" name="bna_shipping_state" id="bna_shipping_state" value="" required />
         </p>
 
         <p class="form-row form-row-wide">
@@ -100,7 +112,8 @@ if (!defined('ABSPATH')) {
                 class="input-text" 
                 name="bna_shipping_postcode" 
                 id="bna_shipping_postcode"
-                maxlength="7"
+                maxlength="10"
+                placeholder="<?php esc_attr_e('A1A 1A1', 'bna-smart-payment'); ?>"
             />
         </p>
     </div>
