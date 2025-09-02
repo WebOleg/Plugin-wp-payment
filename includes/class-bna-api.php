@@ -52,6 +52,15 @@ class BNA_API {
             return new WP_Error('payload_error', 'Failed to create checkout payload');
         }
 
+        // Log shipping data if present
+        if (isset($checkout_data['customerInfo']['shippingAddress'])) {
+            bna_log('Shipping address included in checkout payload', array(
+                'order_id' => $order->get_id(),
+                'shipping_country' => $checkout_data['customerInfo']['shippingAddress']['country'] ?? 'unknown',
+                'shipping_city' => $checkout_data['customerInfo']['shippingAddress']['city'] ?? 'unknown'
+            ));
+        }
+
         $response = $this->make_request('v1/checkout', 'POST', $checkout_data);
 
         if (is_wp_error($response)) {
@@ -115,16 +124,24 @@ class BNA_API {
             $error_message = $response->get_error_message();
             $error_data = $response->get_error_data();
 
-            $is_customer_exists = false;
-
-            if (isset($error_data['status']) && ($error_data['status'] === 400 || $error_data['status'] === 409)) {
-                $is_customer_exists = true;
+            // Check if this might NOT be a customer exists error
+            $is_validation_error = $this->is_validation_error($error_message, $error_data);
+            
+            if ($is_validation_error) {
+                // This might be a real validation error, not customer exists
+                bna_error('Customer validation error - may be data issue', array(
+                    'error' => $error_message,
+                    'customer_email' => $customer_data['email'],
+                    'status' => $error_data['status'] ?? 'unknown',
+                    'customer_data_keys' => array_keys($customer_data)
+                ));
+                
+                // Try without shipping address to see if that's the issue
+                return $this->try_create_customer_without_shipping($order, $customer_data);
             }
 
-            if (stripos($error_message, 'customer already exist') !== false ||
-                stripos($error_message, 'customer already exists') !== false) {
-                $is_customer_exists = true;
-            }
+            // Check if customer already exists
+            $is_customer_exists = $this->is_customer_exists_error($error_message, $error_data);
 
             if ($is_customer_exists) {
                 bna_debug('Customer exists, searching for existing customer', array(
@@ -161,51 +178,185 @@ class BNA_API {
         );
     }
 
-    private function find_existing_customer($email) {
-        $response = $this->make_request('v1/customers', 'GET', array(
-            'email' => $email,
-            'limit' => 1
+    private function is_validation_error($error_message, $error_data) {
+        $validation_patterns = array(
+            'validation error',
+            'invalid data',
+            'required field',
+            'field validation',
+            'data validation'
+        );
+
+        $error_lower = strtolower($error_message);
+        foreach ($validation_patterns as $pattern) {
+            if (stripos($error_lower, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function try_create_customer_without_shipping($order, $customer_data) {
+        bna_log('Trying to create customer without shipping address', array(
+            'order_id' => $order->get_id(),
+            'original_had_shipping' => isset($customer_data['shippingAddress'])
         ));
 
+        // Remove shipping address and try again
+        $customer_data_no_shipping = $customer_data;
+        unset($customer_data_no_shipping['shippingAddress']);
+
+        $response = $this->make_request('v1/customers', 'POST', $customer_data_no_shipping);
+
         if (is_wp_error($response)) {
-            bna_error('Failed to search for existing customer', array(
+            bna_error('Customer creation failed even without shipping', array(
                 'error' => $response->get_error_message(),
-                'email' => $email
+                'customer_email' => $customer_data['email']
             ));
             return $response;
         }
 
-        if (empty($response) || !is_array($response)) {
-            bna_error('Invalid customer search response format', array('response' => $response));
-            return new WP_Error('invalid_search_response', 'Invalid customer search response');
+        if (empty($response['id'])) {
+            bna_error('No customer ID in response without shipping', array('response' => $response));
+            return new WP_Error('invalid_customer_response', 'Customer ID not found in response');
         }
 
-        $customers = isset($response['data']) ? $response['data'] : $response;
-
-        if (empty($customers) || !is_array($customers)) {
-            bna_error('No customers found in search response', array(
-                'email' => $email,
-                'response' => $response
-            ));
-            return new WP_Error('customer_not_found', 'Customer not found');
-        }
-
-        $customer = is_array($customers) && isset($customers[0]) ? $customers[0] : $customers;
-
-        if (empty($customer['id'])) {
-            bna_error('Customer found but no ID', array('customer' => $customer));
-            return new WP_Error('customer_no_id', 'Customer found but no ID available');
-        }
-
-        bna_log('Existing customer found', array(
-            'customer_id' => $customer['id'],
-            'email' => $email
+        bna_log('Customer created successfully without shipping address', array(
+            'customer_id' => $response['id'],
+            'customer_email' => $customer_data['email']
         ));
 
         return array(
-            'customer_id' => $customer['id'],
-            'is_existing' => true
+            'customer_id' => $response['id'],
+            'is_existing' => false
         );
+    }
+
+    private function is_customer_exists_error($error_message, $error_data) {
+        // Check HTTP status codes
+        if (isset($error_data['status']) && ($error_data['status'] === 400 || $error_data['status'] === 409)) {
+            // Only treat as exists error if message matches
+            $exists_patterns = array(
+                'customer already exist',
+                'customer already exists', 
+                'email already exists',
+                'duplicate',
+                'already registered',
+                'user exists'
+            );
+
+            $error_lower = strtolower($error_message);
+            foreach ($exists_patterns as $pattern) {
+                if (stripos($error_lower, $pattern) !== false) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function find_existing_customer($email) {
+        // Try different search strategies
+        $search_strategies = array(
+            array('email' => $email, 'limit' => 1),
+            array('email' => $email, 'limit' => 10),
+            array('email' => $email),
+            array('limit' => 100) // Get more results and search manually
+        );
+
+        foreach ($search_strategies as $attempt_num => $search_params) {
+            bna_debug('Customer search attempt', array(
+                'attempt' => $attempt_num + 1,
+                'params' => $search_params,
+                'target_email' => $email
+            ));
+
+            $response = $this->make_request('v1/customers', 'GET', $search_params);
+
+            if (is_wp_error($response)) {
+                bna_error('Customer search failed', array(
+                    'attempt' => $attempt_num + 1,
+                    'error' => $response->get_error_message(),
+                    'email' => $email
+                ));
+                continue;
+            }
+
+            // Try to find customer in response
+            $found_customer = $this->extract_customer_from_response($response, $email, $attempt_num + 1);
+            
+            if ($found_customer) {
+                return $found_customer;
+            }
+        }
+
+        // Customer exists but cannot be found - create error with detailed info
+        bna_error('Customer exists but not found in search', array(
+            'email' => $email,
+            'total_attempts' => count($search_strategies),
+            'suggestion' => 'May need to manually check BNA portal or contact support'
+        ));
+
+        return new WP_Error('customer_search_failed', 'Customer exists but could not be located via API search');
+    }
+
+    private function extract_customer_from_response($response, $target_email, $attempt_num) {
+        if (empty($response) || !is_array($response)) {
+            bna_debug('Empty or invalid search response', array(
+                'attempt' => $attempt_num,
+                'response_type' => gettype($response)
+            ));
+            return false;
+        }
+
+        // Handle different response structures
+        $customers = array();
+        
+        if (isset($response['data']) && is_array($response['data'])) {
+            $customers = $response['data'];
+        } elseif (isset($response[0]) && is_array($response[0])) {
+            $customers = $response;
+        } elseif (isset($response['id']) && isset($response['email'])) {
+            $customers = array($response);
+        }
+
+        bna_debug('Extracted customers for search', array(
+            'attempt' => $attempt_num,
+            'customers_count' => count($customers),
+            'target_email' => $target_email
+        ));
+
+        // Search through customers
+        foreach ($customers as $customer) {
+            if (!is_array($customer)) {
+                continue;
+            }
+
+            $customer_email = $customer['email'] ?? '';
+            $customer_id = $customer['id'] ?? '';
+
+            if (empty($customer_email) || empty($customer_id)) {
+                continue;
+            }
+
+            // Exact match
+            if ($customer_email === $target_email) {
+                bna_log('Existing customer found via search', array(
+                    'customer_id' => $customer_id,
+                    'email' => $target_email,
+                    'attempt' => $attempt_num
+                ));
+
+                return array(
+                    'customer_id' => $customer_id,
+                    'is_existing' => true
+                );
+            }
+        }
+
+        return false;
     }
 
     private function create_checkout_payload($order, $customer_result) {
@@ -258,6 +409,7 @@ class BNA_API {
             'lastName' => $last_name
         );
 
+        // Add phone if enabled
         if (get_option('bna_smart_payment_enable_phone') === 'yes') {
             $phone = $this->get_clean_phone($order);
             if ($phone) {
@@ -266,6 +418,7 @@ class BNA_API {
             }
         }
 
+        // Add birthdate if enabled
         if (get_option('bna_smart_payment_enable_birthdate') === 'yes') {
             $birthdate = $this->get_valid_birthdate($order);
             if ($birthdate) {
@@ -273,6 +426,7 @@ class BNA_API {
             }
         }
 
+        // Add billing address
         $customer_info['address'] = $this->build_address($order);
 
         // Add shipping address if different from billing
@@ -280,9 +434,19 @@ class BNA_API {
         if ($shipping_address) {
             $customer_info['shippingAddress'] = $shipping_address;
             
-            bna_debug('Shipping address added to customer info', array(
+            bna_log('Shipping address added to customer data', array(
                 'order_id' => $order->get_id(),
-                'shipping_country' => $shipping_address['country'] ?? 'unknown'
+                'shipping_country' => $shipping_address['country'] ?? 'unknown',
+                'shipping_city' => $shipping_address['city'] ?? 'unknown',
+                'same_as_billing' => $order->get_meta('_bna_shipping_same_as_billing')
+            ));
+        } else {
+            bna_debug('No shipping address in customer data', array(
+                'order_id' => $order->get_id(),
+                'shipping_enabled' => get_option('bna_smart_payment_enable_shipping_address'),
+                'same_as_billing' => $order->get_meta('_bna_shipping_same_as_billing'),
+                'shipping_country_meta' => $order->get_meta('_bna_shipping_country'),
+                'shipping_address_1_meta' => $order->get_meta('_bna_shipping_address_1')
             ));
         }
 
@@ -323,21 +487,39 @@ class BNA_API {
 
     private function build_shipping_address($order) {
         if (get_option('bna_smart_payment_enable_shipping_address') !== 'yes') {
+            bna_debug('Shipping address disabled in settings');
             return null;
         }
 
         $same_as_billing = $order->get_meta('_bna_shipping_same_as_billing');
         if ($same_as_billing === 'yes') {
+            bna_debug('Shipping same as billing, no separate address needed');
             return null;
         }
 
+        // Get shipping data from order meta
         $shipping_country = $order->get_meta('_bna_shipping_country');
         $shipping_address_1 = $order->get_meta('_bna_shipping_address_1');
         $shipping_city = $order->get_meta('_bna_shipping_city');
         $shipping_state = $order->get_meta('_bna_shipping_state');
         $shipping_postcode = $order->get_meta('_bna_shipping_postcode');
 
+        bna_debug('Raw shipping meta data', array(
+            'order_id' => $order->get_id(),
+            'country' => $shipping_country,
+            'address_1' => $shipping_address_1,
+            'city' => $shipping_city,
+            'state' => $shipping_state,
+            'postcode' => $shipping_postcode
+        ));
+
+        // Check if required fields are present
         if (empty($shipping_country) || empty($shipping_address_1) || empty($shipping_city)) {
+            bna_debug('Missing required shipping fields', array(
+                'has_country' => !empty($shipping_country),
+                'has_address_1' => !empty($shipping_address_1),
+                'has_city' => !empty($shipping_city)
+            ));
             return null;
         }
 
@@ -358,6 +540,10 @@ class BNA_API {
             $shipping_address['apartment'] = trim($shipping_address_2);
         }
 
+        bna_debug('Built shipping address', array(
+            'shipping_address' => $shipping_address
+        ));
+
         return $shipping_address;
     }
 
@@ -368,10 +554,12 @@ class BNA_API {
 
         $street = trim($street);
 
+        // Try to find number at the beginning
         if (preg_match('/^(\d+)/', $street, $matches)) {
             return $matches[1];
         }
 
+        // Try to find any number in the string
         if (preg_match('/(\d+)/', $street, $matches)) {
             return $matches[1];
         }
@@ -401,8 +589,10 @@ class BNA_API {
             return false;
         }
 
+        // Remove all non-digits
         $phone = preg_replace('/\D/', '', $phone);
 
+        // Remove leading 1 for North American numbers
         if (strlen($phone) === 11 && substr($phone, 0, 1) === '1') {
             $phone = substr($phone, 1);
         }
@@ -416,6 +606,7 @@ class BNA_API {
             return $birthdate;
         }
 
+        // Check POST data as fallback
         if (isset($_POST['billing_birthdate']) && !empty($_POST['billing_birthdate'])) {
             $birthdate = sanitize_text_field($_POST['billing_birthdate']);
             if ($this->is_valid_birthdate($birthdate)) {
@@ -472,10 +663,12 @@ class BNA_API {
 
         $postal = strtoupper(str_replace(' ', '', $postal_code));
 
+        // Canadian postal code format
         if (preg_match('/^[A-Z]\d[A-Z]\d[A-Z]\d$/', $postal)) {
             return substr($postal, 0, 3) . ' ' . substr($postal, 3, 3);
         }
 
+        // US ZIP code format
         if (preg_match('/^\d{5}(-\d{4})?$/', $postal_code)) {
             return $postal_code;
         }
@@ -510,6 +703,28 @@ class BNA_API {
         return $this->get_api_url() . '/v1/checkout/' . $token;
     }
 
+    private function log_request_payload($endpoint, $method, $data) {
+        if ($endpoint === 'v1/customers' && $method === 'POST') {
+            bna_log('Customer creation payload', array(
+                'endpoint' => $endpoint,
+                'email' => $data['email'] ?? 'unknown',
+                'has_shipping_address' => isset($data['shippingAddress']),
+                'shipping_country' => isset($data['shippingAddress']) ? ($data['shippingAddress']['country'] ?? 'unknown') : 'none',
+                'payload' => $data
+            ));
+        }
+        
+        if ($endpoint === 'v1/checkout' && $method === 'POST') {
+            bna_debug('Checkout creation payload', array(
+                'endpoint' => $endpoint,
+                'has_customer_info' => isset($data['customerInfo']),
+                'has_customer_id' => isset($data['customerId']),
+                'has_shipping_in_customer_info' => isset($data['customerInfo']['shippingAddress']),
+                'payload_keys' => array_keys($data)
+            ));
+        }
+    }
+
     public function make_request($endpoint, $method = 'GET', $data = array()) {
         $start_time = microtime(true);
 
@@ -527,7 +742,9 @@ class BNA_API {
             'sslverify' => true
         );
 
+        // Log important payloads before sending
         if (in_array($method, array('POST', 'PUT', 'PATCH')) && !empty($data)) {
+            $this->log_request_payload($endpoint, $method, $data);
             $args['body'] = wp_json_encode($data);
             $args['headers']['Content-Type'] = 'application/json';
         }
@@ -569,7 +786,8 @@ class BNA_API {
                 'endpoint' => $endpoint,
                 'response_code' => $response_code,
                 'error_message' => $error_message,
-                'request_time_ms' => $request_time
+                'request_time_ms' => $request_time,
+                'response_body' => $response_body
             ));
 
             return new WP_Error('api_error', $error_message, array(

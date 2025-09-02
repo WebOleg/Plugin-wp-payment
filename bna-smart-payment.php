@@ -136,7 +136,7 @@ class BNA_Smart_Payment {
     private function load_shipping_assets() {
         // Check if shipping address is enabled
         $shipping_enabled = get_option('bna_smart_payment_enable_shipping_address', 'no');
-        
+
         if ($shipping_enabled === 'yes') {
             wp_enqueue_script(
                 'bna-shipping-address',
@@ -194,7 +194,7 @@ class BNA_Smart_Payment {
         bna_log('Plugin activated', array('version' => BNA_SMART_PAYMENT_VERSION));
         $this->check_requirements();
         $this->set_default_options();
-        
+
         if (false === get_option('bna_smart_payment_webhook_secret')) {
             add_option('bna_smart_payment_webhook_secret', wp_generate_password(32, false));
         }
@@ -246,7 +246,7 @@ class BNA_Smart_Payment {
      */
     private function maybe_upgrade() {
         $installed_version = get_option('bna_smart_payment_version', '0.0.0');
-        
+
         if (version_compare($installed_version, BNA_SMART_PAYMENT_VERSION, '<')) {
             bna_log('Running plugin upgrade', array(
                 'from_version' => $installed_version,
@@ -259,7 +259,7 @@ class BNA_Smart_Payment {
             }
 
             update_option('bna_smart_payment_version', BNA_SMART_PAYMENT_VERSION);
-            
+
             bna_log('Plugin upgrade completed', array('new_version' => BNA_SMART_PAYMENT_VERSION));
         }
     }
