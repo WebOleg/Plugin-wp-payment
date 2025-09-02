@@ -45,6 +45,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->enable_phone = $this->get_option('enable_phone');
         $this->enable_billing_address = $this->get_option('enable_billing_address');
         $this->enable_birthdate = $this->get_option('enable_birthdate');
+        $this->enable_shipping_address = $this->get_option('enable_shipping_address');
     }
 
     /**
@@ -57,6 +58,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
             add_filter('woocommerce_billing_fields', array($this, 'add_birthdate_field'));
             add_action('woocommerce_checkout_process', array($this, 'validate_birthdate'));
             add_action('woocommerce_checkout_update_order_meta', array($this, 'save_birthdate'));
+        }
+
+        if ($this->get_option('enable_shipping_address') === 'yes') {
+            add_action('woocommerce_after_checkout_billing_form', array($this, 'add_shipping_address_section'));
+            add_action('woocommerce_checkout_process', array($this, 'validate_shipping_address'));
+            add_action('woocommerce_checkout_update_order_meta', array($this, 'save_shipping_address'));
+            add_action('wp_enqueue_scripts', array($this, 'enqueue_shipping_scripts'));
         }
     }
 
@@ -145,6 +153,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'default' => 'yes',
                 'description' => 'Add birthdate field to checkout form and include in payment data. Required for age verification.'
             ),
+            'enable_shipping_address' => array(
+                'title' => 'Collect Shipping Address',
+                'type' => 'checkbox',
+                'label' => 'Include shipping address in payment data',
+                'default' => 'no',
+                'description' => 'Collect and send shipping address to BNA API when different from billing address. Adds shipping fields to checkout.'
+            ),
         );
     }
 
@@ -163,6 +178,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
             update_option('bna_smart_payment_enable_phone', $this->get_option('enable_phone'));
             update_option('bna_smart_payment_enable_billing_address', $this->get_option('enable_billing_address'));
             update_option('bna_smart_payment_enable_birthdate', $this->get_option('enable_birthdate'));
+            update_option('bna_smart_payment_enable_shipping_address', $this->get_option('enable_shipping_address'));
 
             bna_log('Gateway admin options saved successfully');
         }
@@ -190,6 +206,38 @@ class BNA_Gateway extends WC_Payment_Gateway {
         );
 
         return $fields;
+    }
+
+    /**
+     * Add shipping address section after billing form
+     */
+    public function add_shipping_address_section() {
+        BNA_Template::load('shipping-address-fields');
+    }
+
+    /**
+     * Enqueue shipping address scripts
+     */
+    public function enqueue_shipping_scripts() {
+        if (!is_checkout()) {
+            return;
+        }
+
+        wp_enqueue_script(
+            'bna-shipping-address',
+            BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/js/shipping-address.js',
+            array('jquery'),
+            BNA_SMART_PAYMENT_VERSION,
+            true
+        );
+
+        wp_localize_script('bna-shipping-address', 'bna_shipping', array(
+            'gateway_id' => $this->id,
+            'i18n' => array(
+                'same_as_billing' => __('Same as billing address', 'bna-smart-payment'),
+                'shipping_required' => __('Shipping address is required when different from billing.', 'bna-smart-payment')
+            )
+        ));
     }
 
     /**
@@ -226,6 +274,33 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     /**
+     * Validate shipping address during checkout
+     */
+    public function validate_shipping_address() {
+        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            return;
+        }
+
+        $same_as_billing = !empty($_POST['bna_shipping_same_as_billing']);
+
+        if (!$same_as_billing) {
+            $required_fields = array(
+                'bna_shipping_country' => __('Shipping country', 'bna-smart-payment'),
+                'bna_shipping_address_1' => __('Shipping address', 'bna-smart-payment'),
+                'bna_shipping_city' => __('Shipping city', 'bna-smart-payment'),
+                'bna_shipping_state' => __('Shipping state/province', 'bna-smart-payment'),
+                'bna_shipping_postcode' => __('Shipping postal code', 'bna-smart-payment')
+            );
+
+            foreach ($required_fields as $field_key => $field_name) {
+                if (empty($_POST[$field_key])) {
+                    wc_add_notice(sprintf(__('%s is required.', 'bna-smart-payment'), $field_name), 'error');
+                }
+            }
+        }
+    }
+
+    /**
      * Save birthdate to order meta
      * @param int $order_id
      */
@@ -238,6 +313,40 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 $order->save();
             }
         }
+    }
+
+    /**
+     * Save shipping address to order meta
+     * @param int $order_id
+     */
+    public function save_shipping_address($order_id) {
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        $same_as_billing = !empty($_POST['bna_shipping_same_as_billing']);
+        $order->add_meta_data('_bna_shipping_same_as_billing', $same_as_billing ? 'yes' : 'no');
+
+        if (!$same_as_billing) {
+            $shipping_fields = array(
+                'address_1' => 'bna_shipping_address_1',
+                'address_2' => 'bna_shipping_address_2',
+                'city' => 'bna_shipping_city',
+                'state' => 'bna_shipping_state',
+                'postcode' => 'bna_shipping_postcode',
+                'country' => 'bna_shipping_country'
+            );
+
+            foreach ($shipping_fields as $meta_key => $post_key) {
+                if (isset($_POST[$post_key])) {
+                    $value = sanitize_text_field($_POST[$post_key]);
+                    $order->add_meta_data('_bna_shipping_' . $meta_key, $value);
+                }
+            }
+        }
+
+        $order->save();
     }
 
     /**

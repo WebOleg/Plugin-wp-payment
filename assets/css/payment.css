@@ -149,6 +149,208 @@
     display: block;
 }
 
+/* ========================================
+   SHIPPING ADDRESS STYLES
+   ======================================== */
+
+.bna-shipping-section {
+    margin: 20px 0;
+    padding: 25px;
+    background: #f9f9f9;
+    border: 1px solid #e1e1e1;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    position: relative;
+    overflow: visible; /* Important for select dropdowns */
+}
+
+.bna-shipping-section h3 {
+    margin: 0 0 20px 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #333;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e1e1e1;
+}
+
+.bna-shipping-same-wrapper {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+
+.bna-checkbox-label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 14px;
+    color: #555;
+    font-weight: 500;
+}
+
+.bna-checkbox-label input[type="checkbox"] {
+    margin-right: 12px;
+    transform: scale(1.3);
+    cursor: pointer;
+}
+
+.bna-checkbox-label .checkmark {
+    margin-left: 5px;
+}
+
+/* Shipping Fields Container */
+.bna-shipping-fields {
+    transition: all 0.4s ease-in-out;
+    overflow: visible; /* Important for select dropdowns */
+    position: relative;
+}
+
+.bna-form-row {
+    margin-bottom: 20px; /* More space between rows */
+    clear: both;
+    position: relative;
+    overflow: visible; /* Important for select dropdowns */
+}
+
+.bna-form-row-wide {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    overflow: visible; /* Important for select dropdowns */
+}
+
+.bna-form-row-first,
+.bna-form-row-last {
+    flex: 1;
+    min-width: 200px;
+    position: relative;
+    overflow: visible; /* Important for select dropdowns */
+}
+
+.bna-form-row label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    color: #333;
+    font-size: 14px;
+}
+
+.required {
+    color: #e74c3c;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.optional {
+    color: #999;
+    font-weight: normal;
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* Form Inputs - Simplified styling */
+.bna-input-text,
+.bna-country-select,
+.bna-state-select {
+    width: 100%;
+    padding: 12px 15px;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.4;
+    background: #fff;
+    box-sizing: border-box;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    font-family: inherit;
+}
+
+.bna-input-text:focus,
+.bna-country-select:focus,
+.bna-state-select:focus {
+    border-color: #0073aa;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(0, 115, 170, 0.1);
+}
+
+.bna-input-text::placeholder {
+    color: #999;
+    opacity: 1;
+}
+
+/* Select Styling - Use browser defaults with minimal styling */
+.bna-country-select,
+.bna-state-select {
+    /* Don't override appearance - let browser handle dropdown positioning */
+    cursor: pointer;
+    padding-right: 15px; /* Standard padding */
+    position: relative;
+    z-index: 10; /* Ensure dropdown appears above other elements */
+}
+
+/* Remove custom background images that can cause positioning issues */
+.bna-country-select,
+.bna-state-select {
+    background-image: none;
+    background-color: #fff;
+}
+
+/* Only add custom arrow on webkit browsers where it works properly */
+@media screen and (-webkit-min-device-pixel-ratio:0) {
+    .bna-country-select,
+    .bna-state-select {
+        -webkit-appearance: none;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 5'%3E%3Cpath fill='%23666' d='m2 0-2 2h4zm0 5 2-2h-4z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+        background-size: 12px;
+        padding-right: 35px;
+    }
+}
+
+/* Validation States */
+.bna-input-text.woocommerce-invalid,
+.bna-country-select.woocommerce-invalid,
+.bna-state-select.woocommerce-invalid {
+    border-color: #e74c3c;
+    box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.1);
+}
+
+.bna-input-text.woocommerce-invalid:focus,
+.bna-country-select.woocommerce-invalid:focus,
+.bna-state-select.woocommerce-invalid:focus {
+    border-color: #e74c3c;
+    box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.2);
+}
+
+/* WooCommerce Integration */
+.woocommerce-checkout .bna-shipping-section {
+    font-family: inherit;
+}
+
+.woocommerce-checkout .bna-input-text,
+.woocommerce-checkout .bna-country-select,
+.woocommerce-checkout .bna-state-select {
+    font-family: inherit;
+}
+
+.woocommerce-checkout .bna-shipping-section .required {
+    color: #b22222;
+}
+
+/* Ensure proper stacking context */
+.woocommerce-checkout {
+    position: relative;
+}
+
+/* Make sure select dropdowns appear above everything */
+.bna-country-select:focus,
+.bna-state-select:focus {
+    z-index: 999;
+    position: relative;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .bna-payment-container {
@@ -178,6 +380,31 @@
     .bna-loading, .bna-error {
         padding: 40px 15px;
     }
+
+    /* Shipping responsive */
+    .bna-shipping-section {
+        margin: 15px 0;
+        padding: 20px 15px;
+    }
+
+    .bna-form-row-wide {
+        flex-direction: column;
+        gap: 0;
+    }
+    
+    .bna-form-row-first,
+    .bna-form-row-last {
+        width: 100%;
+        min-width: auto;
+        margin-bottom: 15px;
+    }
+
+    .bna-input-text,
+    .bna-country-select,
+    .bna-state-select {
+        padding: 12px 15px;
+        font-size: 16px; /* Prevent zoom on iOS */
+    }
 }
 
 @media (max-width: 480px) {
@@ -192,6 +419,22 @@
     #bna-payment-iframe {
         height: 450px;
     }
+
+    .bna-shipping-section {
+        padding: 15px;
+    }
+
+    .bna-shipping-section h3 {
+        font-size: 16px;
+    }
+
+    .bna-checkbox-label {
+        font-size: 13px;
+    }
+
+    .bna-form-row label {
+        font-size: 13px;
+    }
 }
 
 /* Accessibility */
@@ -201,6 +444,16 @@
     }
 
     .bna-loading {
+        border-color: #333;
+    }
+
+    .bna-shipping-section {
+        border-color: #333;
+    }
+
+    .bna-input-text,
+    .bna-country-select,
+    .bna-state-select {
         border-color: #333;
     }
 }
@@ -216,5 +469,74 @@
 
     .bna-btn:hover {
         transform: none;
+    }
+
+    .bna-shipping-fields {
+        transition: none;
+    }
+
+    .bna-input-text,
+    .bna-country-select,
+    .bna-state-select {
+        transition: none;
+    }
+}
+
+/* Print Styles */
+@media print {
+    .bna-shipping-section {
+        background: transparent;
+        border: 1px solid #000;
+        box-shadow: none;
+    }
+
+    .bna-btn {
+        display: none;
+    }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    .bna-shipping-section {
+        background: #2a2a2a;
+        border-color: #444;
+        color: #e0e0e0;
+    }
+
+    .bna-shipping-section h3 {
+        color: #fff;
+        border-bottom-color: #444;
+    }
+
+    .bna-shipping-same-wrapper {
+        background: #333;
+        border-color: #555;
+    }
+
+    .bna-checkbox-label {
+        color: #e0e0e0;
+    }
+
+    .bna-form-row label {
+        color: #e0e0e0;
+    }
+
+    .bna-input-text,
+    .bna-country-select,
+    .bna-state-select {
+        background: #333;
+        border-color: #555;
+        color: #e0e0e0;
+    }
+
+    .bna-input-text::placeholder {
+        color: #aaa;
+    }
+
+    .bna-input-text:focus,
+    .bna-country-select:focus,
+    .bna-state-select:focus {
+        border-color: #4a9eff;
+        box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
     }
 }
