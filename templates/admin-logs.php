@@ -24,6 +24,29 @@
         </p>
     </div>
     
+    <!-- Feature Status -->
+    <div style="background: #e7f3ff; padding: 15px; margin: 15px 0; border: 1px solid #0073aa; border-radius: 4px;">
+        <h3>🚀 Active Features</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
+            <div>
+                <strong>✅ iFrame Integration</strong><br>
+                <small>Secure payment form integration</small>
+            </div>
+            <div>
+                <strong>✅ Webhook Processing</strong><br>
+                <small>Real-time payment notifications</small>
+            </div>
+            <div>
+                <strong><?php echo bna_is_shipping_enabled() ? '✅' : '❌'; ?> Shipping Address</strong><br>
+                <small><?php echo bna_is_shipping_enabled() ? 'Enabled' : 'Disabled'; ?> - Different from billing address</small>
+            </div>
+            <div>
+                <strong>✅ Customer Data Sync</strong><br>
+                <small>v1.6.0 - Auto-update customer data changes</small>
+            </div>
+        </div>
+    </div>
+    
     <!-- Logs Display -->
     <div style="background: white; padding: 15px; border: 1px solid #ccd0d4; border-radius: 4px;">
         <h2>Recent Logs (Last 1000 lines)</h2>
@@ -51,7 +74,7 @@
             
             <p style="margin-top: 10px; color: #666; font-size: 12px;">
                 💡 <strong>Tips:</strong> Logs auto-refresh every 30 seconds when auto-scroll is enabled. 
-                Use Ctrl+F to search within the logs.
+                Use Ctrl+F to search within the logs. Look for "Customer updated", "Customer created", or "Customer data changed" to track sync activity.
             </p>
             
         <?php else: ?>
@@ -62,6 +85,7 @@
                     <li>Payments are processed</li>
                     <li>Webhooks are received</li>
                     <li>API requests are made</li>
+                    <li>Customer data is synced</li>
                     <li>Errors occur</li>
                 </ul>
             </div>
@@ -70,15 +94,34 @@
     
     <!-- Debug Info -->
     <div style="background: #f0f8ff; padding: 15px; margin: 15px 0; border: 1px solid #0073aa; border-radius: 4px;">
-        <h3>🔗 Debug Information</h3>
-        <ul style="margin: 0;">
-            <li><strong>Plugin Version:</strong> <?php echo esc_html($plugin_version); ?></li>
-            <li><strong>WordPress Version:</strong> <?php echo esc_html($wp_version); ?></li>
-            <li><strong>WooCommerce Version:</strong> <?php echo esc_html($wc_version); ?></li>
-            <li><strong>PHP Version:</strong> <?php echo esc_html($php_version); ?></li>
-            <li><strong>WP Debug:</strong> <?php echo $wp_debug ? '✅ Enabled' : '❌ Disabled'; ?></li>
-            <li><strong>Log File:</strong> <code>wp-content/uploads/bna-logs/bna-payment.log</code></li>
-        </ul>
+        <h3>🔗 System Information</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
+            <div>
+                <h4>Plugin Details</h4>
+                <ul style="margin: 0;">
+                    <li><strong>Plugin Version:</strong> <?php echo esc_html($plugin_version); ?></li>
+                    <li><strong>Customer Sync:</strong> ✅ Enabled (v1.6.0)</li>
+                    <li><strong>Shipping Address:</strong> <?php echo bna_is_shipping_enabled() ? '✅ Enabled' : '❌ Disabled'; ?></li>
+                    <li><strong>Log File:</strong> <code>wp-content/uploads/bna-logs/bna-payment.log</code></li>
+                </ul>
+            </div>
+            <div>
+                <h4>Environment</h4>
+                <ul style="margin: 0;">
+                    <li><strong>WordPress:</strong> <?php echo esc_html($wp_version); ?></li>
+                    <li><strong>WooCommerce:</strong> <?php echo esc_html($wc_version); ?></li>
+                    <li><strong>PHP:</strong> <?php echo esc_html($php_version); ?></li>
+                    <li><strong>WP Debug:</strong> <?php echo $wp_debug ? '✅ Enabled' : '❌ Disabled'; ?></li>
+                </ul>
+            </div>
+        </div>
+        
+        <div style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px;">
+            <h4>🔄 Customer Sync Features</h4>
+            <p><strong>What syncs automatically:</strong> Customer name, email, phone, address, shipping address, birthdate</p>
+            <p><strong>When it syncs:</strong> When customer data changes between orders</p>
+            <p><strong>How to track:</strong> Look for log entries containing "Customer updated" or "Customer data changed"</p>
+        </div>
     </div>
 </div>
 
@@ -125,6 +168,12 @@ function searchLogs() {
         return;
     }
     
+    // Predefined searches for customer sync
+    const syncKeywords = ['customer updated', 'customer created', 'customer data changed', 'sync'];
+    if (syncKeywords.includes(searchTerm)) {
+        alert('💡 Tip: Search for "Customer updated" or "Customer data changed" to find sync activity');
+    }
+    
     const index = content.indexOf(searchTerm);
     if (index !== -1) {
         const beforeSearch = content.substring(0, index);
@@ -146,10 +195,25 @@ document.getElementById('search-input').addEventListener('keypress', function(e)
     }
 });
 
+// Add quick search buttons
 document.addEventListener('DOMContentLoaded', function() {
     const textarea = document.getElementById('bna-logs-content');
     if (textarea && textarea.value.trim()) {
         textarea.scrollTop = textarea.scrollHeight;
+    }
+    
+    // Add quick search buttons after search input
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        const quickButtons = document.createElement('div');
+        quickButtons.style.marginTop = '10px';
+        quickButtons.innerHTML = `
+            <small>Quick searches: </small>
+            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='Customer updated'; searchLogs();">Customer Updates</button>
+            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='error'; searchLogs();">Errors</button>
+            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='webhook'; searchLogs();">Webhooks</button>
+        `;
+        searchInput.parentNode.appendChild(quickButtons);
     }
 });
 </script>
@@ -170,5 +234,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
 #bna-logs-content::-webkit-scrollbar-thumb:hover {
     background: #777;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 15px;
 }
 </style>

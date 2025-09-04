@@ -10,7 +10,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->icon = '';
         $this->has_fields = false;
         $this->method_title = 'BNA Smart Payment';
-        $this->method_description = 'Accept payments through BNA Smart Payment system with secure iframe integration.';
+        $this->method_description = 'Accept payments through BNA Smart Payment system with secure iframe integration and automatic customer data sync.';
         $this->supports = array('products');
 
         $this->init_form_fields();
@@ -54,8 +54,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             add_action('woocommerce_checkout_process', array($this, 'validate_shipping_address'));
             add_action('woocommerce_checkout_update_order_meta', array($this, 'save_shipping_address'));
             add_action('wp_enqueue_scripts', array($this, 'enqueue_shipping_scripts'));
-            
-            // Save to customer profile
             add_action('woocommerce_checkout_update_customer_data', array($this, 'save_customer_shipping_data'));
             add_filter('woocommerce_checkout_get_value', array($this, 'populate_checkout_shipping_fields'), 10, 2);
         }
@@ -118,9 +116,9 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'default' => '',
             ),
             'customer_details_section' => array(
-                'title' => 'Customer Data Collection',
+                'title' => 'Customer Data Collection & Sync',
                 'type' => 'title',
-                'description' => 'Configure which customer details to collect during checkout.',
+                'description' => 'Configure which customer details to collect and automatically sync with BNA portal when data changes.',
             ),
             'enable_phone' => array(
                 'title' => 'Collect Phone Number',
@@ -148,7 +146,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'type' => 'checkbox',
                 'label' => 'Include shipping address in payment data',
                 'default' => 'no',
-                'description' => 'Collect and send shipping address to BNA API when different from billing address. Adds shipping fields to checkout.'
+                'description' => 'Collect and send shipping address to BNA API when different from billing address. Customer data automatically syncs when address changes.'
             ),
         );
     }
@@ -173,6 +171,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $saved;
     }
 
+    // Birthdate field methods
     public function add_birthdate_field($fields) {
         $fields['billing_birthdate'] = array(
             'label' => __('Date of Birth', 'bna-smart-payment'),
@@ -186,10 +185,39 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'max' => date('Y-m-d', strtotime('-18 years'))
             )
         );
-
         return $fields;
     }
 
+    public function validate_birthdate() {
+        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            return;
+        }
+
+        if (empty($_POST['billing_birthdate'])) {
+            wc_add_notice(__('Date of birth is required for BNA Smart Payment.', 'bna-smart-payment'), 'error');
+            return;
+        }
+
+        $birthdate = sanitize_text_field($_POST['billing_birthdate']);
+        $birth_timestamp = strtotime($birthdate);
+
+        if ($birth_timestamp === false || $birth_timestamp > strtotime('-18 years') || $birth_timestamp > time()) {
+            wc_add_notice(__('Please enter a valid birth date. You must be at least 18 years old.', 'bna-smart-payment'), 'error');
+        }
+    }
+
+    public function save_birthdate($order_id) {
+        if (!empty($_POST['billing_birthdate'])) {
+            $order = wc_get_order($order_id);
+            if ($order) {
+                $birthdate = sanitize_text_field($_POST['billing_birthdate']);
+                $order->add_meta_data('_billing_birthdate', $birthdate);
+                $order->save();
+            }
+        }
+    }
+
+    // Shipping address methods
     public function add_shipping_address_section() {
         BNA_Template::load('shipping-address-fields');
     }
@@ -253,36 +281,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         ));
     }
 
-    public function validate_birthdate() {
-        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
-            return;
-        }
-
-        if (empty($_POST['billing_birthdate'])) {
-            wc_add_notice(__('Date of birth is required for BNA Smart Payment.', 'bna-smart-payment'), 'error');
-            return;
-        }
-
-        $birthdate = sanitize_text_field($_POST['billing_birthdate']);
-        $birth_timestamp = strtotime($birthdate);
-
-        if ($birth_timestamp === false) {
-            wc_add_notice(__('Please enter a valid date of birth.', 'bna-smart-payment'), 'error');
-            return;
-        }
-
-        $eighteen_years_ago = strtotime('-18 years');
-        if ($birth_timestamp > $eighteen_years_ago) {
-            wc_add_notice(__('You must be at least 18 years old to use BNA Smart Payment.', 'bna-smart-payment'), 'error');
-            return;
-        }
-
-        if ($birth_timestamp > time()) {
-            wc_add_notice(__('Birth date cannot be in the future.', 'bna-smart-payment'), 'error');
-            return;
-        }
-    }
-
     public function validate_shipping_address() {
         if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
             return;
@@ -303,17 +301,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 if (empty($_POST[$field_key])) {
                     wc_add_notice(sprintf(__('%s is required.', 'bna-smart-payment'), $field_name), 'error');
                 }
-            }
-        }
-    }
-
-    public function save_birthdate($order_id) {
-        if (!empty($_POST['billing_birthdate'])) {
-            $order = wc_get_order($order_id);
-            if ($order) {
-                $birthdate = sanitize_text_field($_POST['billing_birthdate']);
-                $order->add_meta_data('_billing_birthdate', $birthdate);
-                $order->save();
             }
         }
     }
@@ -356,7 +343,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             }
         }
 
-        // Save to WC shipping fields
         $this->save_to_wc_shipping_fields($order, $billing_fields);
     }
 
@@ -380,46 +366,25 @@ class BNA_Gateway extends WC_Payment_Gateway {
             }
         }
 
-        // Add name fields from billing
         $shipping_data['first_name'] = $order->get_billing_first_name();
         $shipping_data['last_name'] = $order->get_billing_last_name();
         $shipping_data['company'] = $order->get_billing_company();
 
-        // Save to WC shipping fields
         $this->save_to_wc_shipping_fields($order, $shipping_data);
     }
 
     private function save_to_wc_shipping_fields($order, $shipping_data) {
         // Save in order shipping fields
-        if (isset($shipping_data['country'])) {
-            $order->set_shipping_country($shipping_data['country']);
-        }
-        if (isset($shipping_data['first_name'])) {
-            $order->set_shipping_first_name($shipping_data['first_name']);
-        }
-        if (isset($shipping_data['last_name'])) {
-            $order->set_shipping_last_name($shipping_data['last_name']);
-        }
-        if (isset($shipping_data['company'])) {
-            $order->set_shipping_company($shipping_data['company']);
-        }
-        if (isset($shipping_data['address_1'])) {
-            $order->set_shipping_address_1($shipping_data['address_1']);
-        }
-        if (isset($shipping_data['address_2'])) {
-            $order->set_shipping_address_2($shipping_data['address_2']);
-        }
-        if (isset($shipping_data['city'])) {
-            $order->set_shipping_city($shipping_data['city']);
-        }
-        if (isset($shipping_data['state'])) {
-            $order->set_shipping_state($shipping_data['state']);
-        }
-        if (isset($shipping_data['postcode'])) {
-            $order->set_shipping_postcode($shipping_data['postcode']);
-        }
+        if (isset($shipping_data['country'])) $order->set_shipping_country($shipping_data['country']);
+        if (isset($shipping_data['first_name'])) $order->set_shipping_first_name($shipping_data['first_name']);
+        if (isset($shipping_data['last_name'])) $order->set_shipping_last_name($shipping_data['last_name']);
+        if (isset($shipping_data['company'])) $order->set_shipping_company($shipping_data['company']);
+        if (isset($shipping_data['address_1'])) $order->set_shipping_address_1($shipping_data['address_1']);
+        if (isset($shipping_data['address_2'])) $order->set_shipping_address_2($shipping_data['address_2']);
+        if (isset($shipping_data['city'])) $order->set_shipping_city($shipping_data['city']);
+        if (isset($shipping_data['state'])) $order->set_shipping_state($shipping_data['state']);
+        if (isset($shipping_data['postcode'])) $order->set_shipping_postcode($shipping_data['postcode']);
 
-        // Save to customer profile for My Account
         $customer_id = $order->get_customer_id();
         if ($customer_id) {
             $this->save_to_customer_profile($customer_id, $shipping_data);
@@ -459,7 +424,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $same_as_billing = !empty($_POST['bna_shipping_same_as_billing']);
         
         if ($same_as_billing) {
-            // Copy billing data to shipping profile
             $billing_fields = array(
                 'shipping_country' => $_POST['billing_country'] ?? '',
                 'shipping_first_name' => $_POST['billing_first_name'] ?? '',
@@ -478,7 +442,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 }
             }
         } else {
-            // Save custom shipping data
             $shipping_fields = array(
                 'shipping_country' => 'bna_shipping_country',
                 'shipping_address_1' => 'bna_shipping_address_1',
@@ -490,12 +453,10 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
             foreach ($shipping_fields as $meta_key => $post_key) {
                 if (isset($_POST[$post_key])) {
-                    $value = sanitize_text_field($_POST[$post_key]);
-                    update_user_meta($customer_id, $meta_key, $value);
+                    update_user_meta($customer_id, $meta_key, sanitize_text_field($_POST[$post_key]));
                 }
             }
 
-            // Name fields from billing
             update_user_meta($customer_id, 'shipping_first_name', sanitize_text_field($_POST['billing_first_name'] ?? ''));
             update_user_meta($customer_id, 'shipping_last_name', sanitize_text_field($_POST['billing_last_name'] ?? ''));
             update_user_meta($customer_id, 'shipping_company', sanitize_text_field($_POST['billing_company'] ?? ''));
@@ -503,13 +464,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     public function populate_checkout_shipping_fields($value, $key) {
-        // Populate only for BNA shipping fields
-        if (strpos($key, 'bna_shipping_') !== 0) {
-            return $value;
-        }
-
-        // If field already has value, don't overwrite
-        if ($value) {
+        if (strpos($key, 'bna_shipping_') !== 0 || $value) {
             return $value;
         }
 
@@ -518,7 +473,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             return $value;
         }
 
-        // Map BNA fields to WC customer fields
         $field_mapping = array(
             'bna_shipping_country' => 'get_shipping_country',
             'bna_shipping_address_1' => 'get_shipping_address_1', 
@@ -530,16 +484,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         if (isset($field_mapping[$key]) && method_exists($customer, $field_mapping[$key])) {
             $method = $field_mapping[$key];
-            $customer_value = $customer->$method();
-            
-            if ($customer_value) {
-                return $customer_value;
-            }
+            return $customer->$method();
         }
 
         return $value;
     }
 
+    // Payment processing methods
     public function display_payment_page_public($order) {
         try {
             if ($order->is_paid()) {
@@ -547,6 +498,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 wp_safe_redirect($order->get_checkout_order_received_url());
                 exit;
             }
+
+            // Log customer sync status
+            $customer_sync_status = bna_get_customer_sync_status($order);
+            bna_debug('Customer sync status for payment', array(
+                'order_id' => $order->get_id(),
+                'sync_status' => $customer_sync_status
+            ));
 
             $iframe_url = $this->get_or_create_iframe_url($order);
 
@@ -669,7 +627,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
             bna_log('Payment process completed successfully', array(
                 'order_id' => $order->get_id(),
-                'redirect_url' => $redirect_url
+                'redirect_url' => $redirect_url,
+                'customer_sync_ready' => !empty($order->get_meta('_bna_customer_id'))
             ));
 
             return array(
@@ -730,7 +689,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
     public function admin_options() {
         echo '<h2>BNA Smart Payment Gateway</h2>';
-        echo '<p>' . __('Accept payments through BNA Smart Payment with secure iframe integration.', 'bna-smart-payment') . '</p>';
+        echo '<p>' . __('Accept payments through BNA Smart Payment with secure iframe integration and automatic customer data sync.', 'bna-smart-payment') . '</p>';
 
         $missing = $this->get_missing_settings();
         if (empty($missing)) {
@@ -742,6 +701,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         echo '<div class="notice notice-info inline">';
         echo '<p><strong>' . __('Webhook URL (configure in BNA Portal):', 'bna-smart-payment') . '</strong><br>';
         echo '<code>' . home_url('/wp-json/bna/v1/webhook') . '</code></p>';
+        echo '<p><strong>' . __('Features:', 'bna-smart-payment') . '</strong> iFrame Integration, Webhooks, Customer Data Sync (v1.6.0)</p>';
         echo '</div>';
 
         echo '<table class="form-table">';
