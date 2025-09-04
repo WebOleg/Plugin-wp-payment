@@ -27,12 +27,6 @@ class BNA_API {
         ));
     }
 
-    /**
-     * Update existing customer data
-     * @param string $customer_id
-     * @param array $customer_data
-     * @return array|WP_Error
-     */
     public function update_customer($customer_id, $customer_data) {
         if (empty($customer_id)) {
             return new WP_Error('missing_customer_id', 'Customer ID is required for update');
@@ -60,17 +54,11 @@ class BNA_API {
         return $response;
     }
 
-    /**
-     * Generate hash of customer data for change detection
-     * @param array $customer_data
-     * @return string
-     */
     private function generate_customer_data_hash($customer_data) {
-        // Only include fields that matter for updates
         $relevant_data = array();
-        
+
         $fields_to_check = array(
-            'firstName', 'lastName', 'email', 'phoneCode', 'phoneNumber', 
+            'firstName', 'lastName', 'email', 'phoneCode', 'phoneNumber',
             'birthDate', 'address', 'shippingAddress'
         );
 
@@ -83,12 +71,6 @@ class BNA_API {
         return md5(wp_json_encode($relevant_data));
     }
 
-    /**
-     * Check if customer data has changed
-     * @param WC_Order $order
-     * @param array $current_data
-     * @return bool
-     */
     private function has_customer_data_changed($order, $current_data) {
         $stored_hash = $order->get_meta('_bna_customer_data_hash');
         $current_hash = $this->generate_customer_data_hash($current_data);
@@ -136,23 +118,29 @@ class BNA_API {
             return new WP_Error('invalid_response', 'Token not found in response');
         }
 
-        // Store customer info for future updates
         if (!empty($customer_result['customer_id'])) {
             $order->add_meta_data('_bna_customer_id', $customer_result['customer_id']);
-            
-            // Store hash for change detection
+
             $customer_data = $this->build_customer_info($order);
             if ($customer_data) {
                 $data_hash = $this->generate_customer_data_hash($customer_data);
                 $order->update_meta_data('_bna_customer_data_hash', $data_hash);
             }
-            
+
+            if (is_user_logged_in()) {
+                $wp_customer_id = $order->get_customer_id();
+                if ($wp_customer_id) {
+                    update_user_meta($wp_customer_id, '_bna_customer_id', $customer_result['customer_id']);
+                }
+            }
+
             $order->save();
         }
 
         bna_log('Checkout token generated successfully', array(
             'order_id' => $order->get_id(),
             'customer_id' => $customer_result['customer_id'] ?? 'new',
+            'was_updated' => $customer_result['was_updated'] ?? false,
             'token_length' => strlen($response['token'])
         ));
 
@@ -161,15 +149,29 @@ class BNA_API {
 
     private function get_or_create_customer($order) {
         $existing_customer_id = $order->get_meta('_bna_customer_id');
+
+        if (empty($existing_customer_id) && is_user_logged_in()) {
+            $wp_customer_id = $order->get_customer_id();
+            $existing_customer_id = get_user_meta($wp_customer_id, '_bna_customer_id', true);
+
+            if (!empty($existing_customer_id)) {
+                $order->add_meta_data('_bna_customer_id', $existing_customer_id);
+                $order->save();
+
+                bna_log('Found existing BNA customer ID in user meta', array(
+                    'wp_customer_id' => $wp_customer_id,
+                    'bna_customer_id' => $existing_customer_id
+                ));
+            }
+        }
+
         $customer_data = $this->build_customer_info($order);
 
         if (!$customer_data) {
             return new WP_Error('customer_data_error', 'Failed to build customer data');
         }
 
-        // If we have existing customer, check if data changed
         if (!empty($existing_customer_id)) {
-            
             if ($this->has_customer_data_changed($order, $customer_data)) {
                 bna_log('Customer data changed, updating', array(
                     'customer_id' => $existing_customer_id,
@@ -177,15 +179,14 @@ class BNA_API {
                 ));
 
                 $update_result = $this->update_customer($existing_customer_id, $customer_data);
-                
+
                 if (is_wp_error($update_result)) {
-                    // If update fails, try to create new customer
                     bna_error('Customer update failed, creating new', array(
                         'customer_id' => $existing_customer_id,
                         'error' => $update_result->get_error_message()
                     ));
-                    
-                    return $this->create_new_customer($customer_data);
+
+                    return $this->create_new_customer($customer_data, $order);
                 }
 
                 return array(
@@ -206,11 +207,10 @@ class BNA_API {
             );
         }
 
-        // No existing customer, create new
-        return $this->create_new_customer($customer_data);
+        return $this->create_new_customer($customer_data, $order);
     }
 
-    private function create_new_customer($customer_data) {
+    private function create_new_customer($customer_data, $order = null) {
         bna_debug('Creating new customer', array(
             'customer_email' => $customer_data['email']
         ));
@@ -221,12 +221,11 @@ class BNA_API {
             $error_message = $response->get_error_message();
             $error_data = $response->get_error_data();
 
-            // Check if customer already exists
             if ($this->is_customer_exists_error($error_message, $error_data)) {
                 bna_debug('Customer exists, searching', array(
                     'customer_email' => $customer_data['email']
                 ));
-                return $this->find_existing_customer($customer_data['email']);
+                return $this->find_existing_customer($customer_data['email'], $order);
             }
 
             return $response;
@@ -241,6 +240,18 @@ class BNA_API {
             'customer_email' => $customer_data['email']
         ));
 
+        if ($order && is_user_logged_in()) {
+            $wp_customer_id = $order->get_customer_id();
+            if ($wp_customer_id) {
+                update_user_meta($wp_customer_id, '_bna_customer_id', $response['id']);
+
+                bna_log('Saved BNA customer ID to user meta', array(
+                    'wp_customer_id' => $wp_customer_id,
+                    'bna_customer_id' => $response['id']
+                ));
+            }
+        }
+
         return array(
             'customer_id' => $response['id'],
             'is_existing' => false
@@ -251,7 +262,7 @@ class BNA_API {
         if (isset($error_data['status']) && ($error_data['status'] === 400 || $error_data['status'] === 409)) {
             $exists_patterns = array(
                 'customer already exist',
-                'customer already exists', 
+                'customer already exists',
                 'email already exists',
                 'duplicate',
                 'already registered'
@@ -267,7 +278,7 @@ class BNA_API {
         return false;
     }
 
-    private function find_existing_customer($email) {
+    private function find_existing_customer($email, $order = null) {
         $search_params = array('email' => $email, 'limit' => 1);
         $response = $this->make_request('v1/customers', 'GET', $search_params);
 
@@ -279,6 +290,19 @@ class BNA_API {
 
         foreach ($customers as $customer) {
             if (isset($customer['email'], $customer['id']) && $customer['email'] === $email) {
+
+                if ($order && is_user_logged_in()) {
+                    $wp_customer_id = $order->get_customer_id();
+                    if ($wp_customer_id) {
+                        update_user_meta($wp_customer_id, '_bna_customer_id', $customer['id']);
+
+                        bna_log('Saved found BNA customer ID to user meta', array(
+                            'wp_customer_id' => $wp_customer_id,
+                            'bna_customer_id' => $customer['id']
+                        ));
+                    }
+                }
+
                 return array(
                     'customer_id' => $customer['id'],
                     'is_existing' => true
@@ -330,7 +354,6 @@ class BNA_API {
             'lastName' => $last_name
         );
 
-        // Add optional fields
         if (get_option('bna_smart_payment_enable_phone') === 'yes') {
             $phone = $this->get_clean_phone($order);
             if ($phone) {
@@ -428,7 +451,6 @@ class BNA_API {
         return $shipping_address;
     }
 
-    // Helper methods
     private function extract_street_number($street) {
         if (empty($street) || !preg_match('/^(\d+)/', trim($street), $matches)) {
             return '1';
@@ -543,8 +565,8 @@ class BNA_API {
         }
 
         if ($response_code >= 400) {
-            $error_message = isset($parsed_response['message']) 
-                ? $parsed_response['message'] 
+            $error_message = isset($parsed_response['message'])
+                ? $parsed_response['message']
                 : "API request failed with status $response_code";
 
             return new WP_Error('api_error', $error_message, array(

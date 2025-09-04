@@ -42,6 +42,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
     private function init_hooks() {
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this, 'process_admin_options'));
+        add_action('woocommerce_checkout_update_customer_data', array($this, 'save_updated_billing_data'));
+        add_action('woocommerce_checkout_update_order_meta', array($this, 'update_customer_from_order'), 20);
 
         if ($this->get_option('enable_birthdate') === 'yes') {
             add_filter('woocommerce_billing_fields', array($this, 'add_birthdate_field'));
@@ -57,6 +59,80 @@ class BNA_Gateway extends WC_Payment_Gateway {
             add_action('woocommerce_checkout_update_customer_data', array($this, 'save_customer_shipping_data'));
             add_filter('woocommerce_checkout_get_value', array($this, 'populate_checkout_shipping_fields'), 10, 2);
         }
+    }
+
+    public function save_updated_billing_data($customer_id) {
+        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            return;
+        }
+
+        if (!$customer_id || !is_user_logged_in()) {
+            return;
+        }
+
+        $billing_fields = array(
+            'billing_first_name',
+            'billing_last_name',
+            'billing_company',
+            'billing_address_1',
+            'billing_address_2',
+            'billing_city',
+            'billing_state',
+            'billing_postcode',
+            'billing_country',
+            'billing_phone',
+            'billing_email'
+        );
+
+        foreach ($billing_fields as $field) {
+            if (isset($_POST[$field])) {
+                $value = sanitize_text_field($_POST[$field]);
+                update_user_meta($customer_id, $field, $value);
+            }
+        }
+
+        bna_log('Updated customer billing data from checkout', array(
+            'customer_id' => $customer_id,
+            'updated_fields' => count(array_intersect($billing_fields, array_keys($_POST)))
+        ));
+    }
+
+    public function update_customer_from_order($order_id) {
+        $order = wc_get_order($order_id);
+
+        if (!$order || $order->get_payment_method() !== $this->id) {
+            return;
+        }
+
+        $customer_id = $order->get_customer_id();
+        if (!$customer_id) {
+            return;
+        }
+
+        $billing_data = array(
+            'billing_first_name' => $order->get_billing_first_name(),
+            'billing_last_name' => $order->get_billing_last_name(),
+            'billing_company' => $order->get_billing_company(),
+            'billing_address_1' => $order->get_billing_address_1(),
+            'billing_address_2' => $order->get_billing_address_2(),
+            'billing_city' => $order->get_billing_city(),
+            'billing_state' => $order->get_billing_state(),
+            'billing_postcode' => $order->get_billing_postcode(),
+            'billing_country' => $order->get_billing_country(),
+            'billing_phone' => $order->get_billing_phone(),
+            'billing_email' => $order->get_billing_email()
+        );
+
+        foreach ($billing_data as $meta_key => $value) {
+            if ($value) {
+                update_user_meta($customer_id, $meta_key, $value);
+            }
+        }
+
+        bna_log('Updated customer billing data from order', array(
+            'customer_id' => $customer_id,
+            'order_id' => $order_id
+        ));
     }
 
     public function init_form_fields() {
@@ -171,7 +247,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $saved;
     }
 
-    // Birthdate field methods
     public function add_birthdate_field($fields) {
         $fields['billing_birthdate'] = array(
             'label' => __('Date of Birth', 'bna-smart-payment'),
@@ -217,7 +292,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    // Shipping address methods
     public function add_shipping_address_section() {
         BNA_Template::load('shipping-address-fields');
     }
@@ -239,7 +313,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $countries = $countries_obj->get_countries();
         $states = $countries_obj->get_states();
 
-        // Get saved customer shipping data
         $saved_shipping = array();
         if (is_user_logged_in()) {
             $customer_id = get_current_user_id();
@@ -252,7 +325,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'postcode' => get_user_meta($customer_id, 'shipping_postcode', true)
             );
 
-            // Check if shipping is different from billing
             $billing_country = get_user_meta($customer_id, 'billing_country', true);
             $billing_address_1 = get_user_meta($customer_id, 'billing_address_1', true);
             $billing_city = get_user_meta($customer_id, 'billing_city', true);
@@ -336,7 +408,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'postcode' => $order->get_billing_postcode()
         );
 
-        // Save in BNA fields
         foreach ($billing_fields as $field => $value) {
             if ($value) {
                 $order->add_meta_data('_bna_shipping_' . $field, $value);
@@ -350,7 +421,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $shipping_fields = array(
             'country' => 'bna_shipping_country',
             'address_1' => 'bna_shipping_address_1',
-            'address_2' => 'bna_shipping_address_2', 
+            'address_2' => 'bna_shipping_address_2',
             'city' => 'bna_shipping_city',
             'state' => 'bna_shipping_state',
             'postcode' => 'bna_shipping_postcode'
@@ -374,7 +445,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     private function save_to_wc_shipping_fields($order, $shipping_data) {
-        // Save in order shipping fields
         if (isset($shipping_data['country'])) $order->set_shipping_country($shipping_data['country']);
         if (isset($shipping_data['first_name'])) $order->set_shipping_first_name($shipping_data['first_name']);
         if (isset($shipping_data['last_name'])) $order->set_shipping_last_name($shipping_data['last_name']);
@@ -422,7 +492,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
 
         $same_as_billing = !empty($_POST['bna_shipping_same_as_billing']);
-        
+
         if ($same_as_billing) {
             $billing_fields = array(
                 'shipping_country' => $_POST['billing_country'] ?? '',
@@ -475,7 +545,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         $field_mapping = array(
             'bna_shipping_country' => 'get_shipping_country',
-            'bna_shipping_address_1' => 'get_shipping_address_1', 
+            'bna_shipping_address_1' => 'get_shipping_address_1',
             'bna_shipping_address_2' => 'get_shipping_address_2',
             'bna_shipping_city' => 'get_shipping_city',
             'bna_shipping_state' => 'get_shipping_state',
@@ -490,7 +560,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $value;
     }
 
-    // Payment processing methods
     public function display_payment_page_public($order) {
         try {
             if ($order->is_paid()) {
@@ -499,7 +568,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 exit;
             }
 
-            // Log customer sync status
             $customer_sync_status = bna_get_customer_sync_status($order);
             bna_debug('Customer sync status for payment', array(
                 'order_id' => $order->get_id(),
