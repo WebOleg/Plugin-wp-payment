@@ -3,24 +3,105 @@
 
     var countriesData = {};
     var statesData = {};
+    var savedShippingData = {};
+    var isInitialized = false;
 
     $(document).ready(function() {
         
         if (typeof bna_shipping_data !== 'undefined') {
             countriesData = bna_shipping_data.countries || {};
             statesData = bna_shipping_data.states || {};
+            savedShippingData = bna_shipping_data.saved_shipping || {};
+            
+            console.log('BNA Shipping Data loaded:', {
+                countries: Object.keys(countriesData).length,
+                states: Object.keys(statesData).length,
+                savedData: savedShippingData
+            });
         }
         
         function handlePaymentMethodChange() {
             var selectedMethod = $('input[name="payment_method"]:checked').val();
             if (selectedMethod === 'bna_smart_payment') {
                 $('#bna-shipping-address-section').show();
-                setTimeout(function() {
-                    populateCountryOptions();
-                    initCustomSelect();
-                }, 100);
+                if (!isInitialized) {
+                    setTimeout(function() {
+                        populateCountryOptions();
+                        initCustomSelect();
+                        loadSavedShippingData();
+                        isInitialized = true;
+                    }, 100);
+                }
             } else {
                 $('#bna-shipping-address-section').hide();
+            }
+        }
+
+        function loadSavedShippingData() {
+            console.log('Loading saved shipping data:', savedShippingData);
+            
+            // Check if we have any meaningful saved shipping data
+            var hasData = savedShippingData.country || 
+                         savedShippingData.address_1 || 
+                         savedShippingData.city || 
+                         savedShippingData.postcode;
+            
+            if (!hasData) {
+                console.log('No meaningful saved shipping data found');
+                return;
+            }
+
+            console.log('Found saved shipping data, loading...');
+
+            // Always show the fields first if we have data
+            $('#bna-shipping-fields').show();
+
+            // Set country first
+            if (savedShippingData.country && countriesData[savedShippingData.country]) {
+                console.log('Setting country:', savedShippingData.country, countriesData[savedShippingData.country]);
+                setCustomSelectValue('#bna_country_selector', savedShippingData.country, countriesData[savedShippingData.country]);
+                $('#bna_shipping_country').val(savedShippingData.country);
+                populateStateOptions(savedShippingData.country);
+            }
+
+            // Set text fields
+            if (savedShippingData.address_1) {
+                $('#bna_shipping_address_1').val(savedShippingData.address_1);
+            }
+            if (savedShippingData.address_2) {
+                $('#bna_shipping_address_2').val(savedShippingData.address_2);
+            }
+            if (savedShippingData.city) {
+                $('#bna_shipping_city').val(savedShippingData.city);
+            }
+            if (savedShippingData.postcode) {
+                $('#bna_shipping_postcode').val(savedShippingData.postcode);
+            }
+
+            // Set state after country options are loaded
+            if (savedShippingData.state && savedShippingData.country) {
+                setTimeout(function() {
+                    if (statesData[savedShippingData.country] && statesData[savedShippingData.country][savedShippingData.state]) {
+                        console.log('Setting state:', savedShippingData.state, statesData[savedShippingData.country][savedShippingData.state]);
+                        setCustomSelectValue('#bna_province_selector', savedShippingData.state, statesData[savedShippingData.country][savedShippingData.state]);
+                        $('#bna_shipping_state').val(savedShippingData.state);
+                    }
+                }, 300);
+            }
+
+            // Set checkbox based on whether data is different from billing
+            var $checkbox = $('#bna_shipping_same_as_billing');
+            
+            console.log('is_different_from_billing:', savedShippingData.is_different_from_billing);
+            
+            // If shipping is different from billing, uncheck and show
+            if (savedShippingData.is_different_from_billing === true) {
+                $checkbox.prop('checked', false);
+                console.log('Shipping is different from billing - unchecking checkbox');
+            } else {
+                // Even if same as billing, uncheck to show the saved data to user
+                $checkbox.prop('checked', false);
+                console.log('Shipping same as billing but showing saved data');
             }
         }
 
@@ -58,9 +139,6 @@
             Object.keys(statesData[countryCode]).forEach(function(stateCode) {
                 $stateOptions.append('<li data-value="' + stateCode + '">' + statesData[countryCode][stateCode] + '</li>');
             });
-            
-            setCustomSelectValue('#bna_province_selector', '', getI18nText('select_state'));
-            $('#bna_shipping_state').val('');
         }
 
         function getI18nText(key) {
@@ -183,7 +261,14 @@
             if (isChecked) {
                 copyBillingToShipping();
             } else {
-                clearShippingFields();
+                // If we have saved data and user unchecks, reload saved data
+                if (savedShippingData && (savedShippingData.country || savedShippingData.address_1)) {
+                    setTimeout(function() {
+                        loadSavedShippingData();
+                    }, 100);
+                } else {
+                    clearShippingFields();
+                }
             }
         });
 
@@ -196,7 +281,7 @@
         });
 
         $(document).on('change', '#billing_state', function() {
-            if ($('#bna_shipping_same_as_billing').is(':checked')) {
+            if ($('#bna_shipping_same_as_billing').is(':checked') && savedShippingData.is_different_from_billing !== true) {
                 setTimeout(function() {
                     var billingCountry = $('#billing_country').val();
                     var billingState = $('#billing_state').val();
@@ -210,21 +295,15 @@
         });
 
         $(document.body).on('updated_checkout', function() {
-            setTimeout(function() {
-                handlePaymentMethodChange();
-                var isChecked = $('#bna_shipping_same_as_billing').is(':checked');
-                toggleShippingFields(isChecked);
-                
-                if (isChecked) {
-                    copyBillingToShipping();
-                }
-            }, 200);
+            if (!isInitialized) {
+                setTimeout(function() {
+                    handlePaymentMethodChange();
+                }, 300);
+            }
         });
 
+        // Initialize on page load
         handlePaymentMethodChange();
-        
-        var initialChecked = $('#bna_shipping_same_as_billing').is(':checked');
-        toggleShippingFields(initialChecked);
     });
 
 })(jQuery);

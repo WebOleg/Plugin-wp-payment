@@ -54,6 +54,10 @@ class BNA_Gateway extends WC_Payment_Gateway {
             add_action('woocommerce_checkout_process', array($this, 'validate_shipping_address'));
             add_action('woocommerce_checkout_update_order_meta', array($this, 'save_shipping_address'));
             add_action('wp_enqueue_scripts', array($this, 'enqueue_shipping_scripts'));
+            
+            // Save to customer profile
+            add_action('woocommerce_checkout_update_customer_data', array($this, 'save_customer_shipping_data'));
+            add_filter('woocommerce_checkout_get_value', array($this, 'populate_checkout_shipping_fields'), 10, 2);
         }
     }
 
@@ -207,10 +211,40 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $countries = $countries_obj->get_countries();
         $states = $countries_obj->get_states();
 
+        // Get saved customer shipping data
+        $saved_shipping = array();
+        if (is_user_logged_in()) {
+            $customer_id = get_current_user_id();
+            $saved_shipping = array(
+                'country' => get_user_meta($customer_id, 'shipping_country', true),
+                'address_1' => get_user_meta($customer_id, 'shipping_address_1', true),
+                'address_2' => get_user_meta($customer_id, 'shipping_address_2', true),
+                'city' => get_user_meta($customer_id, 'shipping_city', true),
+                'state' => get_user_meta($customer_id, 'shipping_state', true),
+                'postcode' => get_user_meta($customer_id, 'shipping_postcode', true)
+            );
+
+            // Check if shipping is different from billing
+            $billing_country = get_user_meta($customer_id, 'billing_country', true);
+            $billing_address_1 = get_user_meta($customer_id, 'billing_address_1', true);
+            $billing_city = get_user_meta($customer_id, 'billing_city', true);
+            $billing_state = get_user_meta($customer_id, 'billing_state', true);
+            $billing_postcode = get_user_meta($customer_id, 'billing_postcode', true);
+
+            $saved_shipping['is_different_from_billing'] = (
+                $saved_shipping['country'] !== $billing_country ||
+                $saved_shipping['address_1'] !== $billing_address_1 ||
+                $saved_shipping['city'] !== $billing_city ||
+                $saved_shipping['state'] !== $billing_state ||
+                $saved_shipping['postcode'] !== $billing_postcode
+            );
+        }
+
         wp_localize_script('bna-shipping-address', 'bna_shipping_data', array(
             'gateway_id' => $this->id,
             'countries' => $countries,
             'states' => $states,
+            'saved_shipping' => $saved_shipping,
             'i18n' => array(
                 'select_country' => __('Select Country...', 'bna-smart-payment'),
                 'select_state' => __('Select State/Province...', 'bna-smart-payment'),
@@ -293,25 +327,217 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $same_as_billing = !empty($_POST['bna_shipping_same_as_billing']);
         $order->add_meta_data('_bna_shipping_same_as_billing', $same_as_billing ? 'yes' : 'no');
 
-        if (!$same_as_billing) {
+        if ($same_as_billing) {
+            $this->copy_billing_to_shipping($order);
+        } else {
+            $this->save_custom_shipping_data($order);
+        }
+
+        $order->save();
+    }
+
+    private function copy_billing_to_shipping($order) {
+        $billing_fields = array(
+            'country' => $order->get_billing_country(),
+            'first_name' => $order->get_billing_first_name(),
+            'last_name' => $order->get_billing_last_name(),
+            'company' => $order->get_billing_company(),
+            'address_1' => $order->get_billing_address_1(),
+            'address_2' => $order->get_billing_address_2(),
+            'city' => $order->get_billing_city(),
+            'state' => $order->get_billing_state(),
+            'postcode' => $order->get_billing_postcode()
+        );
+
+        // Save in BNA fields
+        foreach ($billing_fields as $field => $value) {
+            if ($value) {
+                $order->add_meta_data('_bna_shipping_' . $field, $value);
+            }
+        }
+
+        // Save to WC shipping fields
+        $this->save_to_wc_shipping_fields($order, $billing_fields);
+    }
+
+    private function save_custom_shipping_data($order) {
+        $shipping_fields = array(
+            'country' => 'bna_shipping_country',
+            'address_1' => 'bna_shipping_address_1',
+            'address_2' => 'bna_shipping_address_2', 
+            'city' => 'bna_shipping_city',
+            'state' => 'bna_shipping_state',
+            'postcode' => 'bna_shipping_postcode'
+        );
+
+        $shipping_data = array();
+
+        foreach ($shipping_fields as $meta_key => $post_key) {
+            if (isset($_POST[$post_key])) {
+                $value = sanitize_text_field($_POST[$post_key]);
+                $order->add_meta_data('_bna_shipping_' . $meta_key, $value);
+                $shipping_data[$meta_key] = $value;
+            }
+        }
+
+        // Add name fields from billing
+        $shipping_data['first_name'] = $order->get_billing_first_name();
+        $shipping_data['last_name'] = $order->get_billing_last_name();
+        $shipping_data['company'] = $order->get_billing_company();
+
+        // Save to WC shipping fields
+        $this->save_to_wc_shipping_fields($order, $shipping_data);
+    }
+
+    private function save_to_wc_shipping_fields($order, $shipping_data) {
+        // Save in order shipping fields
+        if (isset($shipping_data['country'])) {
+            $order->set_shipping_country($shipping_data['country']);
+        }
+        if (isset($shipping_data['first_name'])) {
+            $order->set_shipping_first_name($shipping_data['first_name']);
+        }
+        if (isset($shipping_data['last_name'])) {
+            $order->set_shipping_last_name($shipping_data['last_name']);
+        }
+        if (isset($shipping_data['company'])) {
+            $order->set_shipping_company($shipping_data['company']);
+        }
+        if (isset($shipping_data['address_1'])) {
+            $order->set_shipping_address_1($shipping_data['address_1']);
+        }
+        if (isset($shipping_data['address_2'])) {
+            $order->set_shipping_address_2($shipping_data['address_2']);
+        }
+        if (isset($shipping_data['city'])) {
+            $order->set_shipping_city($shipping_data['city']);
+        }
+        if (isset($shipping_data['state'])) {
+            $order->set_shipping_state($shipping_data['state']);
+        }
+        if (isset($shipping_data['postcode'])) {
+            $order->set_shipping_postcode($shipping_data['postcode']);
+        }
+
+        // Save to customer profile for My Account
+        $customer_id = $order->get_customer_id();
+        if ($customer_id) {
+            $this->save_to_customer_profile($customer_id, $shipping_data);
+        }
+    }
+
+    private function save_to_customer_profile($customer_id, $shipping_data) {
+        $customer_fields = array(
+            'shipping_country' => $shipping_data['country'] ?? '',
+            'shipping_first_name' => $shipping_data['first_name'] ?? '',
+            'shipping_last_name' => $shipping_data['last_name'] ?? '',
+            'shipping_company' => $shipping_data['company'] ?? '',
+            'shipping_address_1' => $shipping_data['address_1'] ?? '',
+            'shipping_address_2' => $shipping_data['address_2'] ?? '',
+            'shipping_city' => $shipping_data['city'] ?? '',
+            'shipping_state' => $shipping_data['state'] ?? '',
+            'shipping_postcode' => $shipping_data['postcode'] ?? ''
+        );
+
+        foreach ($customer_fields as $meta_key => $value) {
+            if ($value) {
+                update_user_meta($customer_id, $meta_key, $value);
+            }
+        }
+
+        bna_log('Shipping address saved to customer profile', array(
+            'customer_id' => $customer_id,
+            'fields_saved' => array_keys(array_filter($customer_fields))
+        ));
+    }
+
+    public function save_customer_shipping_data($customer_id) {
+        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            return;
+        }
+
+        $same_as_billing = !empty($_POST['bna_shipping_same_as_billing']);
+        
+        if ($same_as_billing) {
+            // Copy billing data to shipping profile
+            $billing_fields = array(
+                'shipping_country' => $_POST['billing_country'] ?? '',
+                'shipping_first_name' => $_POST['billing_first_name'] ?? '',
+                'shipping_last_name' => $_POST['billing_last_name'] ?? '',
+                'shipping_company' => $_POST['billing_company'] ?? '',
+                'shipping_address_1' => $_POST['billing_address_1'] ?? '',
+                'shipping_address_2' => $_POST['billing_address_2'] ?? '',
+                'shipping_city' => $_POST['billing_city'] ?? '',
+                'shipping_state' => $_POST['billing_state'] ?? '',
+                'shipping_postcode' => $_POST['billing_postcode'] ?? ''
+            );
+
+            foreach ($billing_fields as $meta_key => $value) {
+                if ($value) {
+                    update_user_meta($customer_id, $meta_key, sanitize_text_field($value));
+                }
+            }
+        } else {
+            // Save custom shipping data
             $shipping_fields = array(
-                'address_1' => 'bna_shipping_address_1',
-                'address_2' => 'bna_shipping_address_2',
-                'city' => 'bna_shipping_city',
-                'state' => 'bna_shipping_state',
-                'postcode' => 'bna_shipping_postcode',
-                'country' => 'bna_shipping_country'
+                'shipping_country' => 'bna_shipping_country',
+                'shipping_address_1' => 'bna_shipping_address_1',
+                'shipping_address_2' => 'bna_shipping_address_2',
+                'shipping_city' => 'bna_shipping_city',
+                'shipping_state' => 'bna_shipping_state',
+                'shipping_postcode' => 'bna_shipping_postcode'
             );
 
             foreach ($shipping_fields as $meta_key => $post_key) {
                 if (isset($_POST[$post_key])) {
                     $value = sanitize_text_field($_POST[$post_key]);
-                    $order->add_meta_data('_bna_shipping_' . $meta_key, $value);
+                    update_user_meta($customer_id, $meta_key, $value);
                 }
+            }
+
+            // Name fields from billing
+            update_user_meta($customer_id, 'shipping_first_name', sanitize_text_field($_POST['billing_first_name'] ?? ''));
+            update_user_meta($customer_id, 'shipping_last_name', sanitize_text_field($_POST['billing_last_name'] ?? ''));
+            update_user_meta($customer_id, 'shipping_company', sanitize_text_field($_POST['billing_company'] ?? ''));
+        }
+    }
+
+    public function populate_checkout_shipping_fields($value, $key) {
+        // Populate only for BNA shipping fields
+        if (strpos($key, 'bna_shipping_') !== 0) {
+            return $value;
+        }
+
+        // If field already has value, don't overwrite
+        if ($value) {
+            return $value;
+        }
+
+        $customer = WC()->customer;
+        if (!$customer) {
+            return $value;
+        }
+
+        // Map BNA fields to WC customer fields
+        $field_mapping = array(
+            'bna_shipping_country' => 'get_shipping_country',
+            'bna_shipping_address_1' => 'get_shipping_address_1', 
+            'bna_shipping_address_2' => 'get_shipping_address_2',
+            'bna_shipping_city' => 'get_shipping_city',
+            'bna_shipping_state' => 'get_shipping_state',
+            'bna_shipping_postcode' => 'get_shipping_postcode'
+        );
+
+        if (isset($field_mapping[$key]) && method_exists($customer, $field_mapping[$key])) {
+            $method = $field_mapping[$key];
+            $customer_value = $customer->$method();
+            
+            if ($customer_value) {
+                return $customer_value;
             }
         }
 
-        $order->save();
+        return $value;
     }
 
     public function display_payment_page_public($order) {
