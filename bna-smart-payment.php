@@ -2,8 +2,8 @@
 /**
  * Plugin Name: BNA Smart Payment Gateway
  * Plugin URI: https://bnasmartpayment.com
- * Description: WooCommerce payment gateway for BNA Smart Payment with iframe, webhooks, shipping address support, and customer data sync.
- * Version: 1.6.0
+ * Description: WooCommerce payment gateway for BNA Smart Payment with iframe, webhooks, shipping address support, and customer data sync with improved error handling.
+ * Version: 1.6.1
  * Author: BNA Smart Payment
  * Text Domain: bna-smart-payment
  * Requires at least: 5.0
@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('BNA_SMART_PAYMENT_VERSION', '1.6.0');
+define('BNA_SMART_PAYMENT_VERSION', '1.6.1');
 define('BNA_SMART_PAYMENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -86,6 +86,10 @@ class BNA_Smart_Payment {
         add_filter('woocommerce_payment_gateways', array($this, 'add_gateway_class'));
         add_action('wp_enqueue_scripts', array($this, 'load_frontend_assets'));
         add_action('wp', array($this, 'handle_payment_request'));
+
+        // Add additional error handling hooks
+        add_action('wp_ajax_bna_test_connection', array($this, 'test_api_connection'));
+        add_action('wp_ajax_nopriv_bna_test_connection', array($this, 'test_api_connection'));
 
         bna_log('BNA Smart Payment initialized successfully');
     }
@@ -174,6 +178,25 @@ class BNA_Smart_Payment {
         return preg_match('/^bna-payment\/\d+\/[a-zA-Z0-9_-]+\/?$/', $request_uri);
     }
 
+    /**
+     * Test API connection via AJAX
+     */
+    public function test_api_connection() {
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die('Unauthorized');
+        }
+
+        check_ajax_referer('bna_test_connection', 'nonce');
+
+        $api = new BNA_API();
+        $result = $api->test_connection();
+
+        wp_send_json(array(
+            'success' => $result,
+            'message' => $result ? 'Connection successful' : 'Connection failed'
+        ));
+    }
+
     public function woocommerce_missing_notice() {
         ?>
         <div class="notice notice-error">
@@ -225,7 +248,8 @@ class BNA_Smart_Payment {
             'bna_smart_payment_enable_phone' => 'no',
             'bna_smart_payment_enable_billing_address' => 'no',
             'bna_smart_payment_enable_birthdate' => 'yes',
-            'bna_smart_payment_enable_shipping_address' => 'no'
+            'bna_smart_payment_enable_shipping_address' => 'no',
+            'bna_smart_payment_debug_mode' => 'no'
         );
 
         foreach ($defaults as $option_name => $option_value) {
@@ -251,9 +275,13 @@ class BNA_Smart_Payment {
             if (version_compare($installed_version, '1.5.0', '<')) {
                 $this->upgrade_to_1_5_0();
             }
-            
+
             if (version_compare($installed_version, '1.6.0', '<')) {
                 $this->upgrade_to_1_6_0();
+            }
+
+            if (version_compare($installed_version, '1.6.1', '<')) {
+                $this->upgrade_to_1_6_1();
             }
 
             update_option('bna_smart_payment_version', BNA_SMART_PAYMENT_VERSION);
@@ -275,7 +303,7 @@ class BNA_Smart_Payment {
      */
     private function upgrade_to_1_6_0() {
         bna_log('Upgrade to 1.6.0: Customer data sync feature added');
-        
+
         // Clean up any old customer data hashes if needed
         $orders = wc_get_orders(array(
             'limit' => 10,
@@ -293,6 +321,49 @@ class BNA_Smart_Payment {
 
         bna_log('Upgrade to 1.6.0 completed', array(
             'processed_orders' => count($orders)
+        ));
+    }
+
+    /**
+     * Upgrade to version 1.6.1 (improved error handling and country mapping)
+     */
+    private function upgrade_to_1_6_1() {
+        bna_log('Upgrade to 1.6.1: Improved error handling and country mapping');
+
+        // Add debug mode option if not exists
+        if (false === get_option('bna_smart_payment_debug_mode')) {
+            add_option('bna_smart_payment_debug_mode', 'no');
+        }
+
+        // Clear any problematic customer data hashes to force re-sync with new validation
+        $orders = wc_get_orders(array(
+            'limit' => 50,
+            'status' => array('pending', 'on-hold'),
+            'payment_method' => 'bna_smart_payment',
+            'meta_query' => array(
+                array(
+                    'key' => '_bna_customer_data_hash',
+                    'compare' => 'EXISTS'
+                )
+            )
+        ));
+
+        $cleared_count = 0;
+        foreach ($orders as $order) {
+            // Clear hash to force re-validation with new logic
+            $order->update_meta_data('_bna_customer_data_hash', '');
+            $order->save();
+            $cleared_count++;
+        }
+
+        bna_log('Upgrade to 1.6.1 completed', array(
+            'cleared_hashes' => $cleared_count,
+            'improvements' => array(
+                'country_code_mapping',
+                'phone_number_processing',
+                'api_error_handling',
+                'address_validation'
+            )
         ));
     }
 
@@ -318,6 +389,9 @@ class BNA_Smart_Payment {
         $gateway = isset($gateways['bna_smart_payment']) ? $gateways['bna_smart_payment'] : null;
 
         if (!$gateway) {
+            bna_error('Gateway not available for payment request', array(
+                'order_id' => $order_id
+            ));
             wp_safe_redirect(wc_get_checkout_url());
             exit;
         }
@@ -325,7 +399,12 @@ class BNA_Smart_Payment {
         $order = wc_get_order($order_id);
 
         if (!$order || $order->get_order_key() !== $order_key || $order->get_payment_method() !== 'bna_smart_payment') {
-            bna_error('Order validation failed', array('order_id' => $order_id));
+            bna_error('Order validation failed', array(
+                'order_id' => $order_id,
+                'order_exists' => !empty($order),
+                'key_match' => $order ? ($order->get_order_key() === $order_key) : false,
+                'payment_method' => $order ? $order->get_payment_method() : 'unknown'
+            ));
             wp_safe_redirect(wc_get_checkout_url());
             exit;
         }
@@ -333,6 +412,7 @@ class BNA_Smart_Payment {
         if (method_exists($gateway, 'display_payment_page_public')) {
             $gateway->display_payment_page_public($order);
         } else {
+            bna_error('Payment page display method not found');
             wp_safe_redirect(wc_get_checkout_url());
             exit;
         }
@@ -352,7 +432,9 @@ class BNA_Smart_Payment {
             'wc_version' => class_exists('WooCommerce') ? WC()->version : 'Not installed',
             'php_version' => PHP_VERSION,
             'shipping_enabled' => get_option('bna_smart_payment_enable_shipping_address', 'no'),
-            'customer_sync_enabled' => true  // New feature in 1.6.0
+            'customer_sync_enabled' => true,  // Feature in 1.6.0
+            'error_handling_improved' => true, // Feature in 1.6.1
+            'country_mapping_improved' => true // Feature in 1.6.1
         );
     }
 
@@ -367,8 +449,44 @@ class BNA_Smart_Payment {
             'billing_enabled' => get_option('bna_smart_payment_enable_billing_address', 'no'),
             'phone_enabled' => get_option('bna_smart_payment_enable_phone', 'no'),
             'birthdate_enabled' => get_option('bna_smart_payment_enable_birthdate', 'yes'),
-            'customer_sync' => '1.6.0'  // Version when customer sync was added
+            'debug_mode' => get_option('bna_smart_payment_debug_mode', 'no'),
+            'customer_sync' => '1.6.0',  // Version when customer sync was added
+            'error_handling' => '1.6.1'  // Version when error handling was improved
         );
+    }
+
+    /**
+     * Check system health for debugging
+     * @return array
+     */
+    public static function get_system_health() {
+        $health = array(
+            'wp_version_ok' => version_compare(get_bloginfo('version'), '5.0', '>='),
+            'wc_installed' => class_exists('WooCommerce'),
+            'wc_version_ok' => false,
+            'php_version_ok' => version_compare(PHP_VERSION, '7.0', '>='),
+            'php_recommended' => version_compare(PHP_VERSION, '7.4', '>='),
+            'ssl_enabled' => is_ssl(),
+            'permalinks_ok' => get_option('permalink_structure') !== '',
+            'curl_available' => function_exists('curl_init'),
+            'json_available' => function_exists('json_encode') && function_exists('json_decode'),
+            'json_constants_ok' => defined('JSON_UNESCAPED_UNICODE') && defined('JSON_SORT_KEYS'),
+            'credentials_configured' => false,
+            'iframe_id_configured' => false
+        );
+
+        if (class_exists('WooCommerce')) {
+            $health['wc_version_ok'] = version_compare(WC()->version, '5.0', '>=');
+        }
+
+        $access_key = get_option('bna_smart_payment_access_key', '');
+        $secret_key = get_option('bna_smart_payment_secret_key', '');
+        $iframe_id = get_option('bna_smart_payment_iframe_id', '');
+
+        $health['credentials_configured'] = !empty($access_key) && !empty($secret_key);
+        $health['iframe_id_configured'] = !empty($iframe_id);
+
+        return $health;
     }
 }
 
@@ -397,8 +515,16 @@ function bna_get_config() {
     return BNA_Smart_Payment::get_config();
 }
 
+function bna_get_system_health() {
+    return BNA_Smart_Payment::get_system_health();
+}
+
 function bna_is_shipping_enabled() {
     return get_option('bna_smart_payment_enable_shipping_address', 'no') === 'yes';
+}
+
+function bna_is_debug_mode() {
+    return get_option('bna_smart_payment_debug_mode', 'no') === 'yes';
 }
 
 /**
@@ -410,11 +536,84 @@ function bna_get_customer_sync_status($order) {
     if (!$order) {
         return array('error' => 'Order not found');
     }
-    
+
     return array(
         'customer_id' => $order->get_meta('_bna_customer_id'),
         'data_hash' => $order->get_meta('_bna_customer_data_hash'),
         'has_customer' => !empty($order->get_meta('_bna_customer_id')),
-        'sync_available' => true
+        'sync_available' => true,
+        'last_update_attempt' => $order->get_meta('_bna_last_sync_attempt'),
+        'last_successful_sync' => $order->get_meta('_bna_last_successful_sync')
     );
+}
+
+/**
+ * Enhanced logging for debug mode
+ * @param string $message
+ * @param array $data
+ */
+function bna_debug_log($message, $data = array()) {
+    if (bna_is_debug_mode()) {
+        bna_log('[DEBUG MODE] ' . $message, $data);
+    }
+}
+
+/**
+ * Validate customer data for API submission
+ * @param array $customer_data
+ * @return bool|WP_Error
+ */
+function bna_validate_customer_data($customer_data) {
+    $required_fields = array('firstName', 'lastName', 'email', 'type');
+    $missing_fields = array();
+
+    foreach ($required_fields as $field) {
+        if (empty($customer_data[$field])) {
+            $missing_fields[] = $field;
+        }
+    }
+
+    if (!empty($missing_fields)) {
+        return new WP_Error(
+            'missing_required_fields',
+            'Missing required customer fields: ' . implode(', ', $missing_fields),
+            $missing_fields
+        );
+    }
+
+    // Validate email
+    if (!filter_var($customer_data['email'], FILTER_VALIDATE_EMAIL)) {
+        return new WP_Error('invalid_email', 'Invalid email format');
+    }
+
+    return true;
+}
+
+/**
+ * Format error message for user display
+ * @param WP_Error|string $error
+ * @return string
+ */
+function bna_format_error_message($error) {
+    if (is_wp_error($error)) {
+        $message = $error->get_error_message();
+
+        // Translate common API errors to user-friendly messages
+        $translations = array(
+            'Invalid country code' => __('Please check your address information and try again.', 'bna-smart-payment'),
+            'Internal Server Error' => __('Payment system temporarily unavailable. Please try again.', 'bna-smart-payment'),
+            'Customer already exist' => __('Account already exists. Please continue with payment.', 'bna-smart-payment'),
+            'Invalid phone number' => __('Please check your phone number and try again.', 'bna-smart-payment')
+        );
+
+        foreach ($translations as $api_error => $user_message) {
+            if (stripos($message, $api_error) !== false) {
+                return $user_message;
+            }
+        }
+
+        return $message;
+    }
+
+    return (string) $error;
 }
