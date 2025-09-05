@@ -61,12 +61,29 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
+    /**
+     * Save updated billing data from checkout
+     * Fixed: Properly get customer ID from checkout data
+     */
     public function save_updated_billing_data($customer_id) {
         if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
             return;
         }
 
-        if (!$customer_id || !is_user_logged_in()) {
+        // Fix: Get proper customer ID
+        $actual_customer_id = 0;
+
+        if (is_numeric($customer_id)) {
+            $actual_customer_id = intval($customer_id);
+        } elseif (is_user_logged_in()) {
+            $actual_customer_id = get_current_user_id();
+        }
+
+        if (!$actual_customer_id) {
+            bna_debug('No valid customer ID found for billing data update', array(
+                'received_customer_id' => $customer_id,
+                'is_user_logged_in' => is_user_logged_in()
+            ));
             return;
         }
 
@@ -84,16 +101,18 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'billing_email'
         );
 
+        $updated_count = 0;
         foreach ($billing_fields as $field) {
             if (isset($_POST[$field])) {
                 $value = sanitize_text_field($_POST[$field]);
-                update_user_meta($customer_id, $field, $value);
+                update_user_meta($actual_customer_id, $field, $value);
+                $updated_count++;
             }
         }
 
         bna_log('Updated customer billing data from checkout', array(
-            'customer_id' => $customer_id,
-            'updated_fields' => count(array_intersect($billing_fields, array_keys($_POST)))
+            'customer_id' => $actual_customer_id,
+            'updated_fields' => $updated_count
         ));
     }
 
