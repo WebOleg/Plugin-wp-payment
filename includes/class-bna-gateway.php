@@ -49,6 +49,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
             add_filter('woocommerce_billing_fields', array($this, 'add_birthdate_field'));
             add_action('woocommerce_checkout_process', array($this, 'validate_birthdate'));
             add_action('woocommerce_checkout_update_order_meta', array($this, 'save_birthdate'));
+            add_filter('woocommerce_checkout_get_value', array($this, 'populate_birthdate_field'), 10, 2);
         }
 
         if ($this->get_option('enable_shipping_address') === 'yes') {
@@ -61,16 +62,11 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    /**
-     * Save updated billing data from checkout
-     * Fixed: Properly get customer ID from checkout data
-     */
     public function save_updated_billing_data($customer_id) {
         if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
             return;
         }
 
-        // Fix: Get proper customer ID
         $actual_customer_id = 0;
 
         if (is_numeric($customer_id)) {
@@ -98,7 +94,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'billing_postcode',
             'billing_country',
             'billing_phone',
-            'billing_email'
+            'billing_email',
+            'billing_birthdate'
         );
 
         $updated_count = 0;
@@ -141,6 +138,11 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'billing_phone' => $order->get_billing_phone(),
             'billing_email' => $order->get_billing_email()
         );
+
+        $birthdate = $order->get_meta('_billing_birthdate');
+        if ($birthdate) {
+            $billing_data['billing_birthdate'] = $birthdate;
+        }
 
         foreach ($billing_data as $meta_key => $value) {
             if ($value) {
@@ -280,6 +282,17 @@ class BNA_Gateway extends WC_Payment_Gateway {
             )
         );
         return $fields;
+    }
+
+    public function populate_birthdate_field($value, $key) {
+        if ($key === 'billing_birthdate' && empty($value) && is_user_logged_in()) {
+            $customer_id = get_current_user_id();
+            $stored_birthdate = get_user_meta($customer_id, 'billing_birthdate', true);
+            if ($stored_birthdate) {
+                return $stored_birthdate;
+            }
+        }
+        return $value;
     }
 
     public function validate_birthdate() {

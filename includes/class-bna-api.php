@@ -11,7 +11,6 @@ class BNA_API {
         'production' => 'https://api.bnasmartpayment.com'
     );
 
-    // Mapping WooCommerce country codes to BNA API country codes
     const COUNTRY_CODE_MAPPING = array(
         'CA' => 'Canada',
         'US' => 'United States',
@@ -36,7 +35,6 @@ class BNA_API {
         'UA' => 'Ukraine'
     );
 
-    // Phone country codes mapping
     const PHONE_COUNTRY_CODES = array(
         'CA' => '+1',
         'US' => '+1',
@@ -75,19 +73,13 @@ class BNA_API {
         ));
     }
 
-    /**
-     * Safe JSON encoding that works on all PHP versions
-     */
     private function safe_json_encode($data) {
-        // Use basic wp_json_encode without any flags for maximum compatibility
         $json = wp_json_encode($data);
 
-        // If wp_json_encode fails, fallback to json_encode
         if ($json === false && function_exists('json_encode')) {
             $json = json_encode($data);
         }
 
-        // If still failed, return a simple string representation
         if ($json === false) {
             $json = serialize($data);
         }
@@ -95,15 +87,11 @@ class BNA_API {
         return $json;
     }
 
-    /**
-     * Update customer with improved error handling
-     */
     public function update_customer($customer_id, $customer_data) {
         if (empty($customer_id)) {
             return new WP_Error('missing_customer_id', 'Customer ID is required for update');
         }
 
-        // Validate customer data before sending
         $validation_result = $this->validate_customer_data($customer_data);
         if (is_wp_error($validation_result)) {
             bna_error('Customer data validation failed', array(
@@ -113,7 +101,6 @@ class BNA_API {
             return $validation_result;
         }
 
-        // Remove email from update data - emails cannot be updated
         if (isset($customer_data['email'])) {
             unset($customer_data['email']);
             bna_debug('Removed email from update data - email cannot be updated for existing customers');
@@ -156,13 +143,9 @@ class BNA_API {
         }
     }
 
-    /**
-     * Validate customer data before API requests
-     */
     private function validate_customer_data($customer_data) {
         $errors = array();
 
-        // Validate required fields
         $required_fields = array('firstName', 'lastName', 'type');
         foreach ($required_fields as $field) {
             if (empty($customer_data[$field])) {
@@ -170,12 +153,10 @@ class BNA_API {
             }
         }
 
-        // Validate email format if present
         if (isset($customer_data['email']) && !filter_var($customer_data['email'], FILTER_VALIDATE_EMAIL)) {
             $errors[] = 'Invalid email format';
         }
 
-        // Validate country codes in addresses
         if (isset($customer_data['address']['country'])) {
             $country = $customer_data['address']['country'];
             if (!$this->is_valid_country_code($country)) {
@@ -190,7 +171,6 @@ class BNA_API {
             }
         }
 
-        // Validate phone number format
         if (isset($customer_data['phoneNumber'])) {
             if (!$this->is_valid_phone_number($customer_data['phoneNumber'])) {
                 $errors[] = 'Invalid phone number format';
@@ -204,28 +184,16 @@ class BNA_API {
         return true;
     }
 
-    /**
-     * Check if country code is valid for BNA API
-     */
     private function is_valid_country_code($country_code) {
         return isset(self::COUNTRY_CODE_MAPPING[$country_code]) ||
             in_array($country_code, self::COUNTRY_CODE_MAPPING);
     }
 
-    /**
-     * Validate phone number format
-     */
     private function is_valid_phone_number($phone) {
-        // Remove all non-digits
         $digits_only = preg_replace('/\D/', '', $phone);
-
-        // Phone should be between 7 and 15 digits
         return strlen($digits_only) >= 7 && strlen($digits_only) <= 15;
     }
 
-    /**
-     * Generate customer data hash for change detection - SAFE VERSION
-     */
     private function generate_customer_data_hash($customer_data) {
         try {
             bna_debug('Generating hash for customer data', array(
@@ -252,7 +220,6 @@ class BNA_API {
 
             ksort($relevant_data);
 
-            // Use safe JSON encoding without any flags that might not exist
             $json_string = $this->safe_json_encode($relevant_data);
             $hash = md5($json_string);
 
@@ -270,14 +237,10 @@ class BNA_API {
                 'customer_data' => $this->safe_json_encode($customer_data)
             ));
 
-            // Fallback to a simple hash of serialized data
             return md5(serialize($customer_data));
         }
     }
 
-    /**
-     * Check if customer data has changed
-     */
     private function has_customer_data_changed($order, $current_data) {
         try {
             bna_debug('Checking if customer data changed', array(
@@ -315,9 +278,6 @@ class BNA_API {
         }
     }
 
-    /**
-     * Generate checkout token with improved error handling
-     */
     public function generate_checkout_token($order) {
         try {
             $iframe_id = get_option('bna_smart_payment_iframe_id');
@@ -363,7 +323,6 @@ class BNA_API {
                 return new WP_Error('invalid_response', 'Token not found in response');
             }
 
-            // Save customer data and hash
             if (!empty($customer_result['customer_id'])) {
                 $order->add_meta_data('_bna_customer_id', $customer_result['customer_id']);
 
@@ -405,9 +364,6 @@ class BNA_API {
         }
     }
 
-    /**
-     * Get or create customer with improved handling
-     */
     private function get_or_create_customer($order) {
         try {
             bna_debug('Starting get_or_create_customer', array(
@@ -464,7 +420,6 @@ class BNA_API {
                             'error' => $update_result->get_error_message()
                         ));
 
-                        // Instead of creating new customer, proceed with existing one
                         return array(
                             'customer_id' => $existing_customer_id,
                             'is_existing' => true,
@@ -519,12 +474,8 @@ class BNA_API {
         }
     }
 
-    /**
-     * Create new customer with validation
-     */
     private function create_new_customer($customer_data, $order = null) {
         try {
-            // Validate before creating
             $validation_result = $this->validate_customer_data($customer_data);
             if (is_wp_error($validation_result)) {
                 return $validation_result;
@@ -594,9 +545,6 @@ class BNA_API {
         }
     }
 
-    /**
-     * Check if error indicates customer already exists
-     */
     private function is_customer_exists_error($error_message, $error_data) {
         if (isset($error_data['status']) && ($error_data['status'] === 400 || $error_data['status'] === 409)) {
             $exists_patterns = array(
@@ -617,9 +565,6 @@ class BNA_API {
         return false;
     }
 
-    /**
-     * Find existing customer by email
-     */
     private function find_existing_customer($email, $order = null) {
         try {
             $search_params = array('email' => $email, 'limit' => 1);
@@ -665,9 +610,6 @@ class BNA_API {
         }
     }
 
-    /**
-     * Create checkout payload
-     */
     private function create_checkout_payload($order, $customer_result) {
         $payload = array(
             'iframeId' => get_option('bna_smart_payment_iframe_id'),
@@ -693,9 +635,6 @@ class BNA_API {
         return $payload;
     }
 
-    /**
-     * Build customer info with improved phone and country handling
-     */
     private function build_customer_info($order) {
         try {
             bna_debug('Building customer info for order', array(
@@ -722,7 +661,6 @@ class BNA_API {
                 'lastName' => $last_name
             );
 
-            // Add phone if enabled
             if (get_option('bna_smart_payment_enable_phone') === 'yes') {
                 $phone_data = $this->process_phone_number($order);
                 if ($phone_data) {
@@ -736,7 +674,6 @@ class BNA_API {
                 }
             }
 
-            // Add birthdate if enabled
             if (get_option('bna_smart_payment_enable_birthdate') === 'yes') {
                 $birthdate = $this->get_valid_birthdate($order);
                 if ($birthdate) {
@@ -744,10 +681,8 @@ class BNA_API {
                 }
             }
 
-            // Build address
             $customer_info['address'] = $this->build_address($order);
 
-            // Build shipping address if enabled
             $shipping_address = $this->build_shipping_address($order);
             if ($shipping_address) {
                 $customer_info['shippingAddress'] = $shipping_address;
@@ -778,9 +713,6 @@ class BNA_API {
         }
     }
 
-    /**
-     * Process phone number with improved country detection
-     */
     private function process_phone_number($order) {
         $phone = trim($order->get_billing_phone());
         $billing_country = $order->get_billing_country();
@@ -794,10 +726,8 @@ class BNA_API {
             'billing_country' => $billing_country
         ));
 
-        // Remove all non-digits
         $digits_only = preg_replace('/\D/', '', $phone);
 
-        // Determine country code based on phone number patterns and billing country
         $phone_code = $this->determine_phone_country_code($digits_only, $billing_country);
         $phone_number = $this->format_phone_number($digits_only, $phone_code);
 
@@ -809,7 +739,7 @@ class BNA_API {
             return null;
         }
 
-        bna_debug('Phone number processed successfully', array(
+        bna_log('Phone number processed successfully', array(
             'original' => $phone,
             'digits_only' => $digits_only,
             'result_code' => $phone_code,
@@ -822,65 +752,79 @@ class BNA_API {
         );
     }
 
-    /**
-     * Determine phone country code based on number and billing country
-     */
     private function determine_phone_country_code($digits_only, $billing_country) {
-        // First, try to detect by phone number patterns
-        if (strlen($digits_only) === 12 && substr($digits_only, 0, 3) === '380') {
-            return '+380'; // Ukraine
+        $length = strlen($digits_only);
+
+        bna_debug('Determining phone country code', array(
+            'digits_only' => $digits_only,
+            'length' => $length,
+            'billing_country' => $billing_country,
+            'first_digit' => substr($digits_only, 0, 1),
+            'first_three' => substr($digits_only, 0, 3)
+        ));
+
+        if ($length === 10 && substr($digits_only, 0, 1) === '0') {
+            $ukrainian_prefixes = array('093', '094', '095', '096', '097', '098', '099', '063', '066', '067', '068', '091', '092', '050', '090');
+            $prefix = substr($digits_only, 0, 3);
+
+            if (in_array($prefix, $ukrainian_prefixes)) {
+                bna_log('Detected Ukrainian mobile number', array(
+                    'prefix' => $prefix,
+                    'number' => $digits_only
+                ));
+                return '+380';
+            }
         }
 
-        if (strlen($digits_only) === 11 && substr($digits_only, 0, 1) === '1') {
-            return '+1'; // US/Canada
+        if ($length === 12 && substr($digits_only, 0, 3) === '380') {
+            bna_log('Detected Ukrainian international format', array(
+                'number' => $digits_only
+            ));
+            return '+380';
         }
 
-        if (strlen($digits_only) === 10) {
-            // Could be US/Canada without country code
+        if ($length === 11 && substr($digits_only, 0, 1) === '1') {
+            return '+1';
+        }
+
+        if ($length === 10) {
             if (in_array($billing_country, array('US', 'CA'))) {
                 return '+1';
             }
         }
 
-        // For Ukrainian numbers that might be missing country code
-        if (strlen($digits_only) === 10 && substr($digits_only, 0, 1) === '0') {
-            return '+380'; // Ukraine mobile numbers often start with 0
-        }
-
-        // Fallback to billing country
         if (isset(self::PHONE_COUNTRY_CODES[$billing_country])) {
+            bna_log('Using billing country phone code', array(
+                'country' => $billing_country,
+                'phone_code' => self::PHONE_COUNTRY_CODES[$billing_country]
+            ));
             return self::PHONE_COUNTRY_CODES[$billing_country];
         }
 
-        // Default fallback
         return '+1';
     }
 
-    /**
-     * Format phone number based on country code
-     */
     private function format_phone_number($digits_only, $phone_code) {
         switch ($phone_code) {
-            case '+380': // Ukraine
+            case '+380':
                 if (strlen($digits_only) === 12 && substr($digits_only, 0, 3) === '380') {
-                    return substr($digits_only, 3); // Remove country code
+                    return substr($digits_only, 3);
                 }
                 if (strlen($digits_only) === 10 && substr($digits_only, 0, 1) === '0') {
-                    return $digits_only; // Keep as is
+                    return substr($digits_only, 1);
                 }
                 break;
 
-            case '+1': // US/Canada
+            case '+1':
                 if (strlen($digits_only) === 11 && substr($digits_only, 0, 1) === '1') {
-                    return substr($digits_only, 1); // Remove country code
+                    return substr($digits_only, 1);
                 }
                 if (strlen($digits_only) === 10) {
-                    return $digits_only; // Keep as is
+                    return $digits_only;
                 }
                 break;
         }
 
-        // For other countries, try to keep reasonable length
         if (strlen($digits_only) >= 7 && strlen($digits_only) <= 15) {
             return $digits_only;
         }
@@ -888,9 +832,6 @@ class BNA_API {
         return null;
     }
 
-    /**
-     * Build address with proper country mapping
-     */
     private function build_address($order) {
         $enable_billing_address = get_option('bna_smart_payment_enable_billing_address', 'no');
 
@@ -937,9 +878,6 @@ class BNA_API {
         return $address;
     }
 
-    /**
-     * Build shipping address with proper country mapping
-     */
     private function build_shipping_address($order) {
         if (get_option('bna_smart_payment_enable_shipping_address') !== 'yes') {
             return null;
@@ -980,21 +918,14 @@ class BNA_API {
         return $shipping_address;
     }
 
-    /**
-     * Map WooCommerce country code to BNA API country name
-     */
     private function map_country_code($wc_country_code) {
         if (isset(self::COUNTRY_CODE_MAPPING[$wc_country_code])) {
             return self::COUNTRY_CODE_MAPPING[$wc_country_code];
         }
 
-        // Default to Canada if country not found
         return 'Canada';
     }
 
-    /**
-     * Extract street number with improved patterns
-     */
     private function extract_street_number($street) {
         if (empty($street)) {
             return '1';
@@ -1006,7 +937,6 @@ class BNA_API {
             'original_street' => $street
         ));
 
-        // Pattern 1: Number at the beginning (e.g., "123 Main St")
         if (preg_match('/^(\d+)/', $street, $matches)) {
             bna_debug('Street number found at beginning', array(
                 'number' => $matches[1],
@@ -1015,7 +945,6 @@ class BNA_API {
             return $matches[1];
         }
 
-        // Pattern 2: Number at the end (e.g., "Main St 123" or "Win 5")
         if (preg_match('/\s(\d+)$/', $street, $matches)) {
             bna_debug('Street number found at end', array(
                 'number' => $matches[1],
@@ -1024,7 +953,6 @@ class BNA_API {
             return $matches[1];
         }
 
-        // Pattern 3: Any number in the string
         if (preg_match('/(\d+)/', $street, $matches)) {
             bna_debug('Street number found in middle', array(
                 'number' => $matches[1],
@@ -1039,9 +967,6 @@ class BNA_API {
         return '1';
     }
 
-    /**
-     * Clean street name by removing the street number
-     */
     private function clean_street_name($street, $street_number) {
         if (empty($street)) {
             return 'Main Street';
@@ -1052,10 +977,8 @@ class BNA_API {
             'street_number' => $street_number
         ));
 
-        // Remove the street number from the beginning
         $cleaned = preg_replace('/^' . preg_quote($street_number, '/') . '\s*/', '', trim($street));
 
-        // Remove the street number from the end
         $cleaned = preg_replace('/\s*' . preg_quote($street_number, '/') . '$/', '', $cleaned);
 
         $cleaned = trim($cleaned);
@@ -1069,17 +992,11 @@ class BNA_API {
         return empty($cleaned) ? 'Main Street' : $cleaned;
     }
 
-    /**
-     * Get clean phone number (legacy method for compatibility)
-     */
     private function get_clean_phone($order) {
         $phone_data = $this->process_phone_number($order);
         return $phone_data ? $phone_data['number'] : false;
     }
 
-    /**
-     * Get valid birthdate
-     */
     private function get_valid_birthdate($order) {
         $birthdate = $order->get_meta('_billing_birthdate');
         if ($this->is_valid_birthdate($birthdate)) {
@@ -1088,9 +1005,6 @@ class BNA_API {
         return '1990-01-01';
     }
 
-    /**
-     * Validate birthdate
-     */
     private function is_valid_birthdate($birthdate) {
         if (empty($birthdate)) return false;
         $date_obj = DateTime::createFromFormat('Y-m-d', $birthdate);
@@ -1101,25 +1015,16 @@ class BNA_API {
         return $date_obj <= $eighteen_years_ago;
     }
 
-    /**
-     * Clean name
-     */
     private function clean_name($name) {
         return trim(preg_replace('/\s+/', ' ', preg_replace('/[^a-zA-ZÀ-ÿ\s\'-]/u', '', trim($name))));
     }
 
-    /**
-     * Clean city name
-     */
     private function clean_city_name($city) {
         if (empty($city)) return 'Unknown';
         $clean = trim(preg_replace('/[^\da-zA-ZÀ-ÖØ-öø-ÿ\s-]/u', '', $city));
         return empty($clean) ? 'Unknown' : $clean;
     }
 
-    /**
-     * Format postal code
-     */
     private function format_postal_code($postal_code) {
         if (empty($postal_code)) return 'A1A 1A1';
         $postal = strtoupper(str_replace(' ', '', $postal_code));
@@ -1129,9 +1034,6 @@ class BNA_API {
         return $postal_code ?: 'A1A 1A1';
     }
 
-    /**
-     * Get order items
-     */
     private function get_order_items($order) {
         $items = array();
         foreach ($order->get_items() as $item_id => $item) {
@@ -1147,16 +1049,10 @@ class BNA_API {
         return $items;
     }
 
-    /**
-     * Get iframe URL
-     */
     public function get_iframe_url($token) {
         return $this->get_api_url() . '/v1/checkout/' . $token;
     }
 
-    /**
-     * Make API request with improved error handling
-     */
     public function make_request($endpoint, $method = 'GET', $data = array()) {
         if (!$this->has_credentials()) {
             return new WP_Error('missing_credentials', 'API credentials are not configured');
@@ -1235,16 +1131,10 @@ class BNA_API {
         return $parsed_response;
     }
 
-    /**
-     * Get API URL
-     */
     private function get_api_url() {
         return self::ENVIRONMENTS[$this->environment] ?? self::ENVIRONMENTS['staging'];
     }
 
-    /**
-     * Get auth headers
-     */
     private function get_auth_headers() {
         $credentials_string = $this->credentials['access_key'] . ':' . $this->credentials['secret_key'];
         return array(
@@ -1254,16 +1144,10 @@ class BNA_API {
         );
     }
 
-    /**
-     * Check if credentials are available
-     */
     private function has_credentials() {
         return !empty($this->credentials['access_key']) && !empty($this->credentials['secret_key']);
     }
 
-    /**
-     * Test connection
-     */
     public function test_connection() {
         $result = $this->make_request('v1/account', 'GET');
         return !is_wp_error($result);
