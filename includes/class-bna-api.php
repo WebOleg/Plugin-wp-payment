@@ -87,6 +87,52 @@ class BNA_API {
         return $json;
     }
 
+    public function delete_payment_method($customer_id, $payment_method_id, $method_type) {
+        if (empty($customer_id) || empty($payment_method_id)) {
+            return new WP_Error('missing_params', 'Customer ID and payment method ID are required');
+        }
+
+        $endpoint_map = array(
+            'credit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
+            'debit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
+            'eft' => "v1/customers/{$customer_id}/eft/{$payment_method_id}",
+            'e_transfer' => "v1/customers/{$customer_id}/e-transfer/{$payment_method_id}"
+        );
+
+        $method_type = strtolower($method_type);
+        $endpoint = $endpoint_map[$method_type] ?? null;
+        
+        if (!$endpoint) {
+            return new WP_Error('unsupported_type', 'Unsupported payment method type: ' . $method_type);
+        }
+
+        bna_log('Deleting payment method from BNA portal', array(
+            'customer_id' => $customer_id,
+            'payment_method_id' => $payment_method_id,
+            'method_type' => $method_type,
+            'endpoint' => $endpoint
+        ));
+
+        $result = $this->make_request($endpoint, 'DELETE');
+
+        if (is_wp_error($result)) {
+            bna_error('Payment method deletion failed', array(
+                'customer_id' => $customer_id,
+                'payment_method_id' => $payment_method_id,
+                'error' => $result->get_error_message()
+            ));
+            return $result;
+        }
+
+        bna_log('Payment method deleted successfully', array(
+            'customer_id' => $customer_id,
+            'payment_method_id' => $payment_method_id,
+            'method_type' => $method_type
+        ));
+
+        return $result;
+    }
+
     public function update_customer($customer_id, $customer_data) {
         if (empty($customer_id)) {
             return new WP_Error('missing_customer_id', 'Customer ID is required for update');

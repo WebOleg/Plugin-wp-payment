@@ -10,7 +10,6 @@
         <?php endif; ?>
     <?php endif; ?>
 
-    <!-- Log Info -->
     <div style="background: white; padding: 15px; margin: 15px 0; border: 1px solid #ccd0d4; border-radius: 4px;">
         <h2>Log Information</h2>
         <p>
@@ -24,7 +23,6 @@
         </p>
     </div>
 
-    <!-- Feature Status -->
     <div style="background: #e7f3ff; padding: 15px; margin: 15px 0; border: 1px solid #0073aa; border-radius: 4px;">
         <h3>🚀 Active Features</h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
@@ -45,17 +43,16 @@
                 <small>v1.6.0 - Auto-update customer data changes</small>
             </div>
             <div>
-                <strong>✅ Improved Error Handling</strong><br>
-                <small>v1.6.1 - Better API error processing</small>
+                <strong>✅ Payment Methods Management</strong><br>
+                <small>v1.7.0 - Save & manage payment methods</small>
             </div>
             <div>
-                <strong>✅ Country Code Mapping</strong><br>
-                <small>v1.6.1 - Proper country/phone validation</small>
+                <strong>✅ My Account Integration</strong><br>
+                <small>v1.7.0 - Customer payment methods page</small>
             </div>
         </div>
     </div>
 
-    <!-- System Health Check -->
     <?php
     $health = bna_get_system_health();
     $healthy_count = count(array_filter($health));
@@ -92,7 +89,6 @@
         </div>
     </div>
 
-    <!-- Logs Display -->
     <div style="background: white; padding: 15px; border: 1px solid #ccd0d4; border-radius: 4px;">
         <h2>Recent Logs (Last 1000 lines)</h2>
 
@@ -119,7 +115,7 @@
 
             <p style="margin-top: 10px; color: #666; font-size: 12px;">
                 💡 <strong>Tips:</strong> Logs auto-refresh every 30 seconds when auto-scroll is enabled.
-                Use Ctrl+F to search within the logs. Look for "Customer updated", "Customer created", "Country code mapped", or "Phone number processed" to track sync activity.
+                Use Ctrl+F to search within the logs. Look for "Payment method saved", "Payment method deleted", or "Webhook received" to track payment methods activity.
             </p>
 
         <?php else: ?>
@@ -131,13 +127,13 @@
                     <li>Webhooks are received</li>
                     <li>API requests are made</li>
                     <li>Customer data is synced</li>
+                    <li>Payment methods are saved/deleted</li>
                     <li>Errors occur</li>
                 </ul>
             </div>
         <?php endif; ?>
     </div>
 
-    <!-- Debug Info -->
     <div style="background: #f0f8ff; padding: 15px; margin: 15px 0; border: 1px solid #0073aa; border-radius: 4px;">
         <h3>🔗 System Information</h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
@@ -146,6 +142,7 @@
                 <ul style="margin: 0;">
                     <li><strong>Plugin Version:</strong> <?php echo esc_html($plugin_version); ?></li>
                     <li><strong>Customer Sync:</strong> ✅ Enabled (v1.6.0)</li>
+                    <li><strong>Payment Methods:</strong> ✅ Enabled (v1.7.0)</li>
                     <li><strong>Error Handling:</strong> ✅ Improved (v1.6.1)</li>
                     <li><strong>Country Mapping:</strong> ✅ Enhanced (v1.6.1)</li>
                     <li><strong>Shipping Address:</strong> <?php echo bna_is_shipping_enabled() ? '✅ Enabled' : '❌ Disabled'; ?></li>
@@ -169,6 +166,14 @@
         </div>
 
         <div style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px;">
+            <h4>💳 Payment Methods Management (v1.7.0)</h4>
+            <p><strong>What gets saved:</strong> Credit cards, debit cards, bank transfers (EFT), e-transfers</p>
+            <p><strong>Where to manage:</strong> My Account → Payment Methods</p>
+            <p><strong>Auto-saving:</strong> Payment methods are automatically saved after successful payments</p>
+            <p><strong>Security:</strong> Only payment method IDs and safe details (last 4 digits, type) are stored locally</p>
+        </div>
+
+        <div style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px;">
             <h4>🔄 Customer Sync Features (v1.6.0)</h4>
             <p><strong>What syncs automatically:</strong> Customer name, email, phone, address, shipping address, birthdate</p>
             <p><strong>When it syncs:</strong> When customer data changes between orders</p>
@@ -184,27 +189,24 @@
         </div>
 
         <div style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px;">
-            <h4>🗺️ Supported Countries & Phone Codes</h4>
+            <h4>🗺️ Supported Payment Methods</h4>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 12px;">
                 <div>
-                    <strong>North America:</strong><br>
-                    🇨🇦 Canada (CA) → +1<br>
-                    🇺🇸 United States (US) → +1<br>
-                    🇲🇽 Mexico (MX) → +52
+                    <strong>Cards:</strong><br>
+                    💳 Credit Cards<br>
+                    💳 Debit Cards<br>
+                    💳 Prepaid Cards
                 </div>
                 <div>
-                    <strong>Europe:</strong><br>
-                    🇺🇦 Ukraine (UA) → +380<br>
-                    🇬🇧 United Kingdom (GB) → +44<br>
-                    🇩🇪 Germany (DE) → +49<br>
-                    🇫🇷 France (FR) → +33
+                    <strong>Bank Transfers:</strong><br>
+                    🏦 EFT (Electronic Funds Transfer)<br>
+                    📧 E-Transfer (Interac)
                 </div>
                 <div>
-                    <strong>Other Regions:</strong><br>
-                    🇦🇺 Australia (AU) → +61<br>
-                    🇯🇵 Japan (JP) → +81<br>
-                    🇧🇷 Brazil (BR) → +55<br>
-                    🇮🇳 India (IN) → +91
+                    <strong>Digital Wallets:</strong><br>
+                    📱 Apple Pay<br>
+                    📱 Google Pay<br>
+                    📱 Samsung Pay
                 </div>
             </div>
         </div>
@@ -254,15 +256,14 @@
             return;
         }
 
-        // Predefined searches for common issues
         const commonSearches = {
             'error': 'Find error messages and failures',
+            'payment method saved': 'Track when payment methods are saved',
+            'payment method deleted': 'Track when payment methods are deleted',
             'customer updated': 'Track customer synchronization events',
             'customer data changed': 'Find customer data change events',
             'country code mapped': 'Track country code conversions',
             'phone number processed': 'Track phone number processing',
-            'invalid country code': 'Find country code validation errors',
-            'internal server error': 'Find API server errors',
             'webhook': 'Track webhook events',
             'payment completed': 'Find successful payments',
             'api error': 'Find API communication errors'
@@ -293,25 +294,23 @@
         }
     });
 
-    // Add quick search buttons
     document.addEventListener('DOMContentLoaded', function() {
         const textarea = document.getElementById('bna-logs-content');
         if (textarea && textarea.value.trim()) {
             textarea.scrollTop = textarea.scrollHeight;
         }
 
-        // Add quick search buttons after search input
         const searchInput = document.getElementById('search-input');
         if (searchInput) {
             const quickButtons = document.createElement('div');
             quickButtons.style.marginTop = '10px';
             quickButtons.innerHTML = `
             <small>Quick searches: </small>
+            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='Payment method saved'; searchLogs();">Payment Methods</button>
             <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='Customer updated'; searchLogs();">Customer Updates</button>
             <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='Country code mapped'; searchLogs();">Country Mapping</button>
-            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='Phone number processed'; searchLogs();">Phone Processing</button>
-            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='error'; searchLogs();">Errors</button>
             <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='webhook'; searchLogs();">Webhooks</button>
+            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='error'; searchLogs();">Errors</button>
             <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='API error'; searchLogs();">API Errors</button>
         `;
             searchInput.parentNode.appendChild(quickButtons);

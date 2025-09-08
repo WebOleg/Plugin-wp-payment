@@ -1,8 +1,4 @@
 <?php
-/**
- * BNA Webhooks Handler
- * Processes webhook notifications from BNA Smart Payment
- */
 
 if (!defined('ABSPATH')) {
     exit;
@@ -10,16 +6,10 @@ if (!defined('ABSPATH')) {
 
 class BNA_Webhooks {
     
-    /**
-     * Initialize webhooks
-     */
     public static function init() {
         add_action('rest_api_init', array(__CLASS__, 'register_routes'));
     }
     
-    /**
-     * Register REST API routes
-     */
     public static function register_routes() {
         register_rest_route('bna/v1', '/webhook', array(
             'methods' => 'POST',
@@ -34,11 +24,6 @@ class BNA_Webhooks {
         ));
     }
     
-    /**
-     * Main webhook handler
-     * @param WP_REST_Request $request
-     * @return WP_REST_Response
-     */
     public static function handle_webhook($request) {
         $start_time = microtime(true);
         $payload = $request->get_json_params();
@@ -81,11 +66,6 @@ class BNA_Webhooks {
         }
     }
     
-    /**
-     * Extract transaction data from webhook payload
-     * @param array $payload
-     * @return array
-     */
     private static function extract_transaction_data($payload) {
         if (isset($payload['data']['transaction'])) {
             return $payload['data']['transaction'];
@@ -98,12 +78,6 @@ class BNA_Webhooks {
         return $payload;
     }
     
-    /**
-     * Process webhook based on transaction status
-     * @param array $transaction
-     * @param array $full_payload
-     * @return array
-     */
     private static function process_webhook($transaction, $full_payload) {
         $transaction_id = $transaction['id'];
         $status = strtolower($transaction['status'] ?? 'unknown');
@@ -151,12 +125,6 @@ class BNA_Webhooks {
         }
     }
     
-    /**
-     * Handle approved payment
-     * @param WC_Order $order
-     * @param array $transaction
-     * @return array
-     */
     private static function handle_approved($order, $transaction) {
         $transaction_id = $transaction['id'];
         
@@ -178,6 +146,8 @@ class BNA_Webhooks {
         $order->add_meta_data('_bna_transaction_id', $transaction_id);
         $order->save();
         
+        self::save_payment_method_from_transaction($order, $transaction);
+        
         bna_log('Payment completed', array(
             'order_id' => $order->get_id(),
             'transaction_id' => $transaction_id,
@@ -192,13 +162,52 @@ class BNA_Webhooks {
         );
     }
     
-    /**
-     * Handle failed payment
-     * @param WC_Order $order
-     * @param array $transaction
-     * @param string $status
-     * @return array
-     */
+    private static function save_payment_method_from_transaction($order, $transaction) {
+        $customer_id = $order->get_customer_id();
+        if (!$customer_id) {
+            return;
+        }
+        
+        $payment_details = $transaction['paymentDetails'] ?? array();
+        if (empty($payment_details)) {
+            return;
+        }
+        
+        $payment_method_data = array(
+            'id' => $payment_details['id'] ?? uniqid('pm_'),
+            'type' => self::determine_payment_type($payment_details),
+            'cardNumber' => $payment_details['cardNumber'] ?? null,
+            'cardType' => $payment_details['cardType'] ?? null,
+            'accountNumber' => $payment_details['accountNumber'] ?? null,
+            'bankNumber' => $payment_details['bankNumber'] ?? null,
+            'email' => $payment_details['email'] ?? null
+        );
+        
+        $payment_methods = BNA_Payment_Methods::get_instance();
+        $result = $payment_methods->save_payment_method($customer_id, $payment_method_data);
+        
+        if ($result) {
+            bna_log('Payment method saved', array(
+                'user_id' => $customer_id,
+                'method_type' => $payment_method_data['type'],
+                'method_id' => $payment_method_data['id']
+            ));
+        }
+    }
+    
+    private static function determine_payment_type($payment_details) {
+        if (isset($payment_details['cardType'])) {
+            return strtoupper($payment_details['cardType']);
+        }
+        if (isset($payment_details['bankNumber'])) {
+            return 'EFT';
+        }
+        if (isset($payment_details['email'])) {
+            return 'E_TRANSFER';
+        }
+        return 'UNKNOWN';
+    }
+    
     private static function handle_failed($order, $transaction, $status) {
         $transaction_id = $transaction['id'];
         $reason = $transaction['declineReason'] ?? $transaction['cancelReason'] ?? "Payment {$status}";
@@ -229,12 +238,6 @@ class BNA_Webhooks {
         );
     }
     
-    /**
-     * Find order by customer ID
-     * @param string $customer_id
-     * @param string $transaction_id
-     * @return WC_Order|false
-     */
     private static function find_order($customer_id, $transaction_id) {
         if (empty($customer_id)) {
             return false;
@@ -253,11 +256,6 @@ class BNA_Webhooks {
         return !empty($orders) ? $orders[0] : false;
     }
     
-    /**
-     * Test endpoint
-     * @param WP_REST_Request $request
-     * @return WP_REST_Response
-     */
     public static function test_endpoint($request) {
         return new WP_REST_Response(array(
             'status' => 'success',
@@ -268,10 +266,6 @@ class BNA_Webhooks {
         ), 200);
     }
     
-    /**
-     * Get webhook URL for BNA portal configuration
-     * @return string
-     */
     public static function get_webhook_url() {
         return home_url('/wp-json/bna/v1/webhook');
     }
