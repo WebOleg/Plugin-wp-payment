@@ -136,6 +136,53 @@ class BNA_Payment_Methods {
         return $result;
     }
 
+    /**
+     * Delete payment method by ID only (used by webhooks)
+     * 
+     * @param int $user_id WordPress user ID
+     * @param string $payment_method_id BNA payment method ID
+     * @return bool|WP_Error
+     */
+    public function delete_payment_method_by_id($user_id, $payment_method_id) {
+        if (!$user_id || !$payment_method_id) {
+            return new WP_Error('invalid_params', 'Invalid parameters');
+        }
+
+        $existing_methods = $this->get_user_payment_methods($user_id);
+        $method_found = false;
+
+        foreach ($existing_methods as $method) {
+            if ($method['id'] === $payment_method_id) {
+                $method_found = true;
+                break;
+            }
+        }
+
+        if (!$method_found) {
+            bna_log('Payment method not found for deletion by ID', array(
+                'user_id' => $user_id,
+                'payment_method_id' => $payment_method_id
+            ));
+            return true; // Not an error for webhooks
+        }
+
+        // Remove from local storage
+        $updated_methods = array_filter($existing_methods, function($method) use ($payment_method_id) {
+            return $method['id'] !== $payment_method_id;
+        });
+
+        $result = update_user_meta($user_id, '_bna_payment_methods', array_values($updated_methods));
+        
+        if ($result) {
+            bna_log('Payment method deleted by ID from webhook', array(
+                'user_id' => $user_id,
+                'payment_method_id' => $payment_method_id
+            ));
+        }
+
+        return $result;
+    }
+
     private function delete_from_bna_portal($customer_id, $payment_method_id, $method_type) {
         $endpoint_map = array(
             'credit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
@@ -176,6 +223,9 @@ class BNA_Payment_Methods {
         if (isset($payment_data['accountNumber'])) {
             return substr($payment_data['accountNumber'], -4);
         }
+        if (isset($payment_data['last4'])) {
+            return $payment_data['last4'];
+        }
         return '****';
     }
 
@@ -188,6 +238,9 @@ class BNA_Payment_Methods {
         }
         if (isset($payment_data['email'])) {
             return 'E-Transfer';
+        }
+        if (isset($payment_data['brand'])) {
+            return ucfirst(strtolower($payment_data['brand']));
         }
         return 'Unknown';
     }
