@@ -35,7 +35,7 @@ class BNA_Payment_Methods {
         }
 
         $existing_methods = $this->get_user_payment_methods($user_id);
-        
+
         $new_method = array(
             'id' => $payment_method_data['id'],
             'type' => $payment_method_data['type'] ?? 'UNKNOWN',
@@ -66,6 +66,11 @@ class BNA_Payment_Methods {
             return new WP_Error('invalid_params', 'Invalid parameters');
         }
 
+        bna_log('Processing payment method deletion request', array(
+            'user_id' => $user_id,
+            'payment_method_id' => $payment_method_id
+        ));
+
         $customer_id = get_user_meta($user_id, '_bna_customer_id', true);
         if (!$customer_id) {
             return new WP_Error('no_customer_id', 'BNA customer ID not found');
@@ -88,34 +93,33 @@ class BNA_Payment_Methods {
         }
 
         $api_result = $this->delete_from_bna_portal($customer_id, $payment_method_id, $method_type);
-        
+
         if (is_wp_error($api_result)) {
             $error_message = $api_result->get_error_message();
-            
-            if (strpos($error_message, 'Internal Server Error') !== false || 
-                strpos($error_message, '500') !== false) {
-                
-                bna_log('API error during deletion, removing locally only', array(
+
+            if (strpos($error_message, 'Invalid JSON response') !== false ||
+                strpos($error_message, 'Internal Server Error') !== false ||
+                strpos($error_message, '500') !== false ||
+                strpos($error_message, 'Syntax error') !== false) {
+
+                bna_log('API deletion response unclear, letting webhook handle cleanup', array(
                     'customer_id' => $customer_id,
                     'payment_method_id' => $payment_method_id,
                     'error' => $error_message
                 ));
-                
-                $updated_methods = array_filter($existing_methods, function($method) use ($payment_method_id) {
-                    return $method['id'] !== $payment_method_id;
-                });
 
-                $local_delete_result = update_user_meta($user_id, '_bna_payment_methods', array_values($updated_methods));
-                
-                if ($local_delete_result) {
-                    bna_log('Payment method removed locally due to API error', array(
-                        'user_id' => $user_id,
-                        'payment_method_id' => $payment_method_id
-                    ));
-                    return true;
-                }
+                return array(
+                    'status' => 'pending',
+                    'message' => 'Deletion request sent - confirmation pending'
+                );
             }
-            
+
+            bna_error('Payment method deletion failed', array(
+                'user_id' => $user_id,
+                'payment_method_id' => $payment_method_id,
+                'error' => $error_message
+            ));
+
             return $api_result;
         }
 
@@ -123,29 +127,23 @@ class BNA_Payment_Methods {
             return $method['id'] !== $payment_method_id;
         });
 
-        $result = update_user_meta($user_id, '_bna_payment_methods', array_values($updated_methods));
-        
-        if ($result) {
-            bna_log('Payment method deleted successfully', array(
-                'user_id' => $user_id,
-                'payment_method_id' => $payment_method_id,
-                'deleted_from_api' => true
-            ));
-        }
+        update_user_meta($user_id, '_bna_payment_methods', array_values($updated_methods));
 
-        return $result;
+        bna_log('Payment method deleted successfully via API', array(
+            'user_id' => $user_id,
+            'payment_method_id' => $payment_method_id,
+            'method_type' => $method_type
+        ));
+
+        return array(
+            'status' => 'success',
+            'message' => 'Payment method deleted successfully'
+        );
     }
 
-    /**
-     * Delete payment method by ID only (used by webhooks)
-     * 
-     * @param int $user_id WordPress user ID
-     * @param string $payment_method_id BNA payment method ID
-     * @return bool|WP_Error
-     */
     public function delete_payment_method_by_id($user_id, $payment_method_id) {
         if (!$user_id || !$payment_method_id) {
-            return new WP_Error('invalid_params', 'Invalid parameters');
+            return false;
         }
 
         $existing_methods = $this->get_user_payment_methods($user_id);
@@ -163,16 +161,15 @@ class BNA_Payment_Methods {
                 'user_id' => $user_id,
                 'payment_method_id' => $payment_method_id
             ));
-            return true; // Not an error for webhooks
+            return true;
         }
 
-        // Remove from local storage
         $updated_methods = array_filter($existing_methods, function($method) use ($payment_method_id) {
             return $method['id'] !== $payment_method_id;
         });
 
         $result = update_user_meta($user_id, '_bna_payment_methods', array_values($updated_methods));
-        
+
         if ($result) {
             bna_log('Payment method deleted by ID from webhook', array(
                 'user_id' => $user_id,
@@ -192,7 +189,7 @@ class BNA_Payment_Methods {
         );
 
         $endpoint = $endpoint_map[$method_type] ?? null;
-        
+
         if (!$endpoint) {
             return new WP_Error('unsupported_type', 'Unsupported payment method type');
         }
@@ -204,7 +201,25 @@ class BNA_Payment_Methods {
             'endpoint' => $endpoint
         ));
 
-        return $this->api->make_request($endpoint, 'DELETE');
+        $result = $this->api->make_request($endpoint, 'DELETE');
+
+        if (is_wp_error($result)) {
+            $error_message = $result->get_error_message();
+
+            if (strpos($error_message, 'Invalid JSON response') !== false &&
+                strpos($error_message, 'response_body":"') !== false &&
+                strpos($error_message, '""') !== false) {
+
+                bna_log('DELETE request likely succeeded - empty response is normal', array(
+                    'endpoint' => $endpoint,
+                    'original_error' => $error_message
+                ));
+
+                return array('status' => 'success', 'message' => 'Deletion completed');
+            }
+        }
+
+        return $result;
     }
 
     private function method_exists($methods, $method_id) {
@@ -218,7 +233,11 @@ class BNA_Payment_Methods {
 
     private function extract_last4($payment_data) {
         if (isset($payment_data['cardNumber'])) {
-            return substr($payment_data['cardNumber'], -4);
+            $cardNumber = $payment_data['cardNumber'];
+            if (strpos($cardNumber, '*') !== false) {
+                return substr(str_replace('*', '', $cardNumber), -4);
+            }
+            return substr($cardNumber, -4);
         }
         if (isset($payment_data['accountNumber'])) {
             return substr($payment_data['accountNumber'], -4);
@@ -230,6 +249,9 @@ class BNA_Payment_Methods {
     }
 
     private function extract_brand($payment_data) {
+        if (isset($payment_data['cardBrand'])) {
+            return ucfirst(strtolower($payment_data['cardBrand']));
+        }
         if (isset($payment_data['cardType'])) {
             return ucfirst(strtolower($payment_data['cardType']));
         }

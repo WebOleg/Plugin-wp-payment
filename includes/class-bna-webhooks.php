@@ -32,7 +32,7 @@ class BNA_Webhooks {
             'payload_size' => strlen(wp_json_encode($payload)),
             'payload_keys' => array_keys($payload),
             'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
-            'full_payload' => $payload // LOG FULL PAYLOAD FOR DEBUGGING
+            'full_payload' => $payload
         ));
 
         if (empty($payload)) {
@@ -41,7 +41,6 @@ class BNA_Webhooks {
         }
 
         try {
-            // Determine webhook type based on payload structure
             $result = self::process_webhook($payload);
 
             $processing_time = round((microtime(true) - $start_time) * 1000, 2);
@@ -67,44 +66,42 @@ class BNA_Webhooks {
     }
 
     private static function process_webhook($payload) {
-        // Check if this is a payment method webhook
-        if (isset($payload['paymentMethod']) || isset($payload['payment_method'])) {
-            return self::handle_payment_method_webhook($payload);
+        if (isset($payload['event']) && isset($payload['data'])) {
+            return self::handle_event_based_webhook($payload);
         }
 
-        // Check if this is a transaction webhook
+        if (isset($payload['paymentMethod']) && isset($payload['customer'])) {
+            return self::handle_payment_method_with_customer($payload);
+        }
+
         if (isset($payload['transaction']) || isset($payload['data']['transaction'])) {
             return self::handle_transaction_webhook($payload);
         }
 
-        // Check if this is a subscription webhook
-        if (isset($payload['subscription'])) {
-            return self::handle_subscription_webhook($payload);
-        }
-
-        // Check if this is a customer webhook with action
         if (isset($payload['customer']) && isset($payload['action'])) {
             return self::handle_customer_webhook($payload);
         }
 
-        // Check if payload has both paymentMethod and customer (payment method creation/deletion)
-        if (isset($payload['paymentMethod']) && isset($payload['customer'])) {
-            // This is likely a payment method operation
-            return self::handle_payment_method_with_customer($payload);
+        if (isset($payload['subscription'])) {
+            return self::handle_subscription_webhook($payload);
         }
 
-        // If we have transaction-like data with status, treat as transaction
+        if (isset($payload['paymentMethod']) || isset($payload['payment_method'])) {
+            return self::handle_payment_method_webhook($payload);
+        }
+
         if (isset($payload['id']) && isset($payload['status'])) {
             return self::handle_transaction_webhook($payload);
         }
 
-        // Log unrecognized webhook structure
         bna_log('Unrecognized webhook structure', array(
             'payload_keys' => array_keys($payload),
             'has_paymentMethod' => isset($payload['paymentMethod']),
             'has_customer' => isset($payload['customer']),
             'has_transaction' => isset($payload['transaction']),
-            'has_action' => isset($payload['action'])
+            'has_action' => isset($payload['action']),
+            'has_event' => isset($payload['event']),
+            'has_data' => isset($payload['data'])
         ));
 
         return array(
@@ -114,9 +111,146 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Handle payment method webhooks with customer data
-     */
+    private static function handle_event_based_webhook($payload) {
+        $event = $payload['event'];
+        $data = $payload['data'];
+
+        bna_log('Processing event-based webhook', array(
+            'event' => $event,
+            'delivery_id' => $payload['deliveryId'] ?? 'unknown',
+            'config_id' => $payload['configId'] ?? 'unknown',
+            'data_keys' => array_keys($data)
+        ));
+
+        switch ($event) {
+            case 'payment_method.created':
+                return self::handle_payment_method_created_event($data);
+
+            case 'payment_method.deleted':
+            case 'payment_method.delete':
+                return self::handle_payment_method_deleted_event($data);
+
+            case 'transaction.approved':
+            case 'transaction.declined':
+            case 'transaction.canceled':
+            case 'transaction.failed':
+                return self::handle_transaction_event($data, $event);
+
+            default:
+                bna_log('Unknown event type in webhook', array(
+                    'event' => $event,
+                    'supported_events' => ['payment_method.created', 'payment_method.deleted', 'transaction.approved', 'transaction.declined']
+                ));
+
+                return array(
+                    'status' => 'success',
+                    'message' => 'Event acknowledged but not processed',
+                    'event' => $event
+                );
+        }
+    }
+
+    private static function handle_payment_method_created_event($data) {
+        if (!isset($data['paymentMethod'])) {
+            bna_error('Payment method data missing in payment_method.created event', array(
+                'data_keys' => array_keys($data)
+            ));
+            return array(
+                'status' => 'error',
+                'message' => 'Payment method data missing'
+            );
+        }
+
+        $payment_method = $data['paymentMethod'];
+
+        $customer_id = null;
+        if (isset($data['customer']['customer']['id'])) {
+            $customer_id = $data['customer']['customer']['id'];
+        } elseif (isset($data['customer']['id'])) {
+            $customer_id = $data['customer']['id'];
+        }
+
+        if (empty($customer_id)) {
+            bna_error('Customer ID missing in payment_method.created event', array(
+                'data_keys' => array_keys($data),
+                'customer_keys' => isset($data['customer']) ? array_keys($data['customer']) : 'no_customer'
+            ));
+            return array(
+                'status' => 'error',
+                'message' => 'Customer ID missing in payment method event'
+            );
+        }
+
+        bna_log('Processing payment_method.created event', array(
+            'payment_method_id' => $payment_method['id'] ?? 'unknown',
+            'customer_id' => $customer_id,
+            'method_type' => $payment_method['method'] ?? 'unknown',
+            'card_brand' => $payment_method['cardBrand'] ?? 'unknown',
+            'created_at' => $payment_method['createdAt'] ?? 'unknown'
+        ));
+
+        return self::handle_payment_method_created($payment_method, $customer_id);
+    }
+
+    private static function handle_payment_method_deleted_event($data) {
+        if (!isset($data['paymentMethod'])) {
+            bna_error('Payment method data missing in payment_method.deleted event', array(
+                'data_keys' => array_keys($data)
+            ));
+            return array(
+                'status' => 'error',
+                'message' => 'Payment method data missing'
+            );
+        }
+
+        $payment_method = $data['paymentMethod'];
+
+        $customer_id = null;
+        if (isset($data['customer']['customer']['id'])) {
+            $customer_id = $data['customer']['customer']['id'];
+        } elseif (isset($data['customer']['id'])) {
+            $customer_id = $data['customer']['id'];
+        }
+
+        if (empty($customer_id)) {
+            bna_error('Customer ID missing in payment_method.deleted event', array(
+                'data_keys' => array_keys($data)
+            ));
+            return array(
+                'status' => 'error',
+                'message' => 'Customer ID missing in payment method deletion event'
+            );
+        }
+
+        bna_log('Processing payment_method.deleted event', array(
+            'payment_method_id' => $payment_method['id'] ?? 'unknown',
+            'customer_id' => $customer_id
+        ));
+
+        return self::handle_payment_method_deleted($payment_method, $customer_id);
+    }
+
+    private static function handle_transaction_event($data, $event) {
+        if (!isset($data['transaction'])) {
+            bna_error('Transaction data missing in transaction event', array(
+                'event' => $event,
+                'data_keys' => array_keys($data)
+            ));
+            return array(
+                'status' => 'error',
+                'message' => 'Transaction data missing'
+            );
+        }
+
+        bna_log('Processing transaction event', array(
+            'event' => $event,
+            'transaction_id' => $data['transaction']['id'] ?? 'unknown',
+            'status' => $data['transaction']['status'] ?? 'unknown'
+        ));
+
+        return self::handle_transaction_webhook($data);
+    }
+
     private static function handle_payment_method_with_customer($payload) {
         bna_log('Processing payment method webhook with customer data', array(
             'payment_method_id' => $payload['paymentMethod']['id'] ?? 'unknown',
@@ -140,10 +274,8 @@ class BNA_Webhooks {
             );
         }
 
-        // Determine action based on context or assume creation
         $action = $payload['action'] ?? $payload['event'] ?? 'created';
 
-        // Based on webhook events from documentation and presence of createdAt
         if (isset($payload['paymentMethod']['createdAt'])) {
             $action = 'created';
             bna_log('Payment method creation detected via createdAt field', array(
@@ -170,7 +302,6 @@ class BNA_Webhooks {
                     'original_action' => $action
                 ));
 
-                // Default to creation if we have both paymentMethod and customer
                 return self::handle_payment_method_created($payment_method, $customer_id);
         }
     }
@@ -183,7 +314,6 @@ class BNA_Webhooks {
         $payment_method = $payload['payment_method'] ?? $payload['paymentMethod'] ?? $payload['data'] ?? array();
         $action = $payload['action'] ?? $payload['event'] ?? 'unknown';
 
-        // Try to find customer ID in different locations
         $customer_id = null;
         if (!empty($payment_method['customerId'])) {
             $customer_id = $payment_method['customerId'];
@@ -231,7 +361,6 @@ class BNA_Webhooks {
             'method_type' => $payment_method['method'] ?? $payment_method['cardType'] ?? 'unknown'
         ));
 
-        // Find WordPress user by BNA customer ID
         $users = get_users(array(
             'meta_key' => '_bna_customer_id',
             'meta_value' => $bna_customer_id,
@@ -252,7 +381,6 @@ class BNA_Webhooks {
         $wp_user = $users[0];
         $user_id = $wp_user->ID;
 
-        // Extract payment method data
         $payment_method_data = array(
             'id' => $payment_method['id'],
             'type' => self::determine_payment_type($payment_method),
@@ -261,7 +389,6 @@ class BNA_Webhooks {
             'created_at' => current_time('Y-m-d H:i:s')
         );
 
-        // Save payment method
         $payment_methods = BNA_Payment_Methods::get_instance();
         $result = $payment_methods->save_payment_method($user_id, $payment_method_data);
 
@@ -294,7 +421,6 @@ class BNA_Webhooks {
             'customer_id' => $bna_customer_id
         ));
 
-        // Find WordPress user by BNA customer ID
         $users = get_users(array(
             'meta_key' => '_bna_customer_id',
             'meta_value' => $bna_customer_id,
@@ -315,7 +441,6 @@ class BNA_Webhooks {
         $wp_user = $users[0];
         $user_id = $wp_user->ID;
 
-        // Delete payment method
         $payment_methods = BNA_Payment_Methods::get_instance();
         $payment_method_id = $payment_method['id'];
         $result = $payment_methods->delete_payment_method_by_id($user_id, $payment_method_id);
@@ -402,7 +527,6 @@ class BNA_Webhooks {
             'payload_keys' => array_keys($payload)
         ));
 
-        // Implementation for subscription webhooks
         return array(
             'status' => 'success',
             'message' => 'Subscription webhook processed'
@@ -414,7 +538,6 @@ class BNA_Webhooks {
             'payload_keys' => array_keys($payload)
         ));
 
-        // Implementation for customer webhooks
         return array(
             'status' => 'success',
             'message' => 'Customer webhook processed'
@@ -517,7 +640,6 @@ class BNA_Webhooks {
     }
 
     private static function determine_payment_type($payment_data) {
-        // Check method field first (new format)
         if (isset($payment_data['method'])) {
             $method = strtolower($payment_data['method']);
             if ($method === 'card') {
@@ -526,7 +648,6 @@ class BNA_Webhooks {
             return strtoupper($method);
         }
 
-        // Fallback to legacy format
         if (isset($payment_data['cardType'])) {
             return strtoupper($payment_data['cardType']);
         }
@@ -545,10 +666,8 @@ class BNA_Webhooks {
 
     private static function extract_last4($payment_data) {
         if (isset($payment_data['cardNumber'])) {
-            // Handle masked card numbers like "****111111111111"
             $cardNumber = $payment_data['cardNumber'];
             if (strpos($cardNumber, '*') !== false) {
-                // Extract the last 4 digits from masked number
                 return substr(str_replace('*', '', $cardNumber), -4);
             }
             return substr($cardNumber, -4);
