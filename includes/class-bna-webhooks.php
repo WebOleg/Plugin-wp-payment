@@ -122,13 +122,21 @@ class BNA_Webhooks {
      * Verify webhook HMAC signature using BNA algorithm
      *
      * Algorithm from BNA documentation:
-     * 1. Use the raw request body exactly as received
-     * 2. Create SHA-256 hash of the raw body
+     * 1. Parse JSON and re-serialize in compact format (same as sender)
+     * 2. Create SHA-256 hash of the serialized data
      * 3. Combine hash and timestamp with colon: hash:timestamp
      * 4. Create HMAC-SHA256 signature using the secret key
      * 5. Convert result to hex format
      *
      * @param string $raw_body Raw request body (exactly as received)
+     * @param string $signature Expected signature from X-Bna-Signature header
+     * @param string $timestamp Timestamp from X-Bna-Timestamp header
+     * @return bool|WP_Error True if valid, WP_Error if invalid
+     */
+    /**
+     * Verify webhook HMAC signature - Advanced Debug Version
+     *
+     * @param string $raw_body Raw request body
      * @param string $signature Expected signature from X-Bna-Signature header
      * @param string $timestamp Timestamp from X-Bna-Timestamp header
      * @return bool|WP_Error True if valid, WP_Error if invalid
@@ -148,45 +156,120 @@ class BNA_Webhooks {
         }
 
         try {
-            // Validate that raw body is valid JSON (but don't re-serialize it)
+            // Parse JSON data from raw body
             $payload_data = json_decode($raw_body, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                return new WP_Error('invalid_json', 'Invalid JSON in webhook payload');
+                return new WP_Error('invalid_json', 'Invalid JSON in webhook payload: ' . json_last_error_msg());
             }
 
-            // Step 1: Use raw body exactly as received (this is crucial!)
-            $serialized_data = $raw_body;
+            // Test multiple serialization approaches
+            $serialization_tests = array(
+                'raw_body' => $raw_body,
+                'json_encode_default' => json_encode($payload_data),
+                'json_encode_no_flags' => json_encode($payload_data, 0),
+                'json_encode_unescaped' => json_encode($payload_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                'json_encode_numeric' => json_encode($payload_data, JSON_NUMERIC_CHECK),
+                'json_encode_preserve' => json_encode($payload_data, JSON_PRESERVE_ZERO_FRACTION),
+                'json_encode_combined' => json_encode($payload_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_NUMERIC_CHECK)
+            );
 
-            // Step 2: Create SHA-256 hash of the raw body
-            $data_hash = hash('sha256', $serialized_data);
+            $debug_results = array();
+            $successful_approach = null;
 
-            // Step 3: Combine hash and timestamp with colon
-            $signing_string = $data_hash . ':' . $timestamp;
+            foreach ($serialization_tests as $approach_name => $serialized_data) {
+                if ($serialized_data === false) {
+                    $debug_results[$approach_name] = array('error' => 'JSON encoding failed');
+                    continue;
+                }
 
-            // Step 4: Create HMAC-SHA256 signature using the secret key
-            $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
+                // Create SHA-256 hash
+                $data_hash = hash('sha256', $serialized_data);
 
-            bna_debug('HMAC signature verification details', array(
-                'raw_body_length' => strlen($raw_body),
-                'data_hash' => $data_hash,
-                'signing_string' => $signing_string,
-                'computed_signature' => $computed_signature,
+                // Create signing string
+                $signing_string = $data_hash . ':' . $timestamp;
+
+                // Create HMAC signature
+                $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
+
+                // Store debug info
+                $debug_results[$approach_name] = array(
+                    'data_length' => strlen($serialized_data),
+                    'data_first_100_chars' => substr($serialized_data, 0, 100),
+                    'data_last_100_chars' => substr($serialized_data, -100),
+                    'data_hash' => $data_hash,
+                    'signing_string' => $signing_string,
+                    'computed_signature' => $computed_signature,
+                    'matches_provided' => hash_equals($computed_signature, $signature),
+                    'identical_to_raw' => ($serialized_data === $raw_body)
+                );
+
+                // Check if this approach works
+                if (hash_equals($computed_signature, $signature)) {
+                    $successful_approach = $approach_name;
+                    break;
+                }
+            }
+
+            // Log comprehensive debug information
+            bna_error('COMPREHENSIVE WEBHOOK DEBUG', array(
                 'provided_signature' => $signature,
-                'signatures_match' => hash_equals($computed_signature, $signature),
-                'webhook_secret_length' => strlen($webhook_secret)
+                'timestamp' => $timestamp,
+                'webhook_secret' => substr($webhook_secret, 0, 5) . '***' . substr($webhook_secret, -5), // Partial key for security
+                'webhook_secret_length' => strlen($webhook_secret),
+                'raw_body_length' => strlen($raw_body),
+                'raw_body_first_200' => substr($raw_body, 0, 200),
+                'all_approaches' => $debug_results,
+                'successful_approach' => $successful_approach
             ));
 
-            // Step 5: Secure comparison (constant-time comparison)
-            if (!hash_equals($computed_signature, $signature)) {
-                return new WP_Error('invalid_signature', 'HMAC signature mismatch');
+            if ($successful_approach) {
+                bna_log('Webhook signature verified successfully', array(
+                    'approach_used' => $successful_approach
+                ));
+                return true;
             }
 
-            return true;
+            // Try one more approach - maybe BNA uses a different algorithm
+            $alternative_approaches = array();
+
+            // Test with different hash combinations
+            $test_combinations = array(
+                'hash_only' => hash('sha256', $raw_body),
+                'timestamp_only' => $timestamp,
+                'hash_timestamp_space' => hash('sha256', $raw_body) . ' ' . $timestamp,
+                'timestamp_hash' => $timestamp . ':' . hash('sha256', $raw_body),
+                'raw_timestamp_no_hash' => $raw_body . ':' . $timestamp,
+                'just_raw_body' => $raw_body
+            );
+
+            foreach ($test_combinations as $combo_name => $signing_data) {
+                $computed_sig = hash_hmac('sha256', $signing_data, $webhook_secret);
+                $alternative_approaches[$combo_name] = array(
+                    'signing_data_preview' => substr($signing_data, 0, 100) . '...',
+                    'computed_signature' => $computed_sig,
+                    'matches' => hash_equals($computed_sig, $signature)
+                );
+
+                if (hash_equals($computed_sig, $signature)) {
+                    bna_log('FOUND WORKING ALTERNATIVE APPROACH', array(
+                        'approach' => $combo_name,
+                        'signing_data_preview' => substr($signing_data, 0, 100) . '...'
+                    ));
+                    return true;
+                }
+            }
+
+            bna_error('ALTERNATIVE APPROACHES TESTED', array(
+                'alternative_results' => $alternative_approaches
+            ));
+
+            return new WP_Error('invalid_signature', 'HMAC signature mismatch - exhaustive debug completed');
 
         } catch (Exception $e) {
             bna_error('HMAC verification exception', array(
                 'error' => $e->getMessage(),
-                'line' => $e->getLine()
+                'line' => $e->getLine(),
+                'file' => $e->getFile()
             ));
             return new WP_Error('verification_error', 'Signature verification failed: ' . $e->getMessage());
         }
@@ -305,40 +388,51 @@ class BNA_Webhooks {
         $domain = $event_parts[0] ?? '';
         $subdomain = $event_parts[1] ?? '';
 
-        switch ($domain) {
-            case 'transaction':
-                return self::handle_transaction_event($subdomain, $data, $delivery_id);
+        try {
+            switch ($domain) {
+                case 'transaction':
+                    return self::handle_transaction_event($subdomain, $data, $delivery_id);
 
-            case 'customer':
-                return self::handle_customer_event($subdomain, $data, $delivery_id);
+                case 'customer':
+                    return self::handle_customer_event($subdomain, $data, $delivery_id);
 
-            case 'payment_method':
-                return self::handle_payment_method_event($subdomain, $data, $delivery_id);
+                case 'subscription':
+                    return self::handle_subscription_event($subdomain, $data, $delivery_id);
 
-            case 'subscription':
-                return self::handle_subscription_event($subdomain, $data, $delivery_id);
+                case 'payment_method':
+                    return self::handle_payment_method_event($subdomain, $data, $delivery_id);
 
-            default:
-                bna_log('Unrecognized event domain', array(
-                    'event' => $event,
-                    'domain' => $domain,
-                    'subdomain' => $subdomain
-                ));
+                default:
+                    bna_log('Unknown event domain', array(
+                        'event' => $event,
+                        'domain' => $domain,
+                        'subdomain' => $subdomain
+                    ));
+                    return array(
+                        'status' => 'success',
+                        'message' => 'Event received but not processed (unknown domain)',
+                        'event' => $event
+                    );
+            }
+        } catch (Exception $e) {
+            bna_error('Event processing failed', array(
+                'event' => $event,
+                'error' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
 
-                return array(
-                    'status' => 'success',
-                    'message' => 'Event received but not processed (unrecognized domain)',
-                    'event' => $event
-                );
+            return array(
+                'status' => 'error',
+                'message' => 'Event processing failed: ' . $e->getMessage(),
+                'event' => $event
+            );
         }
     }
 
     /**
      * Handle transaction events (transaction.*)
      *
-     * Events: created, processed, approved, declined, canceled, updated, expired
-     *
-     * @param string $event_type Transaction event type (approved, declined, etc.)
+     * @param string $event_type Event subdomain (created, processed, approved, etc.)
      * @param array $data Transaction data
      * @param string $delivery_id Webhook delivery ID
      * @return array Processing result
@@ -348,34 +442,47 @@ class BNA_Webhooks {
             'event_type' => $event_type,
             'transaction_id' => $data['id'] ?? 'unknown',
             'status' => $data['status'] ?? 'unknown',
-            'payment_method' => $data['paymentMethod'] ?? 'unknown',
-            'amount' => $data['total'] ?? 'unknown',
             'delivery_id' => $delivery_id
         ));
 
         switch ($event_type) {
-            case 'approved':
+            case 'created':
             case 'processed':
-                return self::handle_successful_transaction($data);
+            case 'updated':
+                return self::handle_transaction_webhook($data);
+
+            case 'approved':
+                $result = self::handle_transaction_webhook($data);
+                // Additional processing for approved transactions
+                do_action('bna_transaction_approved', $data);
+                return $result;
 
             case 'declined':
-            case 'canceled':
-            case 'expired':
-                return self::handle_failed_transaction($data);
+                $result = self::handle_transaction_webhook($data);
+                // Additional processing for declined transactions
+                do_action('bna_transaction_declined', $data);
+                return $result;
 
-            case 'created':
-            case 'updated':
-                return self::handle_transaction_status_update($data);
+            case 'canceled':
+                $result = self::handle_transaction_webhook($data);
+                // Additional processing for canceled transactions
+                do_action('bna_transaction_canceled', $data);
+                return $result;
+
+            case 'expired':
+                $result = self::handle_transaction_webhook($data);
+                // Additional processing for expired transactions
+                do_action('bna_transaction_expired', $data);
+                return $result;
 
             default:
-                bna_log('Unrecognized transaction event type', array(
+                bna_log('Unknown transaction event type', array(
                     'event_type' => $event_type,
                     'transaction_id' => $data['id'] ?? 'unknown'
                 ));
-
                 return array(
                     'status' => 'success',
-                    'message' => 'Transaction event received but not processed',
+                    'message' => 'Transaction event received but not specifically handled',
                     'event_type' => $event_type
                 );
         }
@@ -384,9 +491,7 @@ class BNA_Webhooks {
     /**
      * Handle customer events (customer.*)
      *
-     * Events: created, updated, deleted
-     *
-     * @param string $event_type Customer event type
+     * @param string $event_type Event subdomain (created, updated, deleted)
      * @param array $data Customer data
      * @param string $delivery_id Webhook delivery ID
      * @return array Processing result
@@ -399,21 +504,66 @@ class BNA_Webhooks {
             'delivery_id' => $delivery_id
         ));
 
-        // For now, just log customer events - extend as needed
-        return array(
-            'status' => 'success',
-            'message' => 'Customer event processed',
+        switch ($event_type) {
+            case 'created':
+            case 'updated':
+            case 'deleted':
+                return self::handle_customer_webhook($data);
+
+            default:
+                bna_log('Unknown customer event type', array(
+                    'event_type' => $event_type,
+                    'customer_id' => $data['id'] ?? 'unknown'
+                ));
+                return array(
+                    'status' => 'success',
+                    'message' => 'Customer event received but not specifically handled',
+                    'event_type' => $event_type
+                );
+        }
+    }
+
+    /**
+     * Handle subscription events (subscription.*)
+     *
+     * @param string $event_type Event subdomain (created, processed, will_expire, etc.)
+     * @param array $data Subscription data
+     * @param string $delivery_id Webhook delivery ID
+     * @return array Processing result
+     */
+    private static function handle_subscription_event($event_type, $data, $delivery_id) {
+        bna_log('Processing subscription event', array(
             'event_type' => $event_type,
-            'customer_id' => $data['id'] ?? null
-        );
+            'subscription_id' => $data['id'] ?? 'unknown',
+            'status' => $data['status'] ?? 'unknown',
+            'delivery_id' => $delivery_id
+        ));
+
+        switch ($event_type) {
+            case 'created':
+            case 'processed':
+            case 'will_expire':
+            case 'updated':
+            case 'deleted':
+                return self::handle_subscription_webhook($data);
+
+            default:
+                bna_log('Unknown subscription event type', array(
+                    'event_type' => $event_type,
+                    'subscription_id' => $data['id'] ?? 'unknown'
+                ));
+                return array(
+                    'status' => 'success',
+                    'message' => 'Subscription event received but not specifically handled',
+                    'event_type' => $event_type
+                );
+        }
     }
 
     /**
      * Handle payment method events (payment_method.*)
      *
-     * Events: created, deleted
-     *
-     * @param string $event_type Payment method event type
+     * @param string $event_type Event subdomain (created, deleted)
      * @param array $data Payment method data
      * @param string $delivery_id Webhook delivery ID
      * @return array Processing result
@@ -423,570 +573,430 @@ class BNA_Webhooks {
             'event_type' => $event_type,
             'payment_method_id' => $data['id'] ?? 'unknown',
             'customer_id' => $data['customerId'] ?? 'unknown',
-            'method_type' => $data['method'] ?? 'unknown',
+            'method' => $data['method'] ?? 'unknown',
             'delivery_id' => $delivery_id
         ));
 
-        $customer_id = $data['customerId'] ?? null;
-
         switch ($event_type) {
             case 'created':
-                return self::handle_payment_method_created($data, $customer_id);
-
             case 'deleted':
-                return self::handle_payment_method_deleted($data, $customer_id);
+                return self::handle_payment_method_webhook($data);
 
             default:
-                bna_log('Unrecognized payment method event type', array(
+                bna_log('Unknown payment method event type', array(
                     'event_type' => $event_type,
                     'payment_method_id' => $data['id'] ?? 'unknown'
                 ));
-
                 return array(
                     'status' => 'success',
-                    'message' => 'Payment method event received but not processed',
+                    'message' => 'Payment method event received but not specifically handled',
                     'event_type' => $event_type
                 );
         }
     }
 
     /**
-     * Handle subscription events (subscription.*)
+     * Handle transaction webhook
      *
-     * Events: created, processed, will_expire, updated, deleted
-     *
-     * @param string $event_type Subscription event type
-     * @param array $data Subscription data
-     * @param string $delivery_id Webhook delivery ID
-     * @return array Processing result
-     */
-    private static function handle_subscription_event($event_type, $data, $delivery_id) {
-        bna_log('Processing subscription event', array(
-            'event_type' => $event_type,
-            'subscription_id' => $data['id'] ?? 'unknown',
-            'customer_id' => $data['customerId'] ?? 'unknown',
-            'status' => $data['status'] ?? 'unknown',
-            'delivery_id' => $delivery_id
-        ));
-
-        // For now, just log subscription events - extend as needed
-        return array(
-            'status' => 'success',
-            'message' => 'Subscription event processed',
-            'event_type' => $event_type,
-            'subscription_id' => $data['id'] ?? null
-        );
-    }
-
-    // ==========================================
-    // LEGACY WEBHOOK HANDLERS (Backwards Compatibility)
-    // ==========================================
-
-    /**
-     * Handle legacy payment method webhook with customer data
-     *
-     * @param array $payload Legacy webhook payload
-     * @return array Processing result
-     */
-    private static function handle_payment_method_with_customer($payload) {
-        bna_log('Processing legacy payment method webhook with customer data', array(
-            'payment_method_id' => $payload['paymentMethod']['id'] ?? 'unknown',
-            'customer_id' => $payload['customer']['id'] ?? 'unknown',
-            'method_type' => $payload['paymentMethod']['method'] ?? $payload['paymentMethod']['cardType'] ?? 'unknown',
-            'card_brand' => $payload['paymentMethod']['cardBrand'] ?? 'unknown',
-            'created_at' => $payload['paymentMethod']['createdAt'] ?? 'unknown'
-        ));
-
-        $payment_method = $payload['paymentMethod'];
-        $customer = $payload['customer'];
-        $customer_id = $customer['id'] ?? null;
-
-        if (empty($customer_id)) {
-            bna_error('Customer ID missing in payment method webhook', array(
-                'payload_keys' => array_keys($payload)
-            ));
-            return array(
-                'status' => 'error',
-                'message' => 'Customer ID missing in payment method webhook'
-            );
-        }
-
-        $action = $payload['action'] ?? $payload['event'] ?? 'created';
-
-        if (isset($payload['paymentMethod']['createdAt'])) {
-            $action = 'created';
-            bna_log('Payment method creation detected via createdAt field', array(
-                'payment_method_id' => $payment_method['id'],
-                'created_at' => $payment_method['createdAt']
-            ));
-        }
-
-        switch (strtolower($action)) {
-            case 'created':
-            case 'payment_method.created':
-                return self::handle_payment_method_created($payment_method, $customer_id);
-
-            case 'deleted':
-            case 'delete':
-            case 'payment_method.delete':
-                return self::handle_payment_method_deleted($payment_method, $customer_id);
-
-            default:
-                bna_log('Assuming payment method creation due to presence of paymentMethod and customer', array(
-                    'assumed_action' => 'created',
-                    'customer_id' => $customer_id,
-                    'payment_method_id' => $payment_method['id'] ?? 'unknown',
-                    'original_action' => $action
-                ));
-
-                return self::handle_payment_method_created($payment_method, $customer_id);
-        }
-    }
-
-    /**
-     * Handle legacy transaction webhook
-     *
-     * @param array $payload Legacy transaction webhook payload
+     * @param array $payload Transaction data (can be full payload or just data part)
      * @return array Processing result
      */
     private static function handle_transaction_webhook($payload) {
-        $transaction_data = $payload['transaction'] ?? $payload['data']['transaction'] ?? $payload;
+        // Extract transaction data
+        $transaction = isset($payload['transaction']) ? $payload['transaction'] : $payload;
 
-        bna_log('Processing legacy transaction webhook', array(
-            'transaction_id' => $transaction_data['id'] ?? 'unknown',
-            'status' => $transaction_data['status'] ?? 'unknown',
-            'amount' => $transaction_data['total'] ?? $transaction_data['amount'] ?? 'unknown'
-        ));
-
-        return self::handle_transaction_status_update($transaction_data);
-    }
-
-    /**
-     * Handle legacy customer webhook
-     *
-     * @param array $payload Legacy customer webhook payload
-     * @return array Processing result
-     */
-    private static function handle_customer_webhook($payload) {
-        $customer_data = $payload['customer'] ?? $payload;
-        $action = $payload['action'] ?? 'updated';
-
-        bna_log('Processing legacy customer webhook', array(
-            'customer_id' => $customer_data['id'] ?? 'unknown',
-            'action' => $action,
-            'email' => $customer_data['email'] ?? 'unknown'
-        ));
-
-        return array(
-            'status' => 'success',
-            'message' => 'Legacy customer webhook processed',
-            'action' => $action
-        );
-    }
-
-    /**
-     * Handle legacy subscription webhook
-     *
-     * @param array $payload Legacy subscription webhook payload
-     * @return array Processing result
-     */
-    private static function handle_subscription_webhook($payload) {
-        $subscription_data = $payload['subscription'] ?? $payload;
-
-        bna_log('Processing legacy subscription webhook', array(
-            'subscription_id' => $subscription_data['id'] ?? 'unknown',
-            'status' => $subscription_data['status'] ?? 'unknown'
-        ));
-
-        return array(
-            'status' => 'success',
-            'message' => 'Legacy subscription webhook processed'
-        );
-    }
-
-    /**
-     * Handle legacy payment method webhook
-     *
-     * @param array $payload Legacy payment method webhook payload
-     * @return array Processing result
-     */
-    private static function handle_payment_method_webhook($payload) {
-        bna_log('Processing legacy payment method webhook', array(
-            'payload_keys' => array_keys($payload)
-        ));
-
-        $payment_method = $payload['payment_method'] ?? $payload['paymentMethod'] ?? $payload['data'] ?? array();
-        $action = $payload['action'] ?? $payload['event'] ?? 'created';
-
-        return array(
-            'status' => 'success',
-            'message' => 'Legacy payment method webhook processed',
-            'action' => $action
-        );
-    }
-
-    // ==========================================
-    // TRANSACTION PROCESSING METHODS
-    // ==========================================
-
-    /**
-     * Handle successful transaction (approved/processed)
-     *
-     * @param array $transaction_data Transaction data
-     * @return array Processing result
-     */
-    private static function handle_successful_transaction($transaction_data) {
-        $transaction_id = $transaction_data['id'] ?? null;
-        $reference_uuid = $transaction_data['referenceUUID'] ?? $transaction_id;
-
-        if (empty($reference_uuid)) {
-            bna_error('Transaction reference missing in successful transaction webhook');
-            return array(
-                'status' => 'error',
-                'message' => 'Transaction reference missing'
-            );
+        if (empty($transaction['id'])) {
+            bna_error('Invalid transaction webhook - missing ID');
+            return array('status' => 'error', 'message' => 'Missing transaction ID');
         }
 
-        // Find order by transaction reference
-        $order = self::find_order_by_transaction_reference($reference_uuid);
-        if (!$order) {
-            bna_log('Order not found for successful transaction', array(
-                'transaction_id' => $transaction_id,
-                'reference_uuid' => $reference_uuid
-            ));
-            return array(
-                'status' => 'warning',
-                'message' => 'Order not found for transaction reference'
-            );
-        }
+        $transaction_id = $transaction['id'];
+        $status = $transaction['status'] ?? 'unknown';
 
-        // Mark order as paid
-        if (!$order->is_paid()) {
-            $order->payment_complete($transaction_id);
-            $order->add_order_note(sprintf(
-                'Payment completed via BNA Smart Payment. Transaction ID: %s',
-                $transaction_id
-            ));
-
-            bna_log('Order marked as paid', array(
-                'order_id' => $order->get_id(),
-                'transaction_id' => $transaction_id,
-                'amount' => $transaction_data['total'] ?? 'unknown'
-            ));
-
-            // Save payment method if provided
-            self::save_payment_method_from_transaction($transaction_data, $order);
-        }
-
-        return array(
-            'status' => 'success',
-            'message' => 'Transaction processed successfully',
-            'order_id' => $order->get_id(),
-            'transaction_id' => $transaction_id
-        );
-    }
-
-    /**
-     * Handle failed transaction (declined/canceled/expired)
-     *
-     * @param array $transaction_data Transaction data
-     * @return array Processing result
-     */
-    private static function handle_failed_transaction($transaction_data) {
-        $transaction_id = $transaction_data['id'] ?? null;
-        $reference_uuid = $transaction_data['referenceUUID'] ?? $transaction_id;
-        $decline_reason = $transaction_data['declineReason'] ?? 'Payment failed';
-
-        if (empty($reference_uuid)) {
-            bna_error('Transaction reference missing in failed transaction webhook');
-            return array(
-                'status' => 'error',
-                'message' => 'Transaction reference missing'
-            );
-        }
-
-        // Find order by transaction reference
-        $order = self::find_order_by_transaction_reference($reference_uuid);
-        if (!$order) {
-            bna_log('Order not found for failed transaction', array(
-                'transaction_id' => $transaction_id,
-                'reference_uuid' => $reference_uuid
-            ));
-            return array(
-                'status' => 'warning',
-                'message' => 'Order not found for transaction reference'
-            );
-        }
-
-        // Mark order as failed
-        $order->update_status('failed', sprintf(
-            'Payment failed via BNA Smart Payment: %s (Transaction ID: %s)',
-            $decline_reason,
-            $transaction_id
-        ));
-
-        bna_log('Order marked as failed', array(
-            'order_id' => $order->get_id(),
+        bna_log('Processing transaction webhook', array(
             'transaction_id' => $transaction_id,
-            'reason' => $decline_reason
+            'status' => $status,
+            'payment_method' => $transaction['paymentMethod'] ?? 'unknown',
+            'amount' => $transaction['amount'] ?? 'unknown'
         ));
 
-        return array(
-            'status' => 'success',
-            'message' => 'Failed transaction processed',
-            'order_id' => $order->get_id(),
-            'transaction_id' => $transaction_id
-        );
-    }
+        try {
+            // Find WooCommerce order by BNA transaction ID
+            $orders = wc_get_orders(array(
+                'meta_key' => '_bna_transaction_id',
+                'meta_value' => $transaction_id,
+                'limit' => 1,
+                'status' => 'any'
+            ));
 
-    /**
-     * Handle transaction status update
-     *
-     * @param array $transaction_data Transaction data
-     * @return array Processing result
-     */
-    private static function handle_transaction_status_update($transaction_data) {
-        $status = $transaction_data['status'] ?? 'unknown';
+            if (empty($orders)) {
+                // Try to find by reference UUID if available
+                if (!empty($transaction['referenceUUID'])) {
+                    $orders = wc_get_orders(array(
+                        'meta_key' => '_bna_reference_uuid',
+                        'meta_value' => $transaction['referenceUUID'],
+                        'limit' => 1,
+                        'status' => 'any'
+                    ));
+                }
+            }
 
-        switch (strtoupper($status)) {
-            case 'APPROVED':
-            case 'PROCESSED':
-                return self::handle_successful_transaction($transaction_data);
-
-            case 'DECLINED':
-            case 'CANCELED':
-            case 'EXPIRED':
-                return self::handle_failed_transaction($transaction_data);
-
-            default:
-                bna_log('Transaction status update received', array(
-                    'transaction_id' => $transaction_data['id'] ?? 'unknown',
-                    'status' => $status
+            if (empty($orders)) {
+                bna_log('No matching WooCommerce order found for transaction', array(
+                    'transaction_id' => $transaction_id,
+                    'reference_uuid' => $transaction['referenceUUID'] ?? 'not_provided'
                 ));
 
                 return array(
                     'status' => 'success',
-                    'message' => 'Transaction status update received',
-                    'transaction_status' => $status
+                    'message' => 'Transaction processed but no matching order found',
+                    'transaction_id' => $transaction_id
                 );
-        }
-    }
+            }
 
-    // ==========================================
-    // PAYMENT METHOD PROCESSING
-    // ==========================================
+            $order = $orders[0];
 
-    /**
-     * Handle payment method creation
-     *
-     * @param array $payment_method Payment method data
-     * @param string $customer_id BNA customer ID
-     * @return array Processing result
-     */
-    private static function handle_payment_method_created($payment_method, $customer_id) {
-        bna_log('Payment method created', array(
-            'payment_method_id' => $payment_method['id'] ?? 'unknown',
-            'customer_id' => $customer_id,
-            'method_type' => $payment_method['method'] ?? $payment_method['cardType'] ?? 'unknown'
-        ));
+            // Update order based on transaction status
+            switch (strtolower($status)) {
+                case 'approved':
+                    if (!$order->is_paid()) {
+                        $order->payment_complete($transaction_id);
+                        $order->add_order_note(__('Payment approved via BNA webhook.', 'bna-smart-payment'));
 
-        // Find WordPress user by BNA customer ID
-        $wp_user_id = self::find_wp_user_by_bna_customer_id($customer_id);
-        if (!$wp_user_id) {
-            bna_log('WordPress user not found for BNA customer', array(
-                'bna_customer_id' => $customer_id
-            ));
+                        // Store additional transaction data
+                        if (isset($transaction['authCode'])) {
+                            $order->update_meta_data('_bna_auth_code', $transaction['authCode']);
+                        }
+                        if (isset($transaction['fee'])) {
+                            $order->update_meta_data('_bna_fee', $transaction['fee']);
+                        }
+                        if (isset($transaction['balance'])) {
+                            $order->update_meta_data('_bna_balance', $transaction['balance']);
+                        }
+
+                        $order->save();
+
+                        bna_log('Order marked as paid', array(
+                            'order_id' => $order->get_id(),
+                            'transaction_id' => $transaction_id
+                        ));
+                    }
+                    break;
+
+                case 'declined':
+                case 'canceled':
+                    $order->update_status('failed', __('Payment ' . $status . ' via BNA webhook.', 'bna-smart-payment'));
+
+                    if (isset($transaction['declineReason'])) {
+                        $order->add_order_note(sprintf(__('Decline reason: %s', 'bna-smart-payment'), $transaction['declineReason']));
+                    }
+
+                    bna_log('Order marked as failed', array(
+                        'order_id' => $order->get_id(),
+                        'transaction_id' => $transaction_id,
+                        'status' => $status
+                    ));
+                    break;
+
+                case 'processed':
+                    $order->update_status('processing', __('Payment processing via BNA webhook.', 'bna-smart-payment'));
+
+                    bna_log('Order status updated to processing', array(
+                        'order_id' => $order->get_id(),
+                        'transaction_id' => $transaction_id
+                    ));
+                    break;
+
+                default:
+                    $order->add_order_note(sprintf(__('Transaction status updated: %s via BNA webhook.', 'bna-smart-payment'), $status));
+
+                    bna_log('Order note added for status update', array(
+                        'order_id' => $order->get_id(),
+                        'transaction_id' => $transaction_id,
+                        'status' => $status
+                    ));
+                    break;
+            }
+
             return array(
-                'status' => 'warning',
-                'message' => 'WordPress user not found for customer'
+                'status' => 'success',
+                'message' => 'Transaction webhook processed successfully',
+                'order_id' => $order->get_id(),
+                'transaction_id' => $transaction_id,
+                'transaction_status' => $status
+            );
+
+        } catch (Exception $e) {
+            bna_error('Transaction webhook processing failed', array(
+                'transaction_id' => $transaction_id,
+                'error' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return array(
+                'status' => 'error',
+                'message' => 'Transaction processing failed: ' . $e->getMessage(),
+                'transaction_id' => $transaction_id
             );
         }
-
-        // Save payment method
-        $payment_methods_manager = BNA_Payment_Methods::get_instance();
-        $result = $payment_methods_manager->save_payment_method($wp_user_id, $payment_method);
-
-        if ($result) {
-            bna_log('Payment method saved to WordPress user', array(
-                'wp_user_id' => $wp_user_id,
-                'payment_method_id' => $payment_method['id'] ?? 'unknown'
-            ));
-        }
-
-        return array(
-            'status' => 'success',
-            'message' => 'Payment method created and saved',
-            'wp_user_id' => $wp_user_id,
-            'saved' => $result
-        );
     }
 
     /**
-     * Handle payment method deletion
+     * Handle customer webhook
      *
-     * @param array $payment_method Payment method data
-     * @param string $customer_id BNA customer ID
+     * @param array $payload Customer data
      * @return array Processing result
      */
-    private static function handle_payment_method_deleted($payment_method, $customer_id) {
-        bna_log('Payment method deleted', array(
-            'payment_method_id' => $payment_method['id'] ?? 'unknown',
+    private static function handle_customer_webhook($payload) {
+        $customer = isset($payload['customer']) ? $payload['customer'] : $payload;
+        $action = $payload['action'] ?? 'unknown';
+
+        if (empty($customer['id'])) {
+            bna_error('Invalid customer webhook - missing ID');
+            return array('status' => 'error', 'message' => 'Missing customer ID');
+        }
+
+        $customer_id = $customer['id'];
+        $email = $customer['email'] ?? '';
+
+        bna_log('Processing customer webhook', array(
+            'customer_id' => $customer_id,
+            'email' => $email,
+            'action' => $action
+        ));
+
+        try {
+            // Find WordPress user by email
+            if (!empty($email)) {
+                $user = get_user_by('email', $email);
+
+                if ($user) {
+                    // Update user meta with BNA customer ID
+                    update_user_meta($user->ID, '_bna_customer_id', $customer_id);
+
+                    bna_log('Customer data synced with WordPress user', array(
+                        'wp_user_id' => $user->ID,
+                        'bna_customer_id' => $customer_id,
+                        'email' => $email
+                    ));
+                } else {
+                    bna_log('No matching WordPress user found for customer', array(
+                        'bna_customer_id' => $customer_id,
+                        'email' => $email
+                    ));
+                }
+            }
+
+            return array(
+                'status' => 'success',
+                'message' => 'Customer webhook processed successfully',
+                'customer_id' => $customer_id,
+                'action' => $action
+            );
+
+        } catch (Exception $e) {
+            bna_error('Customer webhook processing failed', array(
+                'customer_id' => $customer_id,
+                'error' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return array(
+                'status' => 'error',
+                'message' => 'Customer processing failed: ' . $e->getMessage(),
+                'customer_id' => $customer_id
+            );
+        }
+    }
+
+    /**
+     * Handle subscription webhook
+     *
+     * @param array $payload Subscription data
+     * @return array Processing result
+     */
+    private static function handle_subscription_webhook($payload) {
+        $subscription = isset($payload['subscription']) ? $payload['subscription'] : $payload;
+
+        if (empty($subscription['id'])) {
+            bna_error('Invalid subscription webhook - missing ID');
+            return array('status' => 'error', 'message' => 'Missing subscription ID');
+        }
+
+        $subscription_id = $subscription['id'];
+        $status = $subscription['status'] ?? 'unknown';
+        $customer_id = $subscription['customerId'] ?? '';
+
+        bna_log('Processing subscription webhook', array(
+            'subscription_id' => $subscription_id,
+            'status' => $status,
             'customer_id' => $customer_id
         ));
 
-        // Find WordPress user by BNA customer ID
-        $wp_user_id = self::find_wp_user_by_bna_customer_id($customer_id);
-        if (!$wp_user_id) {
-            bna_log('WordPress user not found for BNA customer during deletion', array(
-                'bna_customer_id' => $customer_id
+        try {
+            // Find related orders or subscriptions
+            $orders = wc_get_orders(array(
+                'meta_key' => '_bna_subscription_id',
+                'meta_value' => $subscription_id,
+                'limit' => -1,
+                'status' => 'any'
             ));
+
+            foreach ($orders as $order) {
+                $order->add_order_note(sprintf(__('Subscription status updated: %s via BNA webhook.', 'bna-smart-payment'), $status));
+
+                // Store subscription data
+                $order->update_meta_data('_bna_subscription_status', $status);
+                if (isset($subscription['nextPaymentDate'])) {
+                    $order->update_meta_data('_bna_next_payment_date', $subscription['nextPaymentDate']);
+                }
+                if (isset($subscription['remainingPayments'])) {
+                    $order->update_meta_data('_bna_remaining_payments', $subscription['remainingPayments']);
+                }
+
+                $order->save();
+            }
+
             return array(
-                'status' => 'warning',
-                'message' => 'WordPress user not found for customer'
+                'status' => 'success',
+                'message' => 'Subscription webhook processed successfully',
+                'subscription_id' => $subscription_id,
+                'orders_updated' => count($orders)
+            );
+
+        } catch (Exception $e) {
+            bna_error('Subscription webhook processing failed', array(
+                'subscription_id' => $subscription_id,
+                'error' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return array(
+                'status' => 'error',
+                'message' => 'Subscription processing failed: ' . $e->getMessage(),
+                'subscription_id' => $subscription_id
             );
         }
-
-        // Remove payment method
-        $payment_methods_manager = BNA_Payment_Methods::get_instance();
-        $result = $payment_methods_manager->delete_payment_method($wp_user_id, $payment_method['id']);
-
-        if ($result) {
-            bna_log('Payment method removed from WordPress user', array(
-                'wp_user_id' => $wp_user_id,
-                'payment_method_id' => $payment_method['id'] ?? 'unknown'
-            ));
-        }
-
-        return array(
-            'status' => 'success',
-            'message' => 'Payment method deleted',
-            'wp_user_id' => $wp_user_id,
-            'deleted' => $result
-        );
     }
 
-    // ==========================================
-    // UTILITY METHODS
-    // ==========================================
-
     /**
-     * Find WooCommerce order by transaction reference
+     * Handle payment method webhook
      *
-     * @param string $reference_uuid Transaction reference UUID
-     * @return WC_Order|null Order object or null if not found
+     * @param array $payload Payment method data
+     * @return array Processing result
      */
-    private static function find_order_by_transaction_reference($reference_uuid) {
-        if (empty($reference_uuid)) {
-            return null;
+    private static function handle_payment_method_webhook($payload) {
+        $payment_method = isset($payload['paymentMethod']) ? $payload['paymentMethod'] : $payload;
+
+        if (empty($payment_method['id'])) {
+            bna_error('Invalid payment method webhook - missing ID');
+            return array('status' => 'error', 'message' => 'Missing payment method ID');
         }
 
-        // Search by order ID if numeric
-        if (is_numeric($reference_uuid)) {
-            $order = wc_get_order($reference_uuid);
-            if ($order && $order->get_payment_method() === 'bna_smart_payment') {
-                return $order;
+        $method_id = $payment_method['id'];
+        $customer_id = $payment_method['customerId'] ?? '';
+        $method_type = $payment_method['method'] ?? 'unknown';
+
+        bna_log('Processing payment method webhook', array(
+            'method_id' => $method_id,
+            'customer_id' => $customer_id,
+            'method_type' => $method_type
+        ));
+
+        try {
+            // Use BNA Payment Methods handler if available
+            if (class_exists('BNA_Payment_Methods')) {
+                return BNA_Payment_Methods::handle_webhook($payload);
             }
+
+            return array(
+                'status' => 'success',
+                'message' => 'Payment method webhook received',
+                'method_id' => $method_id,
+                'customer_id' => $customer_id
+            );
+
+        } catch (Exception $e) {
+            bna_error('Payment method webhook processing failed', array(
+                'method_id' => $method_id,
+                'error' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return array(
+                'status' => 'error',
+                'message' => 'Payment method processing failed: ' . $e->getMessage(),
+                'method_id' => $method_id
+            );
         }
-
-        // Search by order meta
-        $orders = wc_get_orders(array(
-            'limit' => 1,
-            'meta_query' => array(
-                array(
-                    'key' => '_bna_transaction_reference',
-                    'value' => $reference_uuid,
-                    'compare' => '='
-                )
-            )
-        ));
-
-        return !empty($orders) ? $orders[0] : null;
     }
 
     /**
-     * Find WordPress user by BNA customer ID
+     * Handle combined payment method and customer webhook
      *
-     * @param string $bna_customer_id BNA customer ID
-     * @return int|null WordPress user ID or null if not found
+     * @param array $payload Combined payload with both paymentMethod and customer data
+     * @return array Processing result
      */
-    private static function find_wp_user_by_bna_customer_id($bna_customer_id) {
-        if (empty($bna_customer_id)) {
-            return null;
-        }
-
-        $users = get_users(array(
-            'meta_key' => '_bna_customer_id',
-            'meta_value' => $bna_customer_id,
-            'number' => 1
+    private static function handle_payment_method_with_customer($payload) {
+        bna_log('Processing combined payment method and customer webhook', array(
+            'has_payment_method' => isset($payload['paymentMethod']),
+            'has_customer' => isset($payload['customer']),
+            'customer_email' => $payload['customer']['email'] ?? 'unknown'
         ));
 
-        return !empty($users) ? $users[0]->ID : null;
+        $results = array();
+
+        try {
+            // Process customer first
+            if (isset($payload['customer'])) {
+                $customer_result = self::handle_customer_webhook($payload);
+                $results['customer'] = $customer_result;
+            }
+
+            // Then process payment method
+            if (isset($payload['paymentMethod'])) {
+                $method_result = self::handle_payment_method_webhook($payload);
+                $results['payment_method'] = $method_result;
+            }
+
+            return array(
+                'status' => 'success',
+                'message' => 'Combined webhook processed successfully',
+                'results' => $results
+            );
+
+        } catch (Exception $e) {
+            bna_error('Combined webhook processing failed', array(
+                'error' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'results_so_far' => $results
+            ));
+
+            return array(
+                'status' => 'error',
+                'message' => 'Combined processing failed: ' . $e->getMessage(),
+                'partial_results' => $results
+            );
+        }
     }
 
     /**
-     * Save payment method from transaction data
-     *
-     * @param array $transaction_data Transaction data containing payment details
-     * @param WC_Order $order WooCommerce order
-     */
-    private static function save_payment_method_from_transaction($transaction_data, $order) {
-        if (!isset($transaction_data['paymentDetails']) || !$order->get_customer_id()) {
-            return;
-        }
-
-        $payment_details = $transaction_data['paymentDetails'];
-        $payment_method = $transaction_data['paymentMethod'] ?? 'CARD';
-
-        // Prepare payment method data
-        $method_data = array(
-            'id' => $transaction_data['id'] ?? uniqid('bna_'),
-            'type' => $payment_method,
-            'created_at' => current_time('Y-m-d H:i:s')
-        );
-
-        // Add specific details based on payment method
-        switch ($payment_method) {
-            case 'CARD':
-                $method_data['last4'] = $payment_details['cardNumber'] ?? '';
-                $method_data['brand'] = $payment_details['cardBrand'] ?? '';
-                $method_data['card_type'] = $payment_details['cardType'] ?? '';
-                break;
-
-            case 'EFT':
-                $method_data['bank_name'] = $payment_details['bankName'] ?? '';
-                $method_data['account_number'] = $payment_details['accountNumber'] ?? '';
-                break;
-
-            case 'E_TRANSFER':
-                $method_data['name'] = $payment_details['name'] ?? '';
-                $method_data['delivery_type'] = $payment_details['deliveryType'] ?? '';
-                break;
-        }
-
-        // Save payment method
-        $payment_methods_manager = BNA_Payment_Methods::get_instance();
-        $payment_methods_manager->save_payment_method($order->get_customer_id(), $method_data);
-
-        bna_log('Payment method saved from transaction', array(
-            'order_id' => $order->get_id(),
-            'customer_id' => $order->get_customer_id(),
-            'payment_method' => $payment_method,
-            'method_id' => $method_data['id']
-        ));
-    }
-
-    /**
-     * Test endpoint for webhook connectivity
+     * Test endpoint for webhook verification
      *
      * @param WP_REST_Request $request
      * @return WP_REST_Response
      */
     public static function test_endpoint($request) {
         return new WP_REST_Response(array(
-            'status' => 'ok',
-            'message' => 'BNA Webhook endpoint is working',
+            'status' => 'success',
+            'message' => 'BNA Webhook endpoint is active',
+            'version' => defined('BNA_SMART_PAYMENT_VERSION') ? BNA_SMART_PAYMENT_VERSION : 'unknown',
             'timestamp' => current_time('c'),
-            'version' => defined('BNA_SMART_PAYMENT_VERSION') ? BNA_SMART_PAYMENT_VERSION : 'unknown'
+            'webhook_url' => home_url('/wp-json/bna/v1/webhook'),
+            'hmac_enabled' => !empty(get_option('bna_smart_payment_webhook_secret', '')),
+            'php_version' => PHP_VERSION,
+            'wordpress_version' => get_bloginfo('version'),
+            'woocommerce_version' => class_exists('WooCommerce') ? WC()->version : 'not_installed'
         ), 200);
     }
 }
