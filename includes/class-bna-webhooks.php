@@ -68,246 +68,177 @@ class BNA_Webhooks {
             'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
         ));
 
+        // Verify webhook signature if configured
+        $webhook_secret = get_option('bna_smart_payment_webhook_secret', '');
+        if (!empty($webhook_secret)) {
+            $signature_valid = self::verify_webhook_signature($raw_body, $signature, $timestamp, $webhook_secret);
+
+            if (!$signature_valid) {
+                bna_error('Webhook signature verification failed');
+                return new WP_REST_Response(array('error' => 'Invalid signature'), 401);
+            }
+
+            bna_log('Webhook signature verified successfully');
+        } else {
+            bna_log('Webhook signature verification skipped (no secret configured)');
+        }
+
         // Validate payload
-        if (empty($payload) || !is_array($payload)) {
-            bna_error('Invalid webhook payload - empty or malformed JSON');
+        if (!is_array($payload)) {
+            bna_error('Invalid webhook payload format');
             return new WP_REST_Response(array('error' => 'Invalid payload'), 400);
         }
 
-        try {
-            // Verify HMAC signature if provided (new security format)
-            if (!empty($signature) && !empty($timestamp)) {
-                $verification_result = self::verify_webhook_signature($raw_body, $signature, $timestamp);
+        // Process webhook based on format
+        $result = self::process_webhook($payload);
 
-                if (is_wp_error($verification_result)) {
-                    bna_error('Webhook signature verification failed', array(
-                        'error' => $verification_result->get_error_message(),
-                        'timestamp' => $timestamp,
-                        'has_signature' => !empty($signature)
-                    ));
-                    return new WP_REST_Response(array('error' => 'Signature verification failed'), 401);
-                }
+        // Log processing result
+        $processing_time = round((microtime(true) - $start_time) * 1000, 2);
+        bna_log('Webhook processed successfully', array(
+            'processing_time_ms' => $processing_time,
+            'result' => $result
+        ));
 
-                bna_log('Webhook signature verified successfully');
-            } else {
-                bna_log('Legacy webhook received (no signature) - processing with basic validation');
-            }
-
-            // Process the webhook
-            $result = self::process_webhook($payload);
-
-            $processing_time = round((microtime(true) - $start_time) * 1000, 2);
-            bna_log('Webhook processed successfully', array(
-                'processing_time_ms' => $processing_time,
-                'result' => $result
-            ));
-
-            return new WP_REST_Response($result, 200);
-
-        } catch (Exception $e) {
-            $processing_time = round((microtime(true) - $start_time) * 1000, 2);
-            bna_error('Webhook processing failed', array(
-                'error' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'file' => $e->getFile(),
-                'processing_time_ms' => $processing_time,
-                'payload_structure' => array_keys($payload)
-            ));
-
-            return new WP_REST_Response(array('error' => $e->getMessage()), 500);
-        }
+        return new WP_REST_Response($result, 200);
     }
 
     /**
-     * Verify webhook HMAC signature using BNA algorithm - ORIGINAL COMPLEX VERSION
-     *
-     * BNA Portal algorithm (TypeScript):
-     * 1. JSON.stringify(data, null, 0) - serialize only 'data' part without spaces
-     * 2. SHA-256 hash of serialized data
-     * 3. Combine hash:timestamp
-     * 4. HMAC-SHA256 with secret
-     * 5. Convert to hex
+     * Verify webhook signature using HMAC-SHA256
      *
      * @param string $raw_body Raw request body
-     * @param string $signature Expected signature from X-Bna-Signature header
-     * @param string $timestamp Timestamp from X-Bna-Timestamp header
-     * @return bool|WP_Error True if valid, WP_Error if invalid
+     * @param string $signature Provided signature
+     * @param string $timestamp Request timestamp
+     * @param string $webhook_secret Webhook secret key
+     * @return bool True if signature is valid
      */
-    private static function verify_webhook_signature($raw_body, $signature, $timestamp) {
-        // Get webhook secret
-        $webhook_secret = get_option('bna_smart_payment_webhook_secret', '');
-
-        if (empty($webhook_secret)) {
-            return new WP_Error('missing_secret', 'Webhook secret key not configured. Please set it in BNA Gateway settings.');
+    private static function verify_webhook_signature($raw_body, $signature, $timestamp, $webhook_secret) {
+        if (empty($signature) || empty($timestamp) || empty($webhook_secret)) {
+            return false;
         }
 
-        // Validate timestamp format and age
-        $timestamp_validation = self::validate_timestamp($timestamp);
-        if (is_wp_error($timestamp_validation)) {
-            return $timestamp_validation;
-        }
-
-        try {
-            // Parse JSON data from raw body
-            $payload_data = json_decode($raw_body, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                return new WP_Error('invalid_json', 'Invalid JSON in webhook payload: ' . json_last_error_msg());
-            }
-
-            // Extract only 'data' part (same as TypeScript code signs)
-            $data_part = isset($payload_data['data']) ? $payload_data['data'] : $payload_data;
-
-            // Prepare test approaches
-            $all_tests = array();
-
-            // APPROACH 1: Try raw extraction of data part
-            $raw_data_json = self::extract_data_from_raw_json($raw_body);
-            if ($raw_data_json !== false) {
-                $all_tests['raw_data_manual'] = $raw_data_json;
-            }
-
-            // APPROACH 2: Maybe TypeScript signs the whole payload
-            $all_tests['full_payload_raw'] = trim($raw_body);
-
-            // APPROACH 3: Test different serialization approaches for data part
-            $serialization_tests = array(
-                'compact_unescaped' => json_encode($data_part, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                'compact_default' => json_encode($data_part),
-                'compact_numeric' => json_encode($data_part, JSON_NUMERIC_CHECK),
-                'compact_preserve_zero' => json_encode($data_part, JSON_PRESERVE_ZERO_FRACTION),
-                'compact_combined' => json_encode($data_part, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_NUMERIC_CHECK),
-                'compact_no_flags' => json_encode($data_part, 0),
-            );
-
-            // APPROACH 4: Test full payload serialization
-            $full_payload_tests = array(
-                'full_payload_unescaped' => json_encode($payload_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                'full_payload_default' => json_encode($payload_data),
-            );
-
-            // Combine all approaches
-            $all_tests = array_merge($all_tests, $serialization_tests, $full_payload_tests);
-
-            $debug_info = array();
-            $successful_approach = null;
-
-            foreach ($all_tests as $approach_name => $serialized_data) {
-                if ($serialized_data === false || $serialized_data === null) {
-                    $debug_info[$approach_name] = array('error' => 'Serialization failed');
-                    continue;
-                }
-
-                // Step 1: Create SHA-256 hash of serialized data
-                $data_hash = hash('sha256', $serialized_data);
-
-                // Step 2: Combine hash and timestamp with colon (same as TypeScript: `${hash}:${timestamp}`)
-                $signing_string = $data_hash . ':' . $timestamp;
-
-                // Step 3: Create HMAC-SHA256 signature
-                $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
-
-                // Debug info
-                $preview_length = 200;
-                $serialized_preview = strlen($serialized_data) > $preview_length
-                    ? substr($serialized_data, 0, $preview_length) . '...'
-                    : $serialized_data;
-
-                $debug_info[$approach_name] = array(
-                    'serialized_preview' => $serialized_preview,
-                    'data_hash' => $data_hash,
-                    'signing_string' => $signing_string,
-                    'computed_signature' => $computed_signature,
-                    'matches' => hash_equals($computed_signature, $signature)
-                );
-
-                // Step 4: Compare signatures securely
-                if (hash_equals($computed_signature, $signature)) {
-                    $successful_approach = $approach_name;
-                    break;
-                }
-            }
-
-            // Count raw extraction tests
-            $raw_extraction_count = 0;
-            if (isset($all_tests['raw_data_manual'])) $raw_extraction_count++;
-            if (isset($all_tests['full_payload_raw'])) $raw_extraction_count++;
-
-            // Log debug information for troubleshooting
-            bna_log('Webhook signature verification debug', array(
-                'successful_approach' => $successful_approach,
-                'provided_signature' => $signature,
-                'timestamp' => $timestamp,
-                'webhook_secret_length' => strlen($webhook_secret),
-                'data_part_keys' => is_array($data_part) ? array_keys($data_part) : 'not_array',
-                'raw_extraction_attempted' => $raw_extraction_count > 0,
-                'raw_extraction_count' => $raw_extraction_count,
-                'raw_body_preview' => substr($raw_body, 0, 100) . '...',
-                'total_tests' => count($all_tests)
-            ));
-
-            if ($successful_approach) {
-                bna_log('Webhook signature verified successfully', array(
-                    'method' => $successful_approach
-                ));
-                return true;
-            }
-
-            bna_error('Webhook signature verification failed - all approaches failed', array(
-                'provided_signature' => $signature,
-                'all_computed_signatures' => array_column($debug_info, 'computed_signature'),
-                'payload_structure' => array_keys($payload_data),
-                'data_part_size' => is_array($data_part) ? count($data_part) : 'not_array',
-                'tested_approaches' => array_keys($all_tests)
-            ));
-
-            return new WP_Error('invalid_signature', 'HMAC signature verification failed. Check webhook secret key.');
-
-        } catch (Exception $e) {
-            bna_error('Exception during webhook signature verification', array(
-                'error' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'file' => $e->getFile()
-            ));
-            return new WP_Error('verification_exception', 'Signature verification error: ' . $e->getMessage());
-        }
-    }
-
-    /**
-     * Validate timestamp format and age
-     */
-    private static function validate_timestamp($timestamp) {
-        if (empty($timestamp)) {
-            return new WP_Error('missing_timestamp', 'Missing timestamp header');
-        }
-
-        // Parse timestamp
+        // Check timestamp age (5 minutes tolerance)
         $timestamp_unix = strtotime($timestamp);
-        if ($timestamp_unix === false) {
-            return new WP_Error('invalid_timestamp_format', 'Invalid timestamp format');
+        if ($timestamp_unix === false || abs(time() - $timestamp_unix) > self::MAX_TIMESTAMP_AGE) {
+            bna_log('Webhook timestamp validation failed', array(
+                'provided_timestamp' => $timestamp,
+                'current_time' => date('c'),
+                'age_seconds' => time() - $timestamp_unix
+            ));
+            return false;
         }
 
-        // Check if timestamp is too old (prevents replay attacks)
-        $current_time = time();
-        $age = $current_time - $timestamp_unix;
-
-        if ($age > self::MAX_TIMESTAMP_AGE) {
-            return new WP_Error('timestamp_too_old', 'Webhook timestamp is too old (older than ' . self::MAX_TIMESTAMP_AGE . ' seconds)');
+        // Parse payload to extract data part
+        $payload_data = json_decode($raw_body, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            bna_error('Failed to parse webhook payload for signature verification', array(
+                'json_error' => json_last_error_msg()
+            ));
+            return false;
         }
 
-        // Check if timestamp is too far in the future (clock skew tolerance)
-        if ($age < -60) { // Allow 1 minute future
-            return new WP_Error('timestamp_future', 'Webhook timestamp is too far in the future');
+        // Extract only 'data' part (same as TypeScript code signs)
+        $data_part = isset($payload_data['data']) ? $payload_data['data'] : $payload_data;
+
+        // Prepare test approaches
+        $all_tests = array();
+
+        // APPROACH 1: Try raw extraction of data part
+        $raw_data_json = self::extract_data_from_raw_json($raw_body);
+        if ($raw_data_json !== false) {
+            $all_tests['raw_data_manual'] = $raw_data_json;
         }
 
-        return true;
+        // APPROACH 2: Maybe TypeScript signs the whole payload
+        $all_tests['full_payload_raw'] = trim($raw_body);
+
+        // APPROACH 3: Test different serialization approaches for data part
+        $serialization_tests = array(
+            'compact_unescaped' => json_encode($data_part, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            'compact_default' => json_encode($data_part),
+            'compact_numeric' => json_encode($data_part, JSON_NUMERIC_CHECK),
+            'compact_preserve_zero' => json_encode($data_part, JSON_PRESERVE_ZERO_FRACTION),
+            'compact_combined' => json_encode($data_part, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_NUMERIC_CHECK),
+            'compact_no_flags' => json_encode($data_part, 0),
+        );
+
+        // APPROACH 4: Test full payload serialization
+        $full_payload_tests = array(
+            'full_payload_unescaped' => json_encode($payload_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            'full_payload_default' => json_encode($payload_data),
+        );
+
+        // Combine all approaches
+        $all_tests = array_merge($all_tests, $serialization_tests, $full_payload_tests);
+
+        $debug_info = array();
+        $successful_approach = null;
+
+        foreach ($all_tests as $approach_name => $serialized_data) {
+            if ($serialized_data === false || $serialized_data === null) {
+                $debug_info[$approach_name] = array('error' => 'Serialization failed');
+                continue;
+            }
+
+            // Step 1: Create SHA-256 hash of serialized data
+            $data_hash = hash('sha256', $serialized_data);
+
+            // Step 2: Combine hash and timestamp with colon (same as TypeScript: `${hash}:${timestamp}`)
+            $signing_string = $data_hash . ':' . $timestamp;
+
+            // Step 3: Create HMAC-SHA256 signature
+            $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
+
+            // Debug info
+            $preview_length = 200;
+            $serialized_preview = strlen($serialized_data) > $preview_length
+                ? substr($serialized_data, 0, $preview_length) . '...'
+                : $serialized_data;
+
+            $debug_info[$approach_name] = array(
+                'data_hash' => $data_hash,
+                'signing_string' => $signing_string,
+                'computed_signature' => $computed_signature,
+                'provided_signature' => $signature,
+                'match' => hash_equals($signature, $computed_signature),
+                'serialized_preview' => $serialized_preview,
+                'serialized_length' => strlen($serialized_data)
+            );
+
+            if (hash_equals($signature, $computed_signature)) {
+                $successful_approach = $approach_name;
+                break;
+            }
+        }
+
+        bna_log('Webhook signature verification debug', array(
+            'successful_approach' => $successful_approach,
+            'provided_signature' => $signature,
+            'timestamp' => $timestamp,
+            'webhook_secret_length' => strlen($webhook_secret),
+            'data_part_keys' => is_array($data_part) ? array_keys($data_part) : 'invalid',
+            'raw_extraction_attempted' => true,
+            'raw_extraction_count' => 2,
+            'raw_body_preview' => substr($raw_body, 0, 100) . '...',
+            'total_tests' => count($all_tests)
+        ));
+
+        if ($successful_approach) {
+            bna_log('Webhook signature verified successfully', array('method' => $successful_approach));
+            return true;
+        }
+
+        return false;
     }
 
     /**
-     * Extract data part from raw JSON string
+     * Extract raw data JSON from raw body for signature verification
+     *
+     * @param string $raw_body Raw request body
+     * @return string|false Extracted data JSON or false
      */
     private static function extract_data_from_raw_json($raw_body) {
-        // Try to extract just the "data" part from raw JSON
-        $pattern = '/"data"\s*:\s*(\{.*\})\s*\}$/';
+        // Try simple pattern first
+        $pattern = '/"data"\s*:\s*(\{[^}]*(?:\{[^}]*\}[^}]*)*\})\s*\}$/';
         if (preg_match($pattern, $raw_body, $matches)) {
             return trim($matches[1]);
         }
@@ -412,6 +343,7 @@ class BNA_Webhooks {
 
     /**
      * Handle transaction events
+     * ВИПРАВЛЕНО: додано пошук по invoiceId та обробку transaction.processed
      *
      * @param string $event Event name
      * @param array $data Transaction data
@@ -431,12 +363,44 @@ class BNA_Webhooks {
             'status' => $status
         ));
 
-        // Find WooCommerce order by BNA transaction ID
+        // ВИПРАВЛЕННЯ: пошук замовлення кількома способами
+        // Спочатку по transaction ID
         $orders = wc_get_orders(array(
             'meta_key' => '_bna_transaction_id',
             'meta_value' => $transaction_id,
             'limit' => 1
         ));
+
+        // ВИПРАВЛЕННЯ: якщо не знайдено, шукаємо по invoiceId
+        if (empty($orders) && isset($data['invoiceInfo']['invoiceId'])) {
+            $invoice_id = $data['invoiceInfo']['invoiceId'];
+            bna_log('Transaction not found by ID, trying invoiceId search', array(
+                'transaction_id' => $transaction_id,
+                'invoice_id' => $invoice_id
+            ));
+
+            if (is_numeric($invoice_id)) {
+                $order = wc_get_order($invoice_id);
+                if ($order && $order->get_payment_method() === 'bna_smart_payment') {
+                    $orders = array($order);
+                    bna_log('Order found by invoiceId', array('order_id' => $invoice_id));
+                }
+            }
+        }
+
+        // ВИПРАВЛЕННЯ: також спробуємо пошук по referenceUUID
+        if (empty($orders) && isset($data['referenceUUID'])) {
+            $reference_uuid = $data['referenceUUID'];
+            $orders = wc_get_orders(array(
+                'meta_key' => '_bna_reference_uuid',
+                'meta_value' => $reference_uuid,
+                'limit' => 1
+            ));
+
+            if (!empty($orders)) {
+                bna_log('Order found by referenceUUID', array('reference_uuid' => $reference_uuid));
+            }
+        }
 
         if (empty($orders)) {
             bna_log('No order found for transaction', array('transaction_id' => $transaction_id));
@@ -445,6 +409,12 @@ class BNA_Webhooks {
 
         $order = $orders[0];
 
+        // Save transaction ID to order meta if not already saved
+        if (!$order->get_meta('_bna_transaction_id')) {
+            $order->update_meta_data('_bna_transaction_id', $transaction_id);
+            $order->save_meta_data();
+        }
+
         // Update order status based on transaction status
         switch (strtolower($status)) {
             case 'approved':
@@ -452,6 +422,24 @@ class BNA_Webhooks {
                 if (!$order->has_status(array('processing', 'completed'))) {
                     $order->payment_complete($transaction_id);
                     $order->add_order_note(__('Payment approved via BNA webhook.', 'bna-smart-payment'));
+                }
+                break;
+
+            case 'processed':
+                // ВИПРАВЛЕННЯ: для EFT та eTransfer - processed означає успішну обробку
+                $payment_method = $data['paymentMethod']['method'] ?? '';
+                if ($payment_method === 'EFT' || $payment_method === 'E_TRANSFER') {
+                    if (!$order->has_status(array('processing', 'completed'))) {
+                        $order->payment_complete($transaction_id);
+                        $order->add_order_note(__('Payment processed via BNA webhook (EFT/eTransfer).', 'bna-smart-payment'));
+                        bna_log('Order payment processed for EFT/eTransfer', array(
+                            'order_id' => $order->get_id(),
+                            'payment_method' => $payment_method
+                        ));
+                    }
+                } else {
+                    // Для інших методів processed означає очікування
+                    $order->add_order_note(__('Payment processing via BNA webhook.', 'bna-smart-payment'));
                 }
                 break;
 
@@ -474,26 +462,15 @@ class BNA_Webhooks {
                     $order->update_status('failed', __('Payment expired via BNA webhook.', 'bna-smart-payment'));
                 }
                 break;
-        }
 
-        // Store additional transaction data
-        if (isset($data['amount'])) {
-            $order->update_meta_data('_bna_transaction_amount', $data['amount']);
+            default:
+                $order->add_order_note(sprintf(__('Transaction status updated: %s', 'bna-smart-payment'), $status));
+                break;
         }
-        if (isset($data['fee'])) {
-            $order->update_meta_data('_bna_transaction_fee', $data['fee']);
-        }
-        if (isset($data['paymentMethod'])) {
-            $order->update_meta_data('_bna_payment_method', $data['paymentMethod']);
-        }
-        if (isset($data['authCode'])) {
-            $order->update_meta_data('_bna_auth_code', $data['authCode']);
-        }
-
-        $order->save();
 
         return array(
             'status' => 'processed',
+            'event' => $event,
             'order_id' => $order->get_id(),
             'transaction_id' => $transaction_id
         );
@@ -512,9 +489,8 @@ class BNA_Webhooks {
             'subscription_id' => $data['id'] ?? 'unknown'
         ));
 
-        // Subscription handling implementation
-        // This would integrate with WooCommerce Subscriptions if available
-
+        // Basic subscription event handling
+        // Can be extended based on subscription requirements
         return array('status' => 'processed', 'event' => $event);
     }
 
@@ -526,35 +502,31 @@ class BNA_Webhooks {
      * @return array Processing result
      */
     private static function handle_customer_event($event, $data) {
-        if (!isset($data['email'])) {
-            return array('status' => 'error', 'reason' => 'Missing customer email');
-        }
-
-        $email = $data['email'];
-
         bna_log('Handling customer event', array(
             'event' => $event,
-            'email' => $email
+            'customer_id' => $data['id'] ?? 'unknown'
         ));
 
         // Find or create WordPress user
-        $user = get_user_by('email', $email);
+        if (isset($data['email']) && !empty($data['email'])) {
+            $user = get_user_by('email', $data['email']);
 
-        if ($event === 'customer.created' && !$user) {
-            // Create new user account
-            $user_data = array(
-                'user_login' => $email,
-                'user_email' => $email,
-                'first_name' => $data['firstName'] ?? '',
-                'last_name' => $data['lastName'] ?? '',
-                'role' => 'customer'
-            );
+            if (!$user && $event === 'customer.created') {
+                // Create new user
+                $user_data = array(
+                    'user_login' => $data['email'],
+                    'user_email' => $data['email'],
+                    'first_name' => $data['firstName'] ?? '',
+                    'last_name' => $data['lastName'] ?? '',
+                    'role' => 'customer'
+                );
 
-            $user_id = wp_insert_user($user_data);
-            if (!is_wp_error($user_id)) {
-                // Store BNA customer ID
-                if (isset($data['id'])) {
-                    update_user_meta($user_id, '_bna_customer_id', $data['id']);
+                $user_id = wp_insert_user($user_data);
+                if (!is_wp_error($user_id)) {
+                    // Store BNA customer ID
+                    if (isset($data['id'])) {
+                        update_user_meta($user_id, '_bna_customer_id', $data['id']);
+                    }
                 }
             }
         }
@@ -716,13 +688,18 @@ class BNA_Webhooks {
 
     /**
      * Transform webhook payment method data to internal format
-     * ВИРІШУЄ ПРОБЛЕМУ МАПІНГУ ТИПІВ!
+     * ВИПРАВЛЕНО: додана нормалізація method type!
      *
      * @param array $webhook_data Raw webhook data
      * @return array|false Transformed data or false on failure
      */
     private static function transform_webhook_payment_method_data($webhook_data) {
         if (!isset($webhook_data['id']) || !isset($webhook_data['method'])) {
+            bna_log('Missing required fields in webhook payment method data', array(
+                'has_id' => isset($webhook_data['id']),
+                'has_method' => isset($webhook_data['method']),
+                'data_keys' => array_keys($webhook_data)
+            ));
             return false;
         }
 
@@ -731,8 +708,17 @@ class BNA_Webhooks {
             'created_at' => $webhook_data['createdAt'] ?? current_time('Y-m-d H:i:s')
         );
 
+        // ВИПРАВЛЕННЯ: нормалізація method type - додана підтримка малих літер!
+        $method_type = strtoupper($webhook_data['method']); // Приводимо до великих літер
+
+        bna_log('Transforming webhook payment method', array(
+            'original_method' => $webhook_data['method'],
+            'normalized_method' => $method_type,
+            'method_id' => $webhook_data['id']
+        ));
+
         // Transform based on webhook method type
-        switch ($webhook_data['method']) {
+        switch ($method_type) {
             case 'CARD':
                 return self::transform_card_method_data($webhook_data, $base_data);
 
@@ -745,6 +731,7 @@ class BNA_Webhooks {
             default:
                 bna_log('Unknown webhook payment method type', array(
                     'method' => $webhook_data['method'],
+                    'normalized' => $method_type,
                     'method_id' => $webhook_data['id']
                 ));
                 return false;

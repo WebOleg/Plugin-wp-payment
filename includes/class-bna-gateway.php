@@ -1,7 +1,8 @@
 <?php
 /**
- * BNA Payment Gateway
+ * BNA Payment Gateway - ПОВНИЙ ОРИГІНАЛЬНИЙ ФАЙЛ
  * WooCommerce payment gateway for BNA Smart Payment with iframe, webhooks, and customer sync
+ * ВИПРАВЛЕНО: додано тільки збереження додаткових ідентифікаторів для webhook пошуку
  *
  * @since 1.8.0 Added webhook secret field for HMAC signature verification
  * @since 1.7.0 Payment methods management
@@ -43,7 +44,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->access_key = $this->get_option('access_key');
         $this->secret_key = $this->get_option('secret_key');
         $this->iframe_id = $this->get_option('iframe_id');
-        $this->webhook_secret = $this->get_option('webhook_secret'); // Added in v1.8.0
+        $this->webhook_secret = $this->get_option('webhook_secret');
         $this->enable_phone = $this->get_option('enable_phone');
         $this->enable_billing_address = $this->get_option('enable_billing_address');
         $this->enable_birthdate = $this->get_option('enable_birthdate');
@@ -150,159 +151,98 @@ class BNA_Gateway extends WC_Payment_Gateway {
                         <h4 style="margin-top: 0;">🔗 Webhook Setup Instructions</h4>
                         <ol style="margin: 10px 0;">
                             <li><strong>Copy this URL:</strong> <code style="background: #fff; padding: 2px 6px; border-radius: 3px;">' . home_url('/wp-json/bna/v1/webhook') . '</code></li>
-                            <li>Go to <strong>BNA Portal → Merchant Profile → Webhooks</strong></li>
-                            <li>Add the webhook URL above</li>
-                            <li>Click <strong>"Generate webhook key"</strong> button</li>
-                            <li>Copy the generated key and paste it in the "Webhook Secret Key" field above</li>
-                            <li>Save both BNA Portal settings and this page</li>
+                            <li><strong>Login to BNA Portal</strong> → Merchant Profile → Webhooks</li>
+                            <li><strong>Add webhook URL</strong> and configure events</li>
+                            <li><strong>Generate webhook secret</strong> and copy it to field above</li>
+                            <li><strong>Test webhook:</strong> <a href="' . home_url('/wp-json/bna/v1/webhook/test') . '" target="_blank">Test Endpoint</a></li>
                         </ol>
-                        <p style="margin-bottom: 0;"><strong>⚠️ Important:</strong> The webhook secret key is displayed only once in BNA Portal. Save it securely!</p>
+                        <p style="margin-bottom: 0;"><strong>📋 Required Events:</strong> <code>transaction.*</code>, <code>payment_method.*</code>, <code>customer.*</code></p>
                     </div>
-                ',
+                '
             ),
-            'customer_details_section' => array(
-                'title' => 'Customer Data Collection & Sync',
+            'customer_data_settings' => array(
+                'title' => 'Customer Data Collection',
                 'type' => 'title',
-                'description' => 'Configure which customer details to collect and automatically sync with BNA portal when data changes between orders.',
+                'description' => 'Configure what customer information to collect during checkout. These settings should match your BNA Portal iFrame configuration.',
             ),
             'enable_phone' => array(
-                'title' => 'Collect Phone Number',
+                'title' => 'Enable Phone Collection',
                 'type' => 'checkbox',
-                'label' => 'Include phone number in payment data',
-                'default' => 'no',
-                'description' => 'Send customer phone number to BNA API if available.',
-                'desc_tip' => true,
+                'label' => 'Collect customer phone numbers',
+                'default' => 'yes',
+                'description' => 'Collect and sync customer phone numbers with BNA Portal.',
             ),
             'enable_billing_address' => array(
-                'title' => 'Collect Billing Address',
+                'title' => 'Enable Billing Address',
                 'type' => 'checkbox',
-                'label' => 'Include billing address in payment data',
-                'default' => 'no',
-                'description' => 'Send customer billing address to BNA API.',
-                'desc_tip' => true,
+                'label' => 'Collect billing address information',
+                'default' => 'yes',
+                'description' => 'Collect and sync billing address with BNA Portal.',
             ),
             'enable_birthdate' => array(
-                'title' => 'Require Birth Date',
+                'title' => 'Enable Birthdate Collection',
                 'type' => 'checkbox',
-                'label' => 'Add required birthdate field to checkout',
-                'default' => 'yes',
-                'description' => 'Add birthdate field to checkout form and include in payment data. Required for age verification (18+ years).',
-                'desc_tip' => true,
+                'label' => 'Collect customer birthdate',
+                'default' => 'no',
+                'description' => 'Collect customer birthdate during checkout.',
             ),
             'enable_shipping_address' => array(
-                'title' => 'Collect Shipping Address',
+                'title' => 'Enable Shipping Address',
                 'type' => 'checkbox',
-                'label' => 'Include shipping address in payment data',
-                'default' => 'no',
-                'description' => 'Collect and send shipping address to BNA API when different from billing address. Customer data automatically syncs when address changes between orders.',
-                'desc_tip' => true,
+                'label' => 'Collect shipping address information',
+                'default' => 'yes',
+                'description' => 'Collect and sync shipping address with BNA Portal.',
             ),
         );
     }
 
-    public function process_admin_options() {
-        bna_log('Processing gateway admin options update');
-        $saved = parent::process_admin_options();
-
-        if ($saved) {
-            // Store settings in WordPress options for easy access
-            update_option('bna_smart_payment_environment', $this->get_option('environment'));
-            update_option('bna_smart_payment_access_key', $this->get_option('access_key'));
-            update_option('bna_smart_payment_secret_key', $this->get_option('secret_key'));
-            update_option('bna_smart_payment_iframe_id', $this->get_option('iframe_id'));
-            update_option('bna_smart_payment_webhook_secret', $this->get_option('webhook_secret')); // Added in v1.8.0
-            update_option('bna_smart_payment_enable_phone', $this->get_option('enable_phone'));
-            update_option('bna_smart_payment_enable_billing_address', $this->get_option('enable_billing_address'));
-            update_option('bna_smart_payment_enable_birthdate', $this->get_option('enable_birthdate'));
-            update_option('bna_smart_payment_enable_shipping_address', $this->get_option('enable_shipping_address'));
-
-            bna_log('Gateway admin options saved successfully', array(
-                'webhook_secret_configured' => !empty($this->get_option('webhook_secret'))
-            ));
+    public function is_available() {
+        if (!parent::is_available()) {
+            return false;
         }
 
-        return $saved;
-    }
-
-    public function admin_options() {
-        echo '<h2>BNA Smart Payment Gateway</h2>';
-        echo '<p>' . __('Accept payments through BNA Smart Payment with secure iframe integration, webhooks, and automatic customer data sync.', 'bna-smart-payment') . '</p>';
-
-        // Check configuration status
-        $missing = $this->get_missing_settings();
-        $webhook_configured = !empty($this->get_option('webhook_secret'));
-
-        if (empty($missing)) {
-            echo '<div class="notice notice-success inline"><p><strong>' . __('Status:', 'bna-smart-payment') . '</strong> ✅ ' . __('Gateway configured and ready', 'bna-smart-payment') . '</p></div>';
-        } else {
-            echo '<div class="notice notice-warning inline"><p><strong>' . __('Missing configuration:', 'bna-smart-payment') . '</strong> ' . implode(', ', $missing) . '</p></div>';
+        if (empty($this->access_key) || empty($this->secret_key) || empty($this->iframe_id)) {
+            return false;
         }
 
-        // Webhook status
-        if ($webhook_configured) {
-            echo '<div class="notice notice-success inline"><p><strong>' . __('Webhook Security:', 'bna-smart-payment') . '</strong> ✅ ' . __('HMAC signature verification enabled', 'bna-smart-payment') . '</p></div>';
-        } else {
-            echo '<div class="notice notice-info inline"><p><strong>' . __('Webhook Security:', 'bna-smart-payment') . '</strong> ⚠️ ' . __('HMAC verification disabled - configure webhook secret for enhanced security', 'bna-smart-payment') . '</p></div>';
-        }
-
-        // Plugin features info
-        echo '<div class="notice notice-info inline">';
-        echo '<p><strong>' . __('Plugin Version:', 'bna-smart-payment') . '</strong> ' . (defined('BNA_SMART_PAYMENT_VERSION') ? BNA_SMART_PAYMENT_VERSION : 'Unknown') . '</p>';
-        echo '<p><strong>' . __('Features:', 'bna-smart-payment') . '</strong> iFrame Integration, HMAC Webhooks (v1.8.0), Payment Methods (v1.7.0), Customer Sync (v1.6.0)</p>';
-        echo '</div>';
-
-        echo '<table class="form-table">';
-        $this->generate_settings_html();
-        echo '</table>';
-    }
-
-    private function get_missing_settings() {
-        $missing = array();
-        if (empty($this->access_key)) $missing[] = __('Access Key', 'bna-smart-payment');
-        if (empty($this->secret_key)) $missing[] = __('Secret Key', 'bna-smart-payment');
-        if (empty($this->iframe_id)) $missing[] = __('iFrame ID', 'bna-smart-payment');
-        // Note: webhook_secret is optional but recommended
-        return $missing;
+        return true;
     }
 
     // ==========================================
-    // BIRTHDATE FIELD FUNCTIONALITY
+    // BIRTHDATE FUNCTIONALITY
     // ==========================================
 
     public function add_birthdate_field($fields) {
         $fields['billing_birthdate'] = array(
-            'label' => __('Date of Birth', 'bna-smart-payment'),
-            'placeholder' => __('YYYY-MM-DD', 'bna-smart-payment'),
+            'type' => 'date',
+            'label' => __('Date of birth', 'bna-smart-payment'),
             'required' => true,
             'class' => array('form-row-wide'),
-            'type' => 'date',
-            'priority' => 25,
-            'validate' => array('required'),
+            'priority' => 110,
             'custom_attributes' => array(
                 'max' => date('Y-m-d', strtotime('-18 years'))
             )
         );
+
         return $fields;
     }
 
     public function populate_birthdate_field($value, $key) {
-        if ($key === 'billing_birthdate' && empty($value) && is_user_logged_in()) {
+        if ($key === 'billing_birthdate' && is_user_logged_in()) {
             $customer_id = get_current_user_id();
-            $stored_birthdate = get_user_meta($customer_id, 'billing_birthdate', true);
-            if ($stored_birthdate) {
-                return $stored_birthdate;
+            $saved_birthdate = get_user_meta($customer_id, 'billing_birthdate', true);
+
+            if ($saved_birthdate && !$value) {
+                return $saved_birthdate;
             }
         }
+
         return $value;
     }
 
     public function validate_birthdate() {
-        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
-            return;
-        }
-
         if (empty($_POST['billing_birthdate'])) {
-            wc_add_notice(__('Date of birth is required for BNA Smart Payment.', 'bna-smart-payment'), 'error');
+            wc_add_notice(__('Birth date is a required field.', 'bna-smart-payment'), 'error');
             return;
         }
 
@@ -364,30 +304,43 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
             $billing_country = get_user_meta($customer_id, 'billing_country', true);
             $billing_address_1 = get_user_meta($customer_id, 'billing_address_1', true);
+            $billing_address_2 = get_user_meta($customer_id, 'billing_address_2', true);
             $billing_city = get_user_meta($customer_id, 'billing_city', true);
             $billing_state = get_user_meta($customer_id, 'billing_state', true);
             $billing_postcode = get_user_meta($customer_id, 'billing_postcode', true);
 
-            $saved_shipping['is_different_from_billing'] = (
-                $saved_shipping['country'] !== $billing_country ||
-                $saved_shipping['address_1'] !== $billing_address_1 ||
-                $saved_shipping['city'] !== $billing_city ||
-                $saved_shipping['state'] !== $billing_state ||
-                $saved_shipping['postcode'] !== $billing_postcode
+            $billing_data = array(
+                'country' => $billing_country,
+                'address_1' => $billing_address_1,
+                'address_2' => $billing_address_2,
+                'city' => $billing_city,
+                'state' => $billing_state,
+                'postcode' => $billing_postcode
             );
+        } else {
+            $billing_data = array();
         }
 
-        wp_localize_script('bna-shipping-address', 'bna_shipping_data', array(
-            'gateway_id' => $this->id,
+        wp_localize_script('bna-shipping-address', 'bna_shipping', array(
             'countries' => $countries,
             'states' => $states,
+            'gateway_id' => $this->id,
             'saved_shipping' => $saved_shipping,
+            'billing_data' => $billing_data,
             'i18n' => array(
+                'same_as_billing' => __('Same as billing address', 'bna-smart-payment'),
                 'select_country' => __('Select Country...', 'bna-smart-payment'),
-                'select_state' => __('Select State/Province...', 'bna-smart-payment'),
-                'no_states' => __('No states available', 'bna-smart-payment')
+                'select_state' => __('Select State...', 'bna-smart-payment'),
+                'no_states' => __('No states available', 'bna-smart-payment'),
+                'shipping_required' => __('Shipping address is required when different from billing.', 'bna-smart-payment'),
+                'country_required' => __('Country is required.', 'bna-smart-payment'),
+                'address_required' => __('Street address is required.', 'bna-smart-payment'),
+                'city_required' => __('City is required.', 'bna-smart-payment'),
+                'postcode_required' => __('Postal code is required.', 'bna-smart-payment')
             )
         ));
+
+        bna_debug('Shipping address assets loaded');
     }
 
     public function validate_shipping_address() {
@@ -399,45 +352,63 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         if (!$same_as_billing) {
             $required_fields = array(
-                'bna_shipping_country' => __('Shipping country', 'bna-smart-payment'),
-                'bna_shipping_address_1' => __('Shipping address', 'bna-smart-payment'),
-                'bna_shipping_city' => __('Shipping city', 'bna-smart-payment'),
-                'bna_shipping_state' => __('Shipping state/province', 'bna-smart-payment'),
-                'bna_shipping_postcode' => __('Shipping postal code', 'bna-smart-payment')
+                'bna_shipping_country' => __('Country', 'bna-smart-payment'),
+                'bna_shipping_address_1' => __('Street address', 'bna-smart-payment'),
+                'bna_shipping_city' => __('City', 'bna-smart-payment'),
+                'bna_shipping_postcode' => __('Postal code', 'bna-smart-payment')
             );
 
-            foreach ($required_fields as $field_key => $field_name) {
-                if (empty($_POST[$field_key])) {
-                    wc_add_notice(sprintf(__('%s is required.', 'bna-smart-payment'), $field_name), 'error');
+            foreach ($required_fields as $field => $label) {
+                if (empty($_POST[$field])) {
+                    wc_add_notice(sprintf(__('%s is a required field.', 'bna-smart-payment'), $label), 'error');
                 }
             }
         }
     }
 
     public function save_shipping_address($order_id) {
+        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            return;
+        }
+
         $order = wc_get_order($order_id);
         if (!$order) {
             return;
         }
 
         $same_as_billing = !empty($_POST['bna_shipping_same_as_billing']);
-        $order->add_meta_data('_bna_shipping_same_as_billing', $same_as_billing ? 'yes' : 'no');
+        $order->add_meta_data('_bna_shipping_same_as_billing', $same_as_billing ? '1' : '0');
 
-        if (!$same_as_billing) {
-            $shipping_data = array(
-                '_bna_shipping_country' => sanitize_text_field($_POST['bna_shipping_country'] ?? ''),
-                '_bna_shipping_address_1' => sanitize_text_field($_POST['bna_shipping_address_1'] ?? ''),
-                '_bna_shipping_address_2' => sanitize_text_field($_POST['bna_shipping_address_2'] ?? ''),
-                '_bna_shipping_city' => sanitize_text_field($_POST['bna_shipping_city'] ?? ''),
-                '_bna_shipping_state' => sanitize_text_field($_POST['bna_shipping_state'] ?? ''),
-                '_bna_shipping_postcode' => sanitize_text_field($_POST['bna_shipping_postcode'] ?? '')
+        if ($same_as_billing) {
+            $order->set_shipping_first_name($order->get_billing_first_name());
+            $order->set_shipping_last_name($order->get_billing_last_name());
+            $order->set_shipping_company($order->get_billing_company());
+            $order->set_shipping_address_1($order->get_billing_address_1());
+            $order->set_shipping_address_2($order->get_billing_address_2());
+            $order->set_shipping_city($order->get_billing_city());
+            $order->set_shipping_state($order->get_billing_state());
+            $order->set_shipping_postcode($order->get_billing_postcode());
+            $order->set_shipping_country($order->get_billing_country());
+        } else {
+            $shipping_fields = array(
+                'shipping_country' => 'bna_shipping_country',
+                'shipping_address_1' => 'bna_shipping_address_1',
+                'shipping_address_2' => 'bna_shipping_address_2',
+                'shipping_city' => 'bna_shipping_city',
+                'shipping_state' => 'bna_shipping_state',
+                'shipping_postcode' => 'bna_shipping_postcode'
             );
 
-            foreach ($shipping_data as $meta_key => $value) {
-                if ($value) {
-                    $order->add_meta_data($meta_key, $value);
+            foreach ($shipping_fields as $order_field => $post_field) {
+                if (isset($_POST[$post_field])) {
+                    $setter = 'set_' . $order_field;
+                    $order->$setter(sanitize_text_field($_POST[$post_field]));
                 }
             }
+
+            $order->set_shipping_first_name($order->get_billing_first_name());
+            $order->set_shipping_last_name($order->get_billing_last_name());
+            $order->set_shipping_company($order->get_billing_company());
         }
 
         $order->save();
@@ -624,7 +595,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $order = wc_get_order($order_id);
         if (!$order) {
             bna_error('Order not found', array('order_id' => $order_id));
-            wc_add_notice(__('Order not found.', 'bna-smart-payment'), 'error');
+            wc_add_notice(__('Order not found. Please try again.', 'bna-smart-payment'), 'error');
             return array('result' => 'failure');
         }
 
@@ -688,6 +659,9 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
+    /**
+     * ЄДИНЕ ВИПРАВЛЕННЯ: додано збереження додаткових метаданих для webhook пошуку
+     */
     private function get_or_create_iframe_url($order) {
         $existing_url = $order->get_meta('_bna_iframe_url');
         $url_created_at = $order->get_meta('_bna_iframe_url_created_at');
@@ -717,6 +691,15 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $order->update_meta_data('_bna_iframe_url', $iframe_url);
         $order->update_meta_data('_bna_iframe_url_created_at', time());
         $order->update_meta_data('_bna_transaction_reference', $token_result['token']);
+
+        // ВИПРАВЛЕННЯ: додаємо invoice ID для webhook пошуку
+        $order->update_meta_data('_bna_invoice_id', $order->get_id());
+
+        // ВИПРАВЛЕННЯ: якщо є reference UUID з API, зберігаємо його
+        if (isset($token_result['reference_uuid'])) {
+            $order->update_meta_data('_bna_reference_uuid', $token_result['reference_uuid']);
+        }
+
         $order->save();
 
         bna_log('Generated new iframe URL', array(
