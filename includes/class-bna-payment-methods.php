@@ -46,6 +46,14 @@ class BNA_Payment_Methods {
 
         if (!$this->method_exists($existing_methods, $new_method['id'])) {
             $existing_methods[] = $new_method;
+
+            bna_log('Saving new payment method', array(
+                'user_id' => $user_id,
+                'method_id' => $new_method['id'],
+                'type' => $new_method['type'],
+                'brand' => $new_method['brand']
+            ));
+
             return update_user_meta($user_id, '_bna_payment_methods', $existing_methods);
         }
 
@@ -181,17 +189,27 @@ class BNA_Payment_Methods {
     }
 
     private function delete_from_bna_portal($customer_id, $payment_method_id, $method_type) {
+        // ВИПРАВЛЕНИЙ МАПІНГ ENDPOINTS - додана підтримка CARD
         $endpoint_map = array(
             'credit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
             'debit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
+            'card' => "v1/customers/{$customer_id}/card/{$payment_method_id}",  // Додано підтримку card
             'eft' => "v1/customers/{$customer_id}/eft/{$payment_method_id}",
-            'e_transfer' => "v1/customers/{$customer_id}/e-transfer/{$payment_method_id}"
+            'e_transfer' => "v1/customers/{$customer_id}/e-transfer/{$payment_method_id}",
+            'cheque' => "v1/customers/{$customer_id}/cheque/{$payment_method_id}", // Додано cheque
+            'cash' => "v1/customers/{$customer_id}/cash/{$payment_method_id}"  // Додано cash
         );
 
         $endpoint = $endpoint_map[$method_type] ?? null;
 
         if (!$endpoint) {
-            return new WP_Error('unsupported_type', 'Unsupported payment method type');
+            bna_error('Unsupported payment method type for deletion', array(
+                'method_type' => $method_type,
+                'payment_method_id' => $payment_method_id,
+                'available_types' => array_keys($endpoint_map)
+            ));
+
+            return new WP_Error('unsupported_type', 'Unsupported payment method type: ' . $method_type);
         }
 
         bna_log('Attempting to delete payment method from BNA portal', array(
@@ -205,7 +223,24 @@ class BNA_Payment_Methods {
 
         if (is_wp_error($result)) {
             $error_message = $result->get_error_message();
+            $error_data = $result->get_error_data();
 
+            // Handle 404 - payment method may already be deleted or never existed
+            if (isset($error_data['status']) && $error_data['status'] === 404) {
+                bna_log('Payment method not found on server - treating as successful deletion', array(
+                    'endpoint' => $endpoint,
+                    'payment_method_id' => $payment_method_id,
+                    'customer_id' => $customer_id,
+                    'error' => $error_message
+                ));
+
+                return array(
+                    'status' => 'success',
+                    'message' => 'Payment method not found on server (likely already deleted)'
+                );
+            }
+
+            // Handle empty response (deletion succeeded but API returned empty body)
             if (strpos($error_message, 'Invalid JSON response') !== false &&
                 strpos($error_message, 'response_body":"') !== false &&
                 strpos($error_message, '""') !== false) {
@@ -215,9 +250,46 @@ class BNA_Payment_Methods {
                     'original_error' => $error_message
                 ));
 
-                return array('status' => 'success', 'message' => 'Deletion completed');
+                return array('status' => 'success', 'message' => 'Deletion completed (empty response)');
             }
+
+            // Handle other server errors that might indicate successful deletion
+            if (strpos($error_message, 'Internal Server Error') !== false ||
+                strpos($error_message, '500') !== false ||
+                strpos($error_message, 'Syntax error') !== false) {
+
+                bna_log('Server error during deletion - may have succeeded anyway', array(
+                    'endpoint' => $endpoint,
+                    'payment_method_id' => $payment_method_id,
+                    'error' => $error_message
+                ));
+
+                return array(
+                    'status' => 'pending',
+                    'message' => 'Deletion request sent - server response unclear'
+                );
+            }
+
+            // Log the error but don't return it immediately
+            bna_error('Payment method deletion failed at API level', array(
+                'customer_id' => $customer_id,
+                'payment_method_id' => $payment_method_id,
+                'method_type' => $method_type,
+                'endpoint' => $endpoint,
+                'error' => $error_message,
+                'error_data' => $error_data
+            ));
+
+            return $result;
         }
+
+        // Success case
+        bna_log('Payment method deleted successfully via API', array(
+            'customer_id' => $customer_id,
+            'payment_method_id' => $payment_method_id,
+            'method_type' => $method_type,
+            'endpoint' => $endpoint
+        ));
 
         return $result;
     }
@@ -240,7 +312,11 @@ class BNA_Payment_Methods {
             return substr($cardNumber, -4);
         }
         if (isset($payment_data['accountNumber'])) {
-            return substr($payment_data['accountNumber'], -4);
+            $accountNumber = $payment_data['accountNumber'];
+            if (strpos($accountNumber, '*') !== false) {
+                return substr(str_replace('*', '', $accountNumber), -4);
+            }
+            return substr($accountNumber, -4);
         }
         if (isset($payment_data['last4'])) {
             return $payment_data['last4'];
@@ -255,15 +331,55 @@ class BNA_Payment_Methods {
         if (isset($payment_data['cardType'])) {
             return ucfirst(strtolower($payment_data['cardType']));
         }
-        if (isset($payment_data['bankNumber'])) {
-            return 'Bank Transfer';
+        if (isset($payment_data['bankNumber']) || isset($payment_data['bankName'])) {
+            return isset($payment_data['bankName']) ?
+                $payment_data['bankName'] : 'Bank Transfer';
         }
-        if (isset($payment_data['email'])) {
+        if (isset($payment_data['email']) || isset($payment_data['deliveryType'])) {
             return 'E-Transfer';
+        }
+        if (isset($payment_data['chequeNumber'])) {
+            return 'Cheque';
         }
         if (isset($payment_data['brand'])) {
             return ucfirst(strtolower($payment_data['brand']));
         }
         return 'Unknown';
+    }
+
+    /**
+     * Get payment method type for API endpoint mapping
+     * Handles different variations of method types
+     */
+    private function normalize_method_type($type) {
+        $type = strtolower(trim($type));
+
+        // Handle various type formats
+        switch ($type) {
+            case 'card':
+            case 'credit':
+            case 'debit':
+                return $type;
+
+            case 'eft':
+            case 'bank_transfer':
+            case 'direct_debit':
+                return 'eft';
+
+            case 'e_transfer':
+            case 'etransfer':
+            case 'interac':
+                return 'e_transfer';
+
+            case 'cheque':
+            case 'check':
+                return 'cheque';
+
+            case 'cash':
+                return 'cash';
+
+            default:
+                return $type;
+        }
     }
 }

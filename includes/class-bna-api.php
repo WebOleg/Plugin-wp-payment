@@ -1097,6 +1097,7 @@ class BNA_API {
             return new WP_Error('missing_credentials', 'API credentials are not configured');
         }
 
+        $request_start_time = microtime(true);
         $url = $this->get_api_url() . '/' . ltrim($endpoint, '/');
         $args = array(
             'method' => strtoupper($method),
@@ -1114,57 +1115,142 @@ class BNA_API {
             $url = add_query_arg($data, $url);
         }
 
-        bna_debug('Making API request', array(
-            'method' => $method,
-            'endpoint' => $endpoint,
+        // ДЕТАЛЬНЕ ЛОГУВАННЯ ЗАПИТУ
+        $safe_headers = $args['headers'];
+        // Приховати sensitive дані в Authorization header для безпеки
+        if (isset($safe_headers['Authorization'])) {
+            $auth_parts = explode(' ', $safe_headers['Authorization']);
+            if (count($auth_parts) === 2 && $auth_parts[0] === 'Basic') {
+                $decoded = base64_decode($auth_parts[1]);
+                $creds = explode(':', $decoded);
+                $safe_access_key = isset($creds[0]) ? substr($creds[0], 0, 4) . '***' : 'unknown';
+                $safe_headers['Authorization'] = "Basic [access_key: {$safe_access_key}, secret_key: ***]";
+            }
+        }
+
+        bna_log('HTTP Request Details', array(
+            'method' => strtoupper($method),
             'url' => $url,
-            'has_data' => !empty($data)
+            'endpoint' => $endpoint,
+            'headers' => $safe_headers,
+            'has_body' => isset($args['body']),
+            'body_size' => isset($args['body']) ? strlen($args['body']) : 0,
+            'timeout' => $args['timeout']
         ));
 
-        $response = wp_remote_request($url, $args);
+        // Логування тіла запиту (обмежено для безпеки)
+        if (isset($args['body'])) {
+            $body_preview = strlen($args['body']) > 500 ?
+                substr($args['body'], 0, 500) . '...[truncated]' :
+                $args['body'];
 
+            bna_debug('Request Body Content', array(
+                'content_type' => $args['headers']['Content-Type'] ?? 'not_set',
+                'body_preview' => $body_preview,
+                'full_length' => strlen($args['body'])
+            ));
+        }
+
+        // Виконання запиту
+        $response = wp_remote_request($url, $args);
+        $request_duration = round((microtime(true) - $request_start_time) * 1000, 2);
+
+        // ДЕТАЛЬНЕ ЛОГУВАННЯ ВІДПОВІДІ
         if (is_wp_error($response)) {
-            bna_error('HTTP request failed', array(
+            bna_error('HTTP Request Failed', array(
                 'endpoint' => $endpoint,
-                'error' => $response->get_error_message()
+                'method' => $method,
+                'url' => $url,
+                'duration_ms' => $request_duration,
+                'wp_error_code' => $response->get_error_code(),
+                'wp_error_message' => $response->get_error_message(),
+                'wp_error_data' => $response->get_error_data()
             ));
             return $response;
         }
 
+        // Отримання деталей відповіді
         $response_code = wp_remote_retrieve_response_code($response);
+        $response_headers = wp_remote_retrieve_headers($response);
         $response_body = wp_remote_retrieve_body($response);
-        $parsed_response = json_decode($response_body, true);
+        $response_message = wp_remote_retrieve_response_message($response);
 
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            bna_error('Invalid JSON response', array(
+        // Логування HTTP відповіді
+        bna_log('HTTP Response Details', array(
+            'endpoint' => $endpoint,
+            'method' => $method,
+            'duration_ms' => $request_duration,
+            'status_code' => $response_code,
+            'status_message' => $response_message,
+            'response_headers' => is_array($response_headers) ? $response_headers->getAll() : $response_headers,
+            'body_size' => strlen($response_body),
+            'content_type' => wp_remote_retrieve_header($response, 'content-type')
+        ));
+
+        // Логування тіла відповіді
+        $body_preview = strlen($response_body) > 1000 ?
+            substr($response_body, 0, 1000) . '...[truncated]' :
+            $response_body;
+
+        bna_debug('Response Body Content', array(
+            'status_code' => $response_code,
+            'body_preview' => $body_preview,
+            'full_length' => strlen($response_body),
+            'is_empty' => empty($response_body)
+        ));
+
+        // Парсування JSON
+        $parsed_response = json_decode($response_body, true);
+        $json_error = json_last_error();
+
+        if ($json_error !== JSON_ERROR_NONE) {
+            bna_error('Invalid JSON Response', array(
                 'endpoint' => $endpoint,
-                'json_error' => json_last_error_msg(),
-                'response_body' => substr($response_body, 0, 500)
+                'status_code' => $response_code,
+                'json_error_code' => $json_error,
+                'json_error_message' => json_last_error_msg(),
+                'raw_response' => $body_preview,
+                'response_length' => strlen($response_body)
             ));
-            return new WP_Error('invalid_response', 'Invalid JSON response');
+
+            return new WP_Error('invalid_response', 'Invalid JSON response: ' . json_last_error_msg(), array(
+                'status' => $response_code,
+                'raw_response' => $response_body
+            ));
         }
 
+        // Обробка помилкових статусів
         if ($response_code >= 400) {
             $error_message = isset($parsed_response['message'])
                 ? $parsed_response['message']
                 : "API request failed with status $response_code";
 
-            bna_error('API error response', array(
+            bna_error('API Error Response', array(
                 'endpoint' => $endpoint,
+                'method' => $method,
+                'url' => $url,
                 'status_code' => $response_code,
+                'status_message' => $response_message,
                 'error_message' => $error_message,
-                'response' => $parsed_response
+                'error_code' => $parsed_response['errorCode'] ?? 'unknown',
+                'full_response' => $parsed_response,
+                'duration_ms' => $request_duration
             ));
 
             return new WP_Error('api_error', $error_message, array(
                 'status' => $response_code,
-                'response' => $parsed_response
+                'response' => $parsed_response,
+                'error_code' => $parsed_response['errorCode'] ?? null
             ));
         }
 
-        bna_debug('API request successful', array(
+        // Успішна відповідь
+        bna_log('API Request Successful', array(
             'endpoint' => $endpoint,
-            'status_code' => $response_code
+            'method' => $method,
+            'status_code' => $response_code,
+            'duration_ms' => $request_duration,
+            'response_keys' => is_array($parsed_response) ? array_keys($parsed_response) : 'not_array'
         ));
 
         return $parsed_response;
