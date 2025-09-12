@@ -101,7 +101,7 @@ class BNA_API {
 
         $method_type = strtolower($method_type);
         $endpoint = $endpoint_map[$method_type] ?? null;
-        
+
         if (!$endpoint) {
             return new WP_Error('unsupported_type', 'Unsupported payment method type: ' . $method_type);
         }
@@ -203,10 +203,11 @@ class BNA_API {
             $errors[] = 'Invalid email format';
         }
 
-        if (isset($customer_data['address']['country'])) {
-            $country = $customer_data['address']['country'];
+        // ВИПРАВЛЕНО: перевірка billingAddress замість address
+        if (isset($customer_data['billingAddress']['country'])) {
+            $country = $customer_data['billingAddress']['country'];
             if (!$this->is_valid_country_code($country)) {
-                $errors[] = "Invalid country code in address: {$country}";
+                $errors[] = "Invalid country code in billing address: {$country}";
             }
         }
 
@@ -248,9 +249,10 @@ class BNA_API {
 
             $relevant_data = array();
 
+            // ОНОВЛЕНО: включаємо billingAddress замість address
             $fields_to_check = array(
                 'firstName', 'lastName', 'email', 'phoneCode', 'phoneNumber',
-                'birthDate', 'address', 'shippingAddress', 'type'
+                'birthDate', 'billingAddress', 'shippingAddress', 'type'
             );
 
             foreach ($fields_to_check as $field) {
@@ -347,14 +349,16 @@ class BNA_API {
                 return $customer_result;
             }
 
-            $checkout_data = $this->create_checkout_payload($order, $customer_result);
+            $payload = $this->create_checkout_payload($order, $customer_result);
 
-            if (!$checkout_data) {
-                bna_error('Failed to create checkout payload', array('order_id' => $order->get_id()));
+            if (!$payload) {
+                bna_error('Failed to create checkout payload', array(
+                    'order_id' => $order->get_id()
+                ));
                 return new WP_Error('payload_error', 'Failed to create checkout payload');
             }
 
-            $response = $this->make_request('v1/checkout', 'POST', $checkout_data);
+            $response = $this->make_request('v1/checkout', 'POST', $payload);
 
             if (is_wp_error($response)) {
                 bna_error('Checkout token generation failed', array(
@@ -364,33 +368,25 @@ class BNA_API {
                 return $response;
             }
 
-            if (!isset($response['token'])) {
-                bna_error('Invalid checkout response - no token', array('order_id' => $order->get_id()));
-                return new WP_Error('invalid_response', 'Token not found in response');
+            if (empty($response['token'])) {
+                bna_error('Token not found in response', array(
+                    'order_id' => $order->get_id(),
+                    'response_keys' => array_keys($response)
+                ));
+                return new WP_Error('missing_token', 'Token not found in API response');
             }
 
-            if (!empty($customer_result['customer_id'])) {
-                $order->add_meta_data('_bna_customer_id', $customer_result['customer_id']);
-
-                $customer_data = $this->build_customer_info($order);
-                if ($customer_data) {
-                    $data_hash = $this->generate_customer_data_hash($customer_data);
-                    $order->update_meta_data('_bna_customer_data_hash', $data_hash);
-                }
-
-                if (is_user_logged_in()) {
-                    $wp_customer_id = $order->get_customer_id();
-                    if ($wp_customer_id) {
-                        update_user_meta($wp_customer_id, '_bna_customer_id', $customer_result['customer_id']);
-                    }
-                }
-
+            // Store customer data hash for future comparisons
+            $customer_info = $this->build_customer_info($order);
+            if ($customer_info) {
+                $current_hash = $this->generate_customer_data_hash($customer_info);
+                $order->update_meta_data('_bna_customer_data_hash', $current_hash);
                 $order->save();
             }
 
             bna_log('Checkout token generated successfully', array(
                 'order_id' => $order->get_id(),
-                'customer_id' => $customer_result['customer_id'] ?? 'new',
+                'customer_id' => $customer_result['customer_id'] ?? 'unknown',
                 'was_updated' => $customer_result['was_updated'] ?? false,
                 'token_length' => strlen($response['token'])
             ));
@@ -520,142 +516,6 @@ class BNA_API {
         }
     }
 
-    private function create_new_customer($customer_data, $order = null) {
-        try {
-            $validation_result = $this->validate_customer_data($customer_data);
-            if (is_wp_error($validation_result)) {
-                return $validation_result;
-            }
-
-            bna_debug('Creating new customer', array(
-                'customer_email' => $customer_data['email']
-            ));
-
-            $response = $this->make_request('v1/customers', 'POST', $customer_data);
-
-            if (is_wp_error($response)) {
-                $error_message = $response->get_error_message();
-                $error_data = $response->get_error_data();
-
-                if ($this->is_customer_exists_error($error_message, $error_data)) {
-                    bna_debug('Customer exists, searching', array(
-                        'customer_email' => $customer_data['email']
-                    ));
-                    return $this->find_existing_customer($customer_data['email'], $order);
-                }
-
-                return $response;
-            }
-
-            if (empty($response['id'])) {
-                return new WP_Error('invalid_customer_response', 'Customer ID not found in response');
-            }
-
-            bna_log('New customer created', array(
-                'customer_id' => $response['id'],
-                'customer_email' => $customer_data['email']
-            ));
-
-            if ($order) {
-                $data_hash = $this->generate_customer_data_hash($customer_data);
-                $order->update_meta_data('_bna_customer_data_hash', $data_hash);
-
-                if (is_user_logged_in()) {
-                    $wp_customer_id = $order->get_customer_id();
-                    if ($wp_customer_id) {
-                        update_user_meta($wp_customer_id, '_bna_customer_id', $response['id']);
-
-                        bna_log('Saved BNA customer ID to user meta', array(
-                            'wp_customer_id' => $wp_customer_id,
-                            'bna_customer_id' => $response['id']
-                        ));
-                    }
-                }
-
-                $order->save();
-            }
-
-            return array(
-                'customer_id' => $response['id'],
-                'is_existing' => false
-            );
-
-        } catch (Exception $e) {
-            bna_error('Exception in create_new_customer', array(
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'customer_email' => $customer_data['email'] ?? 'unknown'
-            ));
-
-            return new WP_Error('create_customer_exception', 'Customer creation failed: ' . $e->getMessage());
-        }
-    }
-
-    private function is_customer_exists_error($error_message, $error_data) {
-        if (isset($error_data['status']) && ($error_data['status'] === 400 || $error_data['status'] === 409)) {
-            $exists_patterns = array(
-                'customer already exist',
-                'customer already exists',
-                'email already exists',
-                'duplicate',
-                'already registered'
-            );
-
-            $error_lower = strtolower($error_message);
-            foreach ($exists_patterns as $pattern) {
-                if (stripos($error_lower, $pattern) !== false) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private function find_existing_customer($email, $order = null) {
-        try {
-            $search_params = array('email' => $email, 'limit' => 1);
-            $response = $this->make_request('v1/customers', 'GET', $search_params);
-
-            if (is_wp_error($response)) {
-                return $response;
-            }
-
-            $customers = isset($response['data']) ? $response['data'] : array();
-
-            foreach ($customers as $customer) {
-                if (isset($customer['email'], $customer['id']) && $customer['email'] === $email) {
-
-                    if ($order && is_user_logged_in()) {
-                        $wp_customer_id = $order->get_customer_id();
-                        if ($wp_customer_id) {
-                            update_user_meta($wp_customer_id, '_bna_customer_id', $customer['id']);
-
-                            bna_log('Saved found BNA customer ID to user meta', array(
-                                'wp_customer_id' => $wp_customer_id,
-                                'bna_customer_id' => $customer['id']
-                            ));
-                        }
-                    }
-
-                    return array(
-                        'customer_id' => $customer['id'],
-                        'is_existing' => true
-                    );
-                }
-            }
-
-            return new WP_Error('customer_search_failed', 'Customer exists but could not be located');
-
-        } catch (Exception $e) {
-            bna_error('Exception in find_existing_customer', array(
-                'email' => $email,
-                'exception' => $e->getMessage()
-            ));
-
-            return new WP_Error('find_customer_exception', 'Customer search failed: ' . $e->getMessage());
-        }
-    }
-
     private function create_checkout_payload($order, $customer_result) {
         $payload = array(
             'iframeId' => get_option('bna_smart_payment_iframe_id'),
@@ -681,6 +541,7 @@ class BNA_API {
         return $payload;
     }
 
+    // ГОЛОВНЕ ВИПРАВЛЕННЯ: оновлена структура для build_customer_info
     private function build_customer_info($order) {
         try {
             bna_debug('Building customer info for order', array(
@@ -727,7 +588,11 @@ class BNA_API {
                 }
             }
 
-            $customer_info['address'] = $this->build_address($order);
+            // ВИПРАВЛЕНО: використовуємо billingAddress замість address
+            $billing_address = $this->build_address($order);
+            if (!empty($billing_address)) {
+                $customer_info['billingAddress'] = $billing_address;
+            }
 
             $shipping_address = $this->build_shipping_address($order);
             if ($shipping_address) {
@@ -735,8 +600,9 @@ class BNA_API {
             }
 
             $has_phone = isset($customer_info['phoneCode']) && isset($customer_info['phoneNumber']);
-            $address_street = $customer_info['address']['streetName'] ?? 'unknown';
-            $address_number = $customer_info['address']['streetNumber'] ?? 'unknown';
+            // ВИПРАВЛЕНО: оновлені посилання на billingAddress
+            $address_street = $customer_info['billingAddress']['streetName'] ?? 'unknown';
+            $address_number = $customer_info['billingAddress']['streetNumber'] ?? 'unknown';
 
             bna_log('Customer info built successfully', array(
                 'fields_count' => count($customer_info),
@@ -799,55 +665,46 @@ class BNA_API {
     }
 
     private function determine_phone_country_code($digits_only, $billing_country) {
-        $length = strlen($digits_only);
-
         bna_debug('Determining phone country code', array(
             'digits_only' => $digits_only,
-            'length' => $length,
+            'length' => strlen($digits_only),
             'billing_country' => $billing_country,
             'first_digit' => substr($digits_only, 0, 1),
             'first_three' => substr($digits_only, 0, 3)
         ));
 
-        if ($length === 10 && substr($digits_only, 0, 1) === '0') {
-            $ukrainian_prefixes = array('093', '094', '095', '096', '097', '098', '099', '063', '066', '067', '068', '091', '092', '050', '090');
-            $prefix = substr($digits_only, 0, 3);
-
-            if (in_array($prefix, $ukrainian_prefixes)) {
-                bna_log('Detected Ukrainian mobile number', array(
-                    'prefix' => $prefix,
-                    'number' => $digits_only
-                ));
-                return '+380';
-            }
+        // Ukrainian special cases
+        if ($billing_country === 'UA' || substr($digits_only, 0, 3) === '380') {
+            bna_log('Detected Ukrainian context');
+            return '+380';
         }
 
-        if ($length === 12 && substr($digits_only, 0, 3) === '380') {
-            bna_log('Detected Ukrainian international format', array(
+        $ukrainian_prefixes = array('050', '063', '066', '067', '068', '073', '093', '095', '096', '097', '098', '099');
+        $first_three = substr($digits_only, 0, 3);
+        if (in_array($first_three, $ukrainian_prefixes)) {
+            bna_log('Detected Ukrainian mobile number', array(
+                'prefix' => $first_three,
                 'number' => $digits_only
             ));
             return '+380';
         }
 
-        if ($length === 11 && substr($digits_only, 0, 1) === '1') {
+        // Canadian/US context
+        if (in_array($billing_country, array('CA', 'US'))) {
             return '+1';
         }
 
-        if ($length === 10) {
-            if (in_array($billing_country, array('US', 'CA'))) {
-                return '+1';
-            }
+        // Check if number already includes country code
+        if (substr($digits_only, 0, 1) === '1' && strlen($digits_only) === 11) {
+            return '+1';
         }
 
-        if (isset(self::PHONE_COUNTRY_CODES[$billing_country])) {
-            bna_log('Using billing country phone code', array(
-                'country' => $billing_country,
-                'phone_code' => self::PHONE_COUNTRY_CODES[$billing_country]
-            ));
-            return self::PHONE_COUNTRY_CODES[$billing_country];
+        if (substr($digits_only, 0, 3) === '380' && strlen($digits_only) === 12) {
+            return '+380';
         }
 
-        return '+1';
+        // Default fallback based on billing country
+        return self::PHONE_COUNTRY_CODES[$billing_country] ?? '+1';
     }
 
     private function format_phone_number($digits_only, $phone_code) {
@@ -907,7 +764,7 @@ class BNA_API {
             'streetNumber' => $street_number,
             'streetName' => $street_name,
             'city' => $this->clean_city_name($city),
-            'province' => $province ?: 'ON',
+            'province' => $province ? $province : 'ON',
             'country' => $this->map_country_code($country),
             'postalCode' => $this->format_postal_code($order->get_billing_postcode())
         );
@@ -951,7 +808,7 @@ class BNA_API {
             'streetNumber' => $street_number,
             'streetName' => $street_name,
             'city' => $this->clean_city_name($shipping_city),
-            'province' => $shipping_state ?: 'ON',
+            'province' => $shipping_state ? $shipping_state : 'ON',
             'country' => $this->map_country_code($shipping_country),
             'postalCode' => $this->format_postal_code($shipping_postcode)
         );
@@ -1097,6 +954,142 @@ class BNA_API {
 
     public function get_iframe_url($token) {
         return $this->get_api_url() . '/v1/checkout/' . $token;
+    }
+
+    private function create_new_customer($customer_data, $order = null) {
+        try {
+            $validation_result = $this->validate_customer_data($customer_data);
+            if (is_wp_error($validation_result)) {
+                return $validation_result;
+            }
+
+            bna_debug('Creating new customer', array(
+                'customer_email' => $customer_data['email']
+            ));
+
+            $response = $this->make_request('v1/customers', 'POST', $customer_data);
+
+            if (is_wp_error($response)) {
+                $error_message = $response->get_error_message();
+                $error_data = $response->get_error_data();
+
+                if ($this->is_customer_exists_error($error_message, $error_data)) {
+                    bna_debug('Customer exists, searching', array(
+                        'customer_email' => $customer_data['email']
+                    ));
+                    return $this->find_existing_customer($customer_data['email'], $order);
+                }
+
+                return $response;
+            }
+
+            if (empty($response['id'])) {
+                return new WP_Error('invalid_customer_response', 'Customer ID not found in response');
+            }
+
+            bna_log('New customer created', array(
+                'customer_id' => $response['id'],
+                'customer_email' => $customer_data['email']
+            ));
+
+            if ($order) {
+                $data_hash = $this->generate_customer_data_hash($customer_data);
+                $order->update_meta_data('_bna_customer_data_hash', $data_hash);
+
+                if (is_user_logged_in()) {
+                    $wp_customer_id = $order->get_customer_id();
+                    if ($wp_customer_id) {
+                        update_user_meta($wp_customer_id, '_bna_customer_id', $response['id']);
+
+                        bna_log('Saved BNA customer ID to user meta', array(
+                            'wp_customer_id' => $wp_customer_id,
+                            'bna_customer_id' => $response['id']
+                        ));
+                    }
+                }
+
+                $order->save();
+            }
+
+            return array(
+                'customer_id' => $response['id'],
+                'is_existing' => false
+            );
+
+        } catch (Exception $e) {
+            bna_error('Exception in create_new_customer', array(
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'customer_email' => $customer_data['email'] ?? 'unknown'
+            ));
+
+            return new WP_Error('create_customer_exception', 'Customer creation failed: ' . $e->getMessage());
+        }
+    }
+
+    private function is_customer_exists_error($error_message, $error_data) {
+        if (isset($error_data['status']) && ($error_data['status'] === 400 || $error_data['status'] === 409)) {
+            $exists_patterns = array(
+                'customer already exist',
+                'customer already exists',
+                'email already exists',
+                'duplicate',
+                'already registered'
+            );
+
+            $error_lower = strtolower($error_message);
+            foreach ($exists_patterns as $pattern) {
+                if (stripos($error_lower, $pattern) !== false) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private function find_existing_customer($email, $order = null) {
+        try {
+            $search_params = array('email' => $email, 'limit' => 1);
+            $response = $this->make_request('v1/customers', 'GET', $search_params);
+
+            if (is_wp_error($response)) {
+                return $response;
+            }
+
+            $customers = isset($response['data']) ? $response['data'] : array();
+
+            foreach ($customers as $customer) {
+                if (isset($customer['email'], $customer['id']) && $customer['email'] === $email) {
+
+                    if ($order && is_user_logged_in()) {
+                        $wp_customer_id = $order->get_customer_id();
+                        if ($wp_customer_id) {
+                            update_user_meta($wp_customer_id, '_bna_customer_id', $customer['id']);
+
+                            bna_log('Saved found BNA customer ID to user meta', array(
+                                'wp_customer_id' => $wp_customer_id,
+                                'bna_customer_id' => $customer['id']
+                            ));
+                        }
+                    }
+
+                    return array(
+                        'customer_id' => $customer['id'],
+                        'is_existing' => true
+                    );
+                }
+            }
+
+            return new WP_Error('customer_search_failed', 'Customer exists but could not be located');
+
+        } catch (Exception $e) {
+            bna_error('Exception in find_existing_customer', array(
+                'email' => $email,
+                'exception' => $e->getMessage()
+            ));
+
+            return new WP_Error('find_customer_exception', 'Customer search failed: ' . $e->getMessage());
+        }
     }
 
     public function make_request($endpoint, $method = 'GET', $data = array()) {
