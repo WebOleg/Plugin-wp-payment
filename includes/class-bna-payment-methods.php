@@ -57,6 +57,16 @@ class BNA_Payment_Methods {
             'created_at' => $payment_method_data['created_at'] ?? current_time('Y-m-d H:i:s')
         );
 
+        if ($this->card_already_exists($existing_methods, $new_method)) {
+            bna_log('Payment method already exists, skipping save', array(
+                'user_id' => $user_id,
+                'type' => $new_method['type'],
+                'last4' => $new_method['last4'],
+                'brand' => $new_method['brand']
+            ));
+            return true;
+        }
+
         if (!$this->method_exists($existing_methods, $new_method['id'])) {
             $existing_methods[] = $new_method;
 
@@ -76,6 +86,28 @@ class BNA_Payment_Methods {
             ));
             return true;
         }
+    }
+
+    private function card_already_exists($existing_methods, $new_method) {
+        foreach ($existing_methods as $existing_method) {
+            if ($existing_method['type'] === $new_method['type'] &&
+                $existing_method['last4'] === $new_method['last4'] &&
+                $existing_method['brand'] === $new_method['brand']) {
+
+                if (isset($existing_method['expiryMonth']) && isset($new_method['expiryMonth']) &&
+                    isset($existing_method['expiryYear']) && isset($new_method['expiryYear'])) {
+
+                    if ($existing_method['expiryMonth'] === $new_method['expiryMonth'] &&
+                        $existing_method['expiryYear'] === $new_method['expiryYear']) {
+                        return true;
+                    }
+                } else {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public function get_user_payment_methods($user_id) {
@@ -227,27 +259,7 @@ class BNA_Payment_Methods {
     }
 
     private function delete_from_bna_portal($customer_id, $payment_method_id, $method_type) {
-        $endpoint_map = array(
-            'credit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
-            'debit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
-            'card' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
-            'eft' => "v1/customers/{$customer_id}/eft/{$payment_method_id}",
-            'e_transfer' => "v1/customers/{$customer_id}/e-transfer/{$payment_method_id}",
-            'cheque' => "v1/customers/{$customer_id}/cheque/{$payment_method_id}",
-            'cash' => "v1/customers/{$customer_id}/cash/{$payment_method_id}"
-        );
-
-        $endpoint = $endpoint_map[$method_type] ?? null;
-
-        if (!$endpoint) {
-            bna_error('Unsupported payment method type for deletion', array(
-                'method_type' => $method_type,
-                'payment_method_id' => $payment_method_id,
-                'available_types' => array_keys($endpoint_map)
-            ));
-
-            return new WP_Error('unsupported_type', 'Unsupported payment method type: ' . $method_type);
-        }
+        $endpoint = "v1/customers/{$customer_id}/payment-methods/{$payment_method_id}";
 
         bna_log('Attempting to delete payment method from BNA Portal', array(
             'customer_id' => $customer_id,
@@ -286,28 +298,6 @@ class BNA_Payment_Methods {
         );
 
         foreach ($unclear_patterns as $pattern) {
-            if (stripos($error_message, $pattern) !== false) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function is_not_found_error($error_message, $error_data = null) {
-        if (is_array($error_data) && isset($error_data['status']) && $error_data['status'] === 404) {
-            return true;
-        }
-
-        $not_found_patterns = array(
-            'not found',
-            'endpoint not found',
-            'resource not found',
-            '404',
-            'NOT_FOUND_ERROR'
-        );
-
-        foreach ($not_found_patterns as $pattern) {
             if (stripos($error_message, $pattern) !== false) {
                 return true;
             }
@@ -366,109 +356,31 @@ class BNA_Payment_Methods {
             return 'E-Transfer';
         }
 
-        if (isset($payment_data['chequeNumber'])) {
-            return 'Cheque';
-        }
-
-        if (isset($payment_data['type']) && strtolower($payment_data['type']) === 'cash') {
-            return 'Cash';
-        }
-
-        if (isset($payment_data['brand'])) {
-            return $this->format_brand_name($payment_data['brand']);
-        }
-
         return 'Unknown';
     }
 
     private function format_brand_name($brand) {
-        $brand = trim(strtolower($brand));
+        $brand = strtoupper(trim($brand));
 
-        $special_cases = array(
-            'visa' => 'Visa',
-            'mastercard' => 'Mastercard',
-            'amex' => 'American Express',
-            'discover' => 'Discover',
-            'credit' => 'Credit Card',
-            'debit' => 'Debit Card'
+        $brand_map = array(
+            'VISA' => 'Visa',
+            'MASTERCARD' => 'Mastercard',
+            'AMEX' => 'American Express',
+            'DISCOVER' => 'Discover',
+            'CREDIT' => 'Credit Card',
+            'DEBIT' => 'Debit Card'
         );
 
-        if (isset($special_cases[$brand])) {
-            return $special_cases[$brand];
-        }
-
-        return ucfirst($brand);
+        return $brand_map[$brand] ?? ucfirst(strtolower($brand));
     }
 
     private function normalize_method_type($type) {
-        $type = strtolower(trim($type));
-
-        switch ($type) {
-            case 'card':
-            case 'credit':
-            case 'debit':
-                return $type;
-
-            case 'eft':
-            case 'bank_transfer':
-            case 'direct_debit':
-                return 'eft';
-
-            case 'e_transfer':
-            case 'etransfer':
-            case 'interac':
-                return 'e_transfer';
-
-            case 'cheque':
-            case 'check':
-                return 'cheque';
-
-            case 'cash':
-                return 'cash';
-
-            default:
-                return $type;
-        }
-    }
-
-    public function get_method_display_name($method) {
-        if (!is_array($method) || !isset($method['type'])) {
-            return 'Unknown Method';
-        }
-
-        $type = strtolower($method['type']);
-        $brand = $method['brand'] ?? 'Unknown';
-        $last4 = $method['last4'] ?? '****';
-
-        switch ($type) {
-            case 'credit':
-                return sprintf('%s Credit Card •••• %s', $brand, $last4);
-
-            case 'debit':
-                return sprintf('%s Debit Card •••• %s', $brand, $last4);
-
-            case 'card':
-                return sprintf('%s Card •••• %s', $brand, $last4);
-
-            case 'eft':
-                return sprintf('Bank Transfer •••• %s', $last4);
-
-            case 'e_transfer':
-                return 'E-Transfer';
-
-            case 'cheque':
-                return sprintf('Cheque •••• %s', $last4);
-
-            case 'cash':
-                return 'Cash Payment';
-
-            default:
-                return sprintf('%s •••• %s', $brand, $last4);
-        }
+        return strtolower(trim($type));
     }
 
     public function get_payment_methods_stats($user_id) {
         $methods = $this->get_user_payment_methods($user_id);
+
         $stats = array(
             'total' => count($methods),
             'by_type' => array(),
@@ -508,5 +420,27 @@ class BNA_Payment_Methods {
             'valid' => empty($errors),
             'errors' => $errors
         );
+    }
+
+    private function is_not_found_error($error_message, $error_data = null) {
+        if (is_array($error_data) && isset($error_data['status']) && $error_data['status'] === 404) {
+            return true;
+        }
+
+        $not_found_patterns = array(
+            'not found',
+            'endpoint not found',
+            'resource not found',
+            '404',
+            'NOT_FOUND_ERROR'
+        );
+
+        foreach ($not_found_patterns as $pattern) {
+            if (stripos($error_message, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
