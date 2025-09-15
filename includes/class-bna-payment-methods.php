@@ -1,12 +1,4 @@
 <?php
-/**
- * BNA Payment Methods Handler
- * Handles payment method storage, retrieval, and management
- * ПОКРАЩЕНО: кращі функції витягування даних та обробки webhook даних
- *
- * @since 1.8.0 Enhanced webhook integration and method type handling
- * @since 1.7.0 Payment methods management
- */
 
 if (!defined('ABSPATH')) exit;
 
@@ -37,10 +29,6 @@ class BNA_Payment_Methods {
         }
     }
 
-    /**
-     * Save payment method to user meta
-     * ПОКРАЩЕНО: краще логування та валідація
-     */
     public function save_payment_method($user_id, $payment_method_data) {
         if (!$user_id || empty($payment_method_data)) {
             bna_error('Invalid parameters for save_payment_method', array(
@@ -50,7 +38,6 @@ class BNA_Payment_Methods {
             return false;
         }
 
-        // Validate required fields
         if (!isset($payment_method_data['id']) || !isset($payment_method_data['type'])) {
             bna_error('Missing required payment method fields', array(
                 'has_id' => isset($payment_method_data['id']),
@@ -70,7 +57,6 @@ class BNA_Payment_Methods {
             'created_at' => $payment_method_data['created_at'] ?? current_time('Y-m-d H:i:s')
         );
 
-        // Check if method already exists
         if (!$this->method_exists($existing_methods, $new_method['id'])) {
             $existing_methods[] = $new_method;
 
@@ -88,13 +74,10 @@ class BNA_Payment_Methods {
                 'user_id' => $user_id,
                 'method_id' => $new_method['id']
             ));
-            return true; // Already exists, consider it saved
+            return true;
         }
     }
 
-    /**
-     * Get user payment methods from WordPress meta
-     */
     public function get_user_payment_methods($user_id) {
         if (!$user_id) {
             return array();
@@ -104,10 +87,6 @@ class BNA_Payment_Methods {
         return is_array($methods) ? $methods : array();
     }
 
-    /**
-     * Delete payment method from user account and BNA Portal
-     * This is for manual deletion via UI
-     */
     public function delete_payment_method($user_id, $payment_method_id) {
         if (!$user_id || !$payment_method_id) {
             return new WP_Error('invalid_params', 'Invalid parameters');
@@ -127,7 +106,6 @@ class BNA_Payment_Methods {
         $method_found = false;
         $method_type = '';
 
-        // Find the method to delete
         foreach ($existing_methods as $method) {
             if ($method['id'] === $payment_method_id) {
                 $method_found = true;
@@ -140,19 +118,42 @@ class BNA_Payment_Methods {
             return new WP_Error('method_not_found', 'Payment method not found');
         }
 
-        // Try to delete from BNA Portal first
         $api_result = $this->delete_from_bna_portal($customer_id, $payment_method_id, $method_type);
 
         if (is_wp_error($api_result)) {
             $error_message = $api_result->get_error_message();
+            $error_data = $api_result->get_error_data();
 
-            // Handle unclear API responses
-            if (strpos($error_message, 'Invalid JSON response') !== false ||
-                strpos($error_message, 'Internal Server Error') !== false ||
-                strpos($error_message, '500') !== false ||
-                strpos($error_message, 'Syntax error') !== false) {
+            bna_error('Payment method API deletion failed', array(
+                'user_id' => $user_id,
+                'payment_method_id' => $payment_method_id,
+                'error' => $error_message,
+                'customer_id' => $customer_id,
+                'method_type' => $method_type,
+                'error_data' => $error_data
+            ));
 
-                bna_log('API deletion response unclear, letting webhook handle cleanup', array(
+            if ($this->is_not_found_error($error_message, $error_data)) {
+                bna_log('Payment method not found in API - removing from local storage', array(
+                    'customer_id' => $customer_id,
+                    'payment_method_id' => $payment_method_id,
+                    'error' => $error_message
+                ));
+
+                $updated_methods = array_filter($existing_methods, function($method) use ($payment_method_id) {
+                    return $method['id'] !== $payment_method_id;
+                });
+
+                update_user_meta($user_id, '_bna_payment_methods', array_values($updated_methods));
+
+                return array(
+                    'status' => 'success',
+                    'message' => 'Payment method removed (was already deleted from server)'
+                );
+            }
+
+            if ($this->is_unclear_api_error($error_message)) {
+                bna_log('API deletion response unclear - webhook will handle cleanup', array(
                     'customer_id' => $customer_id,
                     'payment_method_id' => $payment_method_id,
                     'error' => $error_message
@@ -160,27 +161,20 @@ class BNA_Payment_Methods {
 
                 return array(
                     'status' => 'pending',
-                    'message' => 'Deletion request sent - confirmation pending'
+                    'message' => 'Delete request sent - waiting for confirmation'
                 );
             }
-
-            bna_error('Payment method deletion failed', array(
-                'user_id' => $user_id,
-                'payment_method_id' => $payment_method_id,
-                'error' => $error_message
-            ));
 
             return $api_result;
         }
 
-        // If API deletion successful, remove from local storage
         $updated_methods = array_filter($existing_methods, function($method) use ($payment_method_id) {
             return $method['id'] !== $payment_method_id;
         });
 
         update_user_meta($user_id, '_bna_payment_methods', array_values($updated_methods));
 
-        bna_log('Payment method deleted successfully via API', array(
+        bna_log('Payment method deleted successfully', array(
             'user_id' => $user_id,
             'payment_method_id' => $payment_method_id,
             'method_type' => $method_type
@@ -192,10 +186,6 @@ class BNA_Payment_Methods {
         );
     }
 
-    /**
-     * Delete payment method by ID from WordPress only (for webhooks)
-     * This is called by webhooks when BNA notifies us of deletion
-     */
     public function delete_payment_method_by_id($user_id, $payment_method_id) {
         if (!$user_id || !$payment_method_id) {
             return false;
@@ -204,7 +194,6 @@ class BNA_Payment_Methods {
         $existing_methods = $this->get_user_payment_methods($user_id);
         $method_found = false;
 
-        // Check if method exists
         foreach ($existing_methods as $method) {
             if ($method['id'] === $payment_method_id) {
                 $method_found = true;
@@ -217,10 +206,9 @@ class BNA_Payment_Methods {
                 'user_id' => $user_id,
                 'payment_method_id' => $payment_method_id
             ));
-            return true; // Already deleted, consider it successful
+            return true;
         }
 
-        // Remove method from local storage
         $updated_methods = array_filter($existing_methods, function($method) use ($payment_method_id) {
             return $method['id'] !== $payment_method_id;
         });
@@ -238,19 +226,15 @@ class BNA_Payment_Methods {
         return $result;
     }
 
-    /**
-     * Delete payment method from BNA Portal via API
-     */
     private function delete_from_bna_portal($customer_id, $payment_method_id, $method_type) {
-        // ВИПРАВЛЕНИЙ МАПІНГ ENDPOINTS - додана підтримка всіх типів
         $endpoint_map = array(
             'credit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
             'debit' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
-            'card' => "v1/customers/{$customer_id}/card/{$payment_method_id}",  // Додано підтримку card
+            'card' => "v1/customers/{$customer_id}/card/{$payment_method_id}",
             'eft' => "v1/customers/{$customer_id}/eft/{$payment_method_id}",
             'e_transfer' => "v1/customers/{$customer_id}/e-transfer/{$payment_method_id}",
-            'cheque' => "v1/customers/{$customer_id}/cheque/{$payment_method_id}", // Додано cheque
-            'cash' => "v1/customers/{$customer_id}/cash/{$payment_method_id}"  // Додано cash
+            'cheque' => "v1/customers/{$customer_id}/cheque/{$payment_method_id}",
+            'cash' => "v1/customers/{$customer_id}/cash/{$payment_method_id}"
         );
 
         $endpoint = $endpoint_map[$method_type] ?? null;
@@ -272,7 +256,7 @@ class BNA_Payment_Methods {
             'endpoint' => $endpoint
         ));
 
-        $result = $this->api->delete($endpoint);
+        $result = $this->api->make_request($endpoint, 'DELETE');
 
         if (is_wp_error($result)) {
             bna_error('BNA Portal deletion failed', array(
@@ -290,9 +274,48 @@ class BNA_Payment_Methods {
         return $result;
     }
 
-    /**
-     * Check if method already exists in user's stored methods
-     */
+    private function is_unclear_api_error($error_message) {
+        $unclear_patterns = array(
+            'Invalid JSON response',
+            'Internal Server Error',
+            'Syntax error',
+            'unexpected token',
+            'timeout',
+            'connection reset',
+            'network error'
+        );
+
+        foreach ($unclear_patterns as $pattern) {
+            if (stripos($error_message, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function is_not_found_error($error_message, $error_data = null) {
+        if (is_array($error_data) && isset($error_data['status']) && $error_data['status'] === 404) {
+            return true;
+        }
+
+        $not_found_patterns = array(
+            'not found',
+            'endpoint not found',
+            'resource not found',
+            '404',
+            'NOT_FOUND_ERROR'
+        );
+
+        foreach ($not_found_patterns as $pattern) {
+            if (stripos($error_message, $pattern) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function method_exists($methods, $method_id) {
         foreach ($methods as $method) {
             if (isset($method['id']) && $method['id'] === $method_id) {
@@ -302,27 +325,19 @@ class BNA_Payment_Methods {
         return false;
     }
 
-    /**
-     * Extract last 4 digits from payment data
-     * ПОКРАЩЕНО: краща обробка різних форматів номерів
-     */
     private function extract_last4($payment_data) {
-        // For cards
         if (isset($payment_data['cardNumber'])) {
             $cardNumber = $payment_data['cardNumber'];
-            // Remove all non-digits and get last 4
             $digits_only = preg_replace('/\D/', '', $cardNumber);
             return substr($digits_only, -4);
         }
 
-        // For bank accounts (EFT)
         if (isset($payment_data['accountNumber'])) {
             $accountNumber = $payment_data['accountNumber'];
             $digits_only = preg_replace('/\D/', '', $accountNumber);
             return substr($digits_only, -4);
         }
 
-        // If already provided
         if (isset($payment_data['last4'])) {
             return $payment_data['last4'];
         }
@@ -330,12 +345,7 @@ class BNA_Payment_Methods {
         return '****';
     }
 
-    /**
-     * Extract brand/type information from payment data
-     * ПОКРАЩЕНО: краща ієрархія для визначення бренду
-     */
     private function extract_brand($payment_data) {
-        // For cards - prioritize cardBrand over cardType
         if (isset($payment_data['cardBrand']) && !empty($payment_data['cardBrand'])) {
             return $this->format_brand_name($payment_data['cardBrand']);
         }
@@ -344,7 +354,6 @@ class BNA_Payment_Methods {
             return $this->format_brand_name($payment_data['cardType']);
         }
 
-        // For bank transfers
         if (isset($payment_data['bankName']) && !empty($payment_data['bankName'])) {
             return $payment_data['bankName'];
         }
@@ -353,22 +362,18 @@ class BNA_Payment_Methods {
             return 'Bank Transfer';
         }
 
-        // For e-transfer
         if (isset($payment_data['email']) || isset($payment_data['deliveryType'])) {
             return 'E-Transfer';
         }
 
-        // For cheques
         if (isset($payment_data['chequeNumber'])) {
             return 'Cheque';
         }
 
-        // For cash
         if (isset($payment_data['type']) && strtolower($payment_data['type']) === 'cash') {
             return 'Cash';
         }
 
-        // Generic brand
         if (isset($payment_data['brand'])) {
             return $this->format_brand_name($payment_data['brand']);
         }
@@ -376,13 +381,9 @@ class BNA_Payment_Methods {
         return 'Unknown';
     }
 
-    /**
-     * НОВА функція - форматування назви бренду
-     */
     private function format_brand_name($brand) {
         $brand = trim(strtolower($brand));
 
-        // Special cases for well-known brands
         $special_cases = array(
             'visa' => 'Visa',
             'mastercard' => 'Mastercard',
@@ -396,18 +397,12 @@ class BNA_Payment_Methods {
             return $special_cases[$brand];
         }
 
-        // General formatting - capitalize first letter
         return ucfirst($brand);
     }
 
-    /**
-     * Get payment method type for API endpoint mapping
-     * Handles different variations of method types
-     */
     private function normalize_method_type($type) {
         $type = strtolower(trim($type));
 
-        // Handle various type formats
         switch ($type) {
             case 'card':
             case 'credit':
@@ -436,9 +431,6 @@ class BNA_Payment_Methods {
         }
     }
 
-    /**
-     * НОВА функція - отримання відображуваної назви методу оплати
-     */
     public function get_method_display_name($method) {
         if (!is_array($method) || !isset($method['type'])) {
             return 'Unknown Method';
@@ -475,9 +467,6 @@ class BNA_Payment_Methods {
         }
     }
 
-    /**
-     * НОВА функція - статистика методів оплати
-     */
     public function get_payment_methods_stats($user_id) {
         $methods = $this->get_user_payment_methods($user_id);
         $stats = array(
@@ -497,9 +486,6 @@ class BNA_Payment_Methods {
         return $stats;
     }
 
-    /**
-     * НОВА функція - валідація структури методу оплати
-     */
     public function validate_payment_method_structure($method) {
         $required_fields = array('id', 'type');
         $errors = array();
@@ -510,7 +496,6 @@ class BNA_Payment_Methods {
             }
         }
 
-        // Validate type
         if (isset($method['type'])) {
             $valid_types = array('card', 'credit', 'debit', 'eft', 'e_transfer', 'cheque', 'cash');
             $normalized_type = $this->normalize_method_type($method['type']);

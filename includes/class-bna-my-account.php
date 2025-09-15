@@ -28,22 +28,11 @@ class BNA_My_Account {
             return;
         }
 
-        // Add endpoint for payment methods
         add_rewrite_endpoint('payment-methods', EP_ROOT | EP_PAGES);
-
-        // Add menu item to My Account
         add_filter('woocommerce_account_menu_items', array($this, 'add_payment_methods_tab'), 40);
-
-        // Handle the content for the payment methods page
         add_action('woocommerce_account_payment-methods_endpoint', array($this, 'payment_methods_content'));
-
-        // Enqueue scripts
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
-
-        // Handle AJAX for deleting payment methods
         add_action('wp_ajax_bna_delete_payment_method', array($this, 'handle_delete_payment_method'));
-
-        // Add query vars
         add_filter('woocommerce_get_query_vars', array($this, 'add_query_vars'));
 
         bna_log('BNA My Account initialized', array(
@@ -58,19 +47,16 @@ class BNA_My_Account {
     }
 
     public function add_payment_methods_tab($items) {
-        // Insert payment methods after edit-address
         $new_items = array();
 
         foreach ($items as $key => $item) {
             $new_items[$key] = $item;
 
-            // Add payment methods after edit-address
             if ($key === 'edit-address') {
                 $new_items['payment-methods'] = __('Payment Methods', 'bna-smart-payment');
             }
         }
 
-        // If edit-address doesn't exist, add at the end
         if (!isset($items['edit-address'])) {
             $new_items['payment-methods'] = __('Payment Methods', 'bna-smart-payment');
         }
@@ -98,7 +84,6 @@ class BNA_My_Account {
             'bna_customer_id' => get_user_meta($user_id, '_bna_customer_id', true)
         ));
 
-        // Load the template
         $template_file = BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/my-account-payment-methods.php';
 
         if (file_exists($template_file)) {
@@ -175,12 +160,30 @@ class BNA_My_Account {
             wp_send_json_error($result->get_error_message());
         }
 
-        bna_log('Payment method deleted successfully via My Account', array(
-            'user_id' => $user_id,
-            'payment_method_id' => $payment_method_id
-        ));
+        if (is_array($result)) {
+            $status = $result['status'] ?? 'unknown';
+            $message = $result['message'] ?? 'Unknown status';
 
-        wp_send_json_success('Payment method deleted successfully');
+            if ($status === 'success') {
+                bna_log('Payment method deleted successfully via My Account', array(
+                    'user_id' => $user_id,
+                    'payment_method_id' => $payment_method_id
+                ));
+
+                wp_send_json_success($message);
+            } else {
+                bna_error('Payment method deletion not completed', array(
+                    'user_id' => $user_id,
+                    'payment_method_id' => $payment_method_id,
+                    'status' => $status,
+                    'message' => $message
+                ));
+
+                wp_send_json_error($message);
+            }
+        }
+
+        wp_send_json_error('Unexpected response format');
     }
 
     public function get_payment_method_display_name($method) {
@@ -213,66 +216,30 @@ class BNA_My_Account {
         $type = strtolower($method['type'] ?? 'unknown');
         $brand = strtolower($method['brand'] ?? 'unknown');
 
-        // Brand-specific icons
-        $brand_icons = array(
+        $icon_map = array(
             'visa' => '💳',
             'mastercard' => '💳',
             'amex' => '💳',
             'american express' => '💳',
             'discover' => '💳',
-            'dinersclub' => '💳',
-            'jcb' => '💳'
-        );
-
-        if (isset($brand_icons[$brand])) {
-            return $brand_icons[$brand];
-        }
-
-        // Type-specific icons
-        $type_icons = array(
+            'jcb' => '💳',
+            'diners' => '💳',
             'credit' => '💳',
             'debit' => '💳',
             'eft' => '🏦',
-            'e_transfer' => '📧',
-            'bank_transfer' => '🏦'
+            'e_transfer' => '✉️',
+            'cheque' => '📝',
+            'cash' => '💵'
         );
 
-        if (isset($type_icons[$type])) {
-            return $type_icons[$type];
+        if (isset($icon_map[$brand])) {
+            return $icon_map[$brand];
         }
 
-        return '💳'; // Default icon
-    }
-
-    /**
-     * Check if user has any payment methods
-     */
-    public function user_has_payment_methods($user_id = null) {
-        if (!$user_id) {
-            $user_id = get_current_user_id();
+        if (isset($icon_map[$type])) {
+            return $icon_map[$type];
         }
 
-        if (!$user_id) {
-            return false;
-        }
-
-        $methods = $this->payment_methods->get_user_payment_methods($user_id);
-        return !empty($methods);
-    }
-
-    /**
-     * Get count of user payment methods
-     */
-    public function get_user_payment_methods_count($user_id = null) {
-        if (!$user_id) {
-            $user_id = get_current_user_id();
-        }
-
-        if (!$user_id) {
-            return 0;
-        }
-
-        $methods = $this->payment_methods->get_user_payment_methods($user_id);
-        return count($methods);
+        return '💳';
     }
 }
