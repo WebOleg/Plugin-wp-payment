@@ -8,10 +8,10 @@
 
     $(document).ready(function() {
 
-        if (typeof bna_shipping_data !== 'undefined') {
-            countriesData = bna_shipping_data.countries || {};
-            statesData = bna_shipping_data.states || {};
-            savedShippingData = bna_shipping_data.saved_shipping || {};
+        if (typeof bna_shipping !== 'undefined') {
+            countriesData = bna_shipping.countries || {};
+            statesData = bna_shipping.states || {};
+            savedShippingData = bna_shipping.saved_shipping || {};
 
             console.log('BNA Shipping Data loaded:', {
                 countries: Object.keys(countriesData).length,
@@ -153,8 +153,8 @@
         }
 
         function getI18nText(key) {
-            if (typeof bna_shipping_data !== 'undefined' && bna_shipping_data.i18n && bna_shipping_data.i18n[key]) {
-                return bna_shipping_data.i18n[key];
+            if (typeof bna_shipping !== 'undefined' && bna_shipping.i18n && bna_shipping.i18n[key]) {
+                return bna_shipping.i18n[key];
             }
 
             var defaults = {
