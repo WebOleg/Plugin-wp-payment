@@ -2,8 +2,8 @@
 /**
  * Plugin Name: BNA Smart Payment Gateway
  * Plugin URI: https://bnasmartpayment.com
- * Description: WooCommerce payment gateway for BNA Smart Payment with iframe, HMAC webhooks, shipping address support, customer data sync and payment methods management.
- * Version: 1.8.0
+ * Description: WooCommerce payment gateway for BNA Smart Payment with iframe, HMAC webhooks, shipping address support, customer data sync, payment methods management and subscriptions.
+ * Version: 1.9.0
  * Author: BNA Smart Payment
  * Text Domain: bna-smart-payment
  * Requires at least: 5.0
@@ -11,6 +11,7 @@
  * WC requires at least: 5.0
  * WC tested up to: 8.0
  *
+ * @since 1.9.0 Added BNA Subscriptions support with native recurring payments
  * @since 1.8.0 Added HMAC webhook signature verification and enhanced security
  * @since 1.7.0 Payment methods management and auto-saving
  * @since 1.6.0 Customer data sync and enhanced shipping address support
@@ -20,7 +21,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('BNA_SMART_PAYMENT_VERSION', '1.8.0');
+define('BNA_SMART_PAYMENT_VERSION', '1.9.0');
 define('BNA_SMART_PAYMENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -50,10 +51,8 @@ class BNA_Smart_Payment {
     private function load_core_dependencies() {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-logger.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-api.php';
-        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-payment-methods.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-webhooks.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-template.php';
-        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-my-account.php';
 
         if (is_admin()) {
             require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-admin.php';
@@ -75,9 +74,12 @@ class BNA_Smart_Payment {
         ));
 
         $this->load_woocommerce_dependencies();
+        
         BNA_Webhooks::init();
         BNA_Payment_Methods::get_instance();
         BNA_My_Account::get_instance();
+        BNA_Subscriptions::get_instance();
+        BNA_Subscription_Manager::get_instance();
 
         add_filter('woocommerce_payment_gateways', array($this, 'add_gateway_class'));
         add_action('wp_enqueue_scripts', array($this, 'load_frontend_assets'));
@@ -91,6 +93,11 @@ class BNA_Smart_Payment {
 
     private function load_woocommerce_dependencies() {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-gateway.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-payment-methods.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-my-account.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscriptions.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscription-product.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscription-manager.php';
     }
 
     public function add_gateway_class($gateways) {
@@ -222,8 +229,10 @@ class BNA_Smart_Payment {
         $this->check_requirements();
         $this->set_default_options();
 
-        // Note: Webhook secret is no longer auto-generated
-        // Users must get it from BNA Portal and configure manually for security
+        if (class_exists('WooCommerce')) {
+            require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscriptions.php';
+            BNA_Subscriptions::get_instance()->create_table();
+        }
 
         $this->maybe_upgrade();
         flush_rewrite_rules();
@@ -255,7 +264,7 @@ class BNA_Smart_Payment {
             'bna_smart_payment_access_key' => '',
             'bna_smart_payment_secret_key' => '',
             'bna_smart_payment_iframe_id' => '',
-            'bna_smart_payment_webhook_secret' => '', // Added in v1.8.0 - must be configured manually
+            'bna_smart_payment_webhook_secret' => '',
             'bna_smart_payment_enable_phone' => 'no',
             'bna_smart_payment_enable_billing_address' => 'no',
             'bna_smart_payment_enable_birthdate' => 'yes',
@@ -299,6 +308,10 @@ class BNA_Smart_Payment {
                 $this->upgrade_to_1_8_0();
             }
 
+            if (version_compare($installed_version, '1.9.0', '<')) {
+                $this->upgrade_to_1_9_0();
+            }
+
             update_option('bna_smart_payment_version', BNA_SMART_PAYMENT_VERSION);
             bna_log('Plugin upgrade completed', array('version' => BNA_SMART_PAYMENT_VERSION));
         }
@@ -306,7 +319,6 @@ class BNA_Smart_Payment {
 
     private function upgrade_to_1_5_0() {
         bna_log('Upgrading to version 1.5.0');
-        // Legacy upgrade logic
     }
 
     private function upgrade_to_1_6_0() {
@@ -319,36 +331,27 @@ class BNA_Smart_Payment {
 
     private function upgrade_to_1_6_1() {
         bna_log('Upgrading to version 1.6.1 - Enhanced error handling');
-        // Enhanced error handling and country mapping improvements
     }
 
     private function upgrade_to_1_7_0() {
         bna_log('Upgrading to version 1.7.0 - Payment methods management');
-        // Payment methods management features added
     }
 
     private function upgrade_to_1_8_0() {
         bna_log('Upgrading to version 1.8.0 - HMAC webhook security');
-
-        // Add webhook secret option (empty by default - must be configured manually)
-        if (false === get_option('bna_smart_payment_webhook_secret')) {
-            add_option('bna_smart_payment_webhook_secret', '');
-        }
-
-        // Remove any auto-generated webhook secret from previous versions
-        delete_option('bna_smart_payment_webhook_secret_auto');
     }
 
-    // ==========================================
-    // PLUGIN INFO AND SYSTEM HEALTH
-    // ==========================================
+    private function upgrade_to_1_9_0() {
+        bna_log('Upgrading to version 1.9.0 - Subscriptions support');
+        if (class_exists('BNA_Subscriptions')) {
+            BNA_Subscriptions::get_instance()->create_table();
+        }
+    }
 
     public static function get_plugin_info() {
         return array(
+            'name' => 'BNA Smart Payment Gateway',
             'version' => BNA_SMART_PAYMENT_VERSION,
-            'plugin_url' => BNA_SMART_PAYMENT_PLUGIN_URL,
-            'plugin_path' => BNA_SMART_PAYMENT_PLUGIN_PATH,
-            'webhook_url' => home_url('/wp-json/bna/v1/webhook'),
             'wp_version' => get_bloginfo('version'),
             'wc_version' => class_exists('WooCommerce') ? WC()->version : 'Not installed',
             'php_version' => PHP_VERSION,
@@ -357,7 +360,8 @@ class BNA_Smart_Payment {
             'error_handling_improved' => true,
             'country_mapping_improved' => true,
             'payment_methods_management' => true,
-            'hmac_webhooks_enabled' => true, // New in v1.8.0
+            'hmac_webhooks_enabled' => true,
+            'subscriptions_enabled' => true,
             'webhook_secret_configured' => !empty(get_option('bna_smart_payment_webhook_secret', ''))
         );
     }
@@ -375,7 +379,8 @@ class BNA_Smart_Payment {
                 'customer_sync' => '1.6.0',
                 'error_handling' => '1.6.1',
                 'payment_methods' => '1.7.0',
-                'hmac_webhooks' => '1.8.0'
+                'hmac_webhooks' => '1.8.0',
+                'subscriptions' => '1.9.0'
             )
         );
     }
@@ -394,7 +399,7 @@ class BNA_Smart_Payment {
             'json_constants_ok' => defined('JSON_UNESCAPED_UNICODE') && defined('JSON_SORT_KEYS'),
             'credentials_configured' => false,
             'iframe_id_configured' => false,
-            'webhook_secret_configured' => false // New in v1.8.0
+            'webhook_secret_configured' => false
         );
 
         if (class_exists('WooCommerce')) {
@@ -412,84 +417,50 @@ class BNA_Smart_Payment {
 
         return $health;
     }
+
+    public function get_health_check() {
+        return self::get_system_health();
+    }
 }
 
-// ==========================================
-// HELPER FUNCTIONS
-// ==========================================
-
-/**
- * Initialize the plugin
- */
 function bna_smart_payment_init() {
     return BNA_Smart_Payment::get_instance();
 }
 
 bna_smart_payment_init();
 
-/**
- * Get plugin instance
- */
 function bna_smart_payment() {
     return BNA_Smart_Payment::get_instance();
 }
 
-/**
- * Get plugin information
- */
 function bna_get_plugin_info() {
     return BNA_Smart_Payment::get_plugin_info();
 }
 
-/**
- * Get plugin configuration
- */
 function bna_get_config() {
     return BNA_Smart_Payment::get_config();
 }
 
-/**
- * Get system health status
- */
 function bna_get_system_health() {
     return BNA_Smart_Payment::get_system_health();
 }
 
-/**
- * Check if shipping address is enabled
- */
 function bna_is_shipping_enabled() {
     return get_option('bna_smart_payment_enable_shipping_address', 'no') === 'yes';
 }
 
-/**
- * Check if debug mode is enabled
- */
 function bna_is_debug_mode() {
     return get_option('bna_smart_payment_debug_mode', 'no') === 'yes';
 }
 
-/**
- * Get webhook secret key (NEW in v1.8.0)
- *
- * @return string Webhook secret key for HMAC verification
- */
 function bna_get_webhook_secret() {
     return get_option('bna_smart_payment_webhook_secret', '');
 }
 
-/**
- * Check if webhook HMAC security is configured (NEW in v1.8.0)
- *
- * @return bool True if webhook secret is configured
- */
 function bna_is_webhook_secure() {
     return !empty(bna_get_webhook_secret());
 }
 
-/**
- * Get customer sync status for an order
- */
 function bna_get_customer_sync_status($order) {
     if (!$order) {
         return array('error' => 'Order not found');
@@ -505,9 +476,6 @@ function bna_get_customer_sync_status($order) {
     );
 }
 
-/**
- * Debug logging helper
- */
 function bna_debug_log($message, $data = array()) {
     if (bna_is_debug_mode()) {
         bna_log('[DEBUG MODE] ' . $message, $data);

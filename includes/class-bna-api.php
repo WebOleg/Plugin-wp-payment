@@ -1131,4 +1131,289 @@ class BNA_API {
 
         return $json;
     }
+
+    // ==========================================
+    // SUBSCRIPTION API METHODS - NEW in v1.9.0
+    // ==========================================
+
+    /**
+     * Create a new subscription
+     *
+     * @param array $subscription_data Subscription data
+     * @return array|WP_Error Subscription response or error
+     */
+    public function create_subscription($subscription_data) {
+        try {
+            bna_log('Creating BNA subscription', array(
+                'customer_id' => $subscription_data['customerId'] ?? 'inline',
+                'recurrence' => $subscription_data['recurrence'] ?? 'unknown',
+                'amount' => $subscription_data['subtotal'] ?? 'unknown'
+            ));
+
+            $response = $this->make_request('v1/subscription', 'POST', $subscription_data);
+
+            if (is_wp_error($response)) {
+                bna_error('Subscription creation failed', array(
+                    'error' => $response->get_error_message(),
+                    'subscription_data' => $subscription_data
+                ));
+                return $response;
+            }
+
+            if (empty($response['id'])) {
+                bna_error('Subscription ID not found in response', array(
+                    'response_keys' => array_keys($response)
+                ));
+                return new WP_Error('missing_subscription_id', 'Subscription ID not found in API response');
+            }
+
+            bna_log('BNA subscription created successfully', array(
+                'subscription_id' => $response['id'],
+                'status' => $response['status'] ?? 'unknown',
+                'customer_id' => $response['customerId'] ?? 'unknown'
+            ));
+
+            return $response;
+
+        } catch (Exception $e) {
+            bna_error('Exception in create_subscription', array(
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'subscription_data' => $subscription_data
+            ));
+
+            return new WP_Error('subscription_exception', 'Subscription creation failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Suspend an existing subscription
+     *
+     * @param string $subscription_id BNA subscription ID
+     * @return bool Success status
+     */
+    public function suspend_subscription($subscription_id) {
+        try {
+            if (empty($subscription_id)) {
+                return false;
+            }
+
+            bna_log('Suspending BNA subscription', array(
+                'subscription_id' => $subscription_id
+            ));
+
+            $response = $this->make_request(
+                'v1/subscription/' . $subscription_id . '/suspend', 
+                'PATCH', 
+                array('suspend' => true)
+            );
+
+            if (is_wp_error($response)) {
+                bna_error('Subscription suspension failed', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $response->get_error_message()
+                ));
+                return false;
+            }
+
+            bna_log('BNA subscription suspended successfully', array(
+                'subscription_id' => $subscription_id,
+                'response_status' => $response['status'] ?? 'unknown'
+            ));
+
+            return true;
+
+        } catch (Exception $e) {
+            bna_error('Exception in suspend_subscription', array(
+                'subscription_id' => $subscription_id,
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return false;
+        }
+    }
+
+    /**
+     * Resume a suspended subscription
+     *
+     * @param string $subscription_id BNA subscription ID
+     * @return bool Success status
+     */
+    public function resume_subscription($subscription_id) {
+        try {
+            if (empty($subscription_id)) {
+                return false;
+            }
+
+            bna_log('Resuming BNA subscription', array(
+                'subscription_id' => $subscription_id
+            ));
+
+            $response = $this->make_request(
+                'v1/subscription/' . $subscription_id . '/suspend', 
+                'PATCH', 
+                array('suspend' => false)
+            );
+
+            if (is_wp_error($response)) {
+                bna_error('Subscription resume failed', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $response->get_error_message()
+                ));
+                return false;
+            }
+
+            bna_log('BNA subscription resumed successfully', array(
+                'subscription_id' => $subscription_id,
+                'response_status' => $response['status'] ?? 'unknown'
+            ));
+
+            return true;
+
+        } catch (Exception $e) {
+            bna_error('Exception in resume_subscription', array(
+                'subscription_id' => $subscription_id,
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return false;
+        }
+    }
+
+    /**
+     * Delete/cancel a subscription
+     *
+     * @param string $subscription_id BNA subscription ID
+     * @return bool Success status
+     */
+    public function delete_subscription($subscription_id) {
+        try {
+            if (empty($subscription_id)) {
+                return false;
+            }
+
+            bna_log('Deleting BNA subscription', array(
+                'subscription_id' => $subscription_id
+            ));
+
+            $response = $this->make_request('v1/subscription/' . $subscription_id, 'DELETE');
+
+            if (is_wp_error($response)) {
+                bna_error('Subscription deletion failed', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $response->get_error_message()
+                ));
+                return false;
+            }
+
+            bna_log('BNA subscription deleted successfully', array(
+                'subscription_id' => $subscription_id
+            ));
+
+            return true;
+
+        } catch (Exception $e) {
+            bna_error('Exception in delete_subscription', array(
+                'subscription_id' => $subscription_id,
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return false;
+        }
+    }
+
+    /**
+     * Get subscription details by ID
+     *
+     * @param string $subscription_id BNA subscription ID
+     * @return array|WP_Error Subscription details or error
+     */
+    public function get_subscription($subscription_id) {
+        try {
+            if (empty($subscription_id)) {
+                return new WP_Error('missing_subscription_id', 'Subscription ID is required');
+            }
+
+            bna_log('Retrieving BNA subscription', array(
+                'subscription_id' => $subscription_id
+            ));
+
+            $response = $this->make_request('v1/subscription/' . $subscription_id, 'GET');
+
+            if (is_wp_error($response)) {
+                bna_error('Subscription retrieval failed', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $response->get_error_message()
+                ));
+                return $response;
+            }
+
+            bna_log('BNA subscription retrieved successfully', array(
+                'subscription_id' => $subscription_id,
+                'status' => $response['status'] ?? 'unknown'
+            ));
+
+            return $response;
+
+        } catch (Exception $e) {
+            bna_error('Exception in get_subscription', array(
+                'subscription_id' => $subscription_id,
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return new WP_Error('subscription_exception', 'Subscription retrieval failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get list of subscriptions for a customer
+     *
+     * @param string $customer_id BNA customer ID
+     * @return array|WP_Error List of subscriptions or error
+     */
+    public function get_customer_subscriptions($customer_id) {
+        try {
+            if (empty($customer_id)) {
+                return new WP_Error('missing_customer_id', 'Customer ID is required');
+            }
+
+            bna_log('Retrieving customer subscriptions', array(
+                'customer_id' => $customer_id
+            ));
+
+            $response = $this->make_request('v1/subscription', 'GET', array(
+                'customerId' => $customer_id
+            ));
+
+            if (is_wp_error($response)) {
+                bna_error('Customer subscriptions retrieval failed', array(
+                    'customer_id' => $customer_id,
+                    'error' => $response->get_error_message()
+                ));
+                return $response;
+            }
+
+            $subscriptions = isset($response['data']) ? $response['data'] : array();
+
+            bna_log('Customer subscriptions retrieved successfully', array(
+                'customer_id' => $customer_id,
+                'subscription_count' => count($subscriptions)
+            ));
+
+            return $subscriptions;
+
+        } catch (Exception $e) {
+            bna_error('Exception in get_customer_subscriptions', array(
+                'customer_id' => $customer_id,
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return new WP_Error('subscription_exception', 'Customer subscriptions retrieval failed: ' . $e->getMessage());
+        }
+    }
 }
