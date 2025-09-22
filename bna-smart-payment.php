@@ -2,8 +2,8 @@
 /**
  * Plugin Name: BNA Smart Payment Gateway
  * Plugin URI: https://bnasmartpayment.com
- * Description: WooCommerce payment gateway for BNA Smart Payment with iframe, HMAC webhooks, shipping address support, customer data sync and payment methods management.
- * Version: 1.8.0
+ * Description: WooCommerce payment gateway for BNA Smart Payment with iframe, HMAC webhooks, shipping address support, customer data sync, payment methods management and subscriptions.
+ * Version: 1.9.0
  * Author: BNA Smart Payment
  * Text Domain: bna-smart-payment
  * Requires at least: 5.0
@@ -11,6 +11,7 @@
  * WC requires at least: 5.0
  * WC tested up to: 8.0
  *
+ * @since 1.9.0 Added subscription support and custom product types
  * @since 1.8.0 Added HMAC webhook signature verification and enhanced security
  * @since 1.7.0 Payment methods management and auto-saving
  * @since 1.6.0 Customer data sync and enhanced shipping address support
@@ -20,7 +21,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('BNA_SMART_PAYMENT_VERSION', '1.8.0');
+define('BNA_SMART_PAYMENT_VERSION', '1.9.0');
 define('BNA_SMART_PAYMENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -55,6 +56,10 @@ class BNA_Smart_Payment {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-template.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-my-account.php';
 
+        // Load subscription classes (v1.9.0)
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscriptions.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscription-product.php';
+
         if (is_admin()) {
             require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-admin.php';
             BNA_Admin::init();
@@ -78,6 +83,9 @@ class BNA_Smart_Payment {
         BNA_Webhooks::init();
         BNA_Payment_Methods::get_instance();
         BNA_My_Account::get_instance();
+
+        // Initialize subscriptions (v1.9.0)
+        BNA_Subscriptions::get_instance();
 
         add_filter('woocommerce_payment_gateways', array($this, 'add_gateway_class'));
         add_action('wp_enqueue_scripts', array($this, 'load_frontend_assets'));
@@ -103,6 +111,14 @@ class BNA_Smart_Payment {
             wp_enqueue_style(
                 'bna-payment-css',
                 BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/payment.css',
+                array(),
+                BNA_SMART_PAYMENT_VERSION
+            );
+
+            // Load subscription styles (v1.9.0)
+            wp_enqueue_style(
+                'bna-subscriptions-css',
+                BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/subscriptions.css',
                 array(),
                 BNA_SMART_PAYMENT_VERSION
             );
@@ -151,6 +167,19 @@ class BNA_Smart_Payment {
 
     private function should_load_assets() {
         if (is_checkout() || is_account_page()) {
+            return true;
+        }
+
+        // Load on product pages with subscription products (v1.9.0)
+        if (is_product()) {
+            global $product;
+            if ($product && BNA_Subscriptions::is_subscription_product($product)) {
+                return true;
+            }
+        }
+
+        // Load on admin product edit pages (v1.9.0)
+        if (is_admin() && isset($_GET['post']) && get_post_type($_GET['post']) === 'product') {
             return true;
         }
 
@@ -260,7 +289,13 @@ class BNA_Smart_Payment {
             'bna_smart_payment_enable_billing_address' => 'no',
             'bna_smart_payment_enable_birthdate' => 'yes',
             'bna_smart_payment_enable_shipping_address' => 'no',
-            'bna_smart_payment_debug_mode' => 'no'
+            'bna_smart_payment_debug_mode' => 'no',
+
+            // Subscription options (v1.9.0)
+            'bna_smart_payment_enable_subscriptions' => 'no',
+            'bna_smart_payment_subscription_frequencies' => 'monthly,quarterly,annual',
+            'bna_smart_payment_allow_subscription_trials' => 'yes',
+            'bna_smart_payment_allow_signup_fees' => 'yes'
         );
 
         foreach ($defaults as $option_name => $option_value) {
@@ -297,6 +332,10 @@ class BNA_Smart_Payment {
 
             if (version_compare($installed_version, '1.8.0', '<')) {
                 $this->upgrade_to_1_8_0();
+            }
+
+            if (version_compare($installed_version, '1.9.0', '<')) {
+                $this->upgrade_to_1_9_0();
             }
 
             update_option('bna_smart_payment_version', BNA_SMART_PAYMENT_VERSION);
@@ -339,6 +378,24 @@ class BNA_Smart_Payment {
         delete_option('bna_smart_payment_webhook_secret_auto');
     }
 
+    private function upgrade_to_1_9_0() {
+        bna_log('Upgrading to version 1.9.0 - Subscription support');
+
+        // Add subscription options
+        $subscription_defaults = array(
+            'bna_smart_payment_enable_subscriptions' => 'no',
+            'bna_smart_payment_subscription_frequencies' => 'monthly,quarterly,annual',
+            'bna_smart_payment_allow_subscription_trials' => 'yes',
+            'bna_smart_payment_allow_signup_fees' => 'yes'
+        );
+
+        foreach ($subscription_defaults as $option_name => $option_value) {
+            if (false === get_option($option_name)) {
+                add_option($option_name, $option_value);
+            }
+        }
+    }
+
     // ==========================================
     // PLUGIN INFO AND SYSTEM HEALTH
     // ==========================================
@@ -358,6 +415,7 @@ class BNA_Smart_Payment {
             'country_mapping_improved' => true,
             'payment_methods_management' => true,
             'hmac_webhooks_enabled' => true, // New in v1.8.0
+            'subscriptions_enabled' => get_option('bna_smart_payment_enable_subscriptions', 'no'), // New in v1.9.0
             'webhook_secret_configured' => !empty(get_option('bna_smart_payment_webhook_secret', ''))
         );
     }
@@ -371,11 +429,13 @@ class BNA_Smart_Payment {
             'birthdate_enabled' => get_option('bna_smart_payment_enable_birthdate', 'yes'),
             'debug_mode' => get_option('bna_smart_payment_debug_mode', 'no'),
             'webhook_secret_configured' => !empty(get_option('bna_smart_payment_webhook_secret', '')),
+            'subscriptions_enabled' => get_option('bna_smart_payment_enable_subscriptions', 'no'), // New in v1.9.0
             'features' => array(
                 'customer_sync' => '1.6.0',
                 'error_handling' => '1.6.1',
                 'payment_methods' => '1.7.0',
-                'hmac_webhooks' => '1.8.0'
+                'hmac_webhooks' => '1.8.0',
+                'subscriptions' => '1.9.0' // New in v1.9.0
             )
         );
     }
@@ -394,7 +454,8 @@ class BNA_Smart_Payment {
             'json_constants_ok' => defined('JSON_UNESCAPED_UNICODE') && defined('JSON_SORT_KEYS'),
             'credentials_configured' => false,
             'iframe_id_configured' => false,
-            'webhook_secret_configured' => false // New in v1.8.0
+            'webhook_secret_configured' => false, // New in v1.8.0
+            'subscriptions_enabled' => bna_subscriptions_enabled() // New in v1.9.0
         );
 
         if (class_exists('WooCommerce')) {
@@ -467,6 +528,13 @@ function bna_is_shipping_enabled() {
  */
 function bna_is_debug_mode() {
     return get_option('bna_smart_payment_debug_mode', 'no') === 'yes';
+}
+
+/**
+ * Check if subscriptions are enabled (NEW in v1.9.0)
+ */
+function bna_subscriptions_enabled() {
+    return get_option('bna_smart_payment_enable_subscriptions', 'no') === 'yes';
 }
 
 /**

@@ -2,6 +2,7 @@
 /**
  * Plugin activation and deactivation handler
  *
+ * @since 1.9.0 Subscription support and custom product types
  * @since 1.8.0 Removed auto-generation of webhook secret for security reasons
  * @since 1.7.0 Payment methods management support
  * @since 1.6.0 Customer sync and enhanced settings
@@ -28,7 +29,8 @@ class BNA_Activator {
         if (class_exists('BNA_Logger')) {
             bna_log('Plugin activated successfully', array(
                 'version' => defined('BNA_SMART_PAYMENT_VERSION') ? BNA_SMART_PAYMENT_VERSION : 'unknown',
-                'timestamp' => current_time('c')
+                'timestamp' => current_time('c'),
+                'subscriptions_enabled' => get_option('bna_smart_payment_enable_subscriptions', 'no')
             ));
         }
 
@@ -128,6 +130,12 @@ class BNA_Activator {
             'bna_smart_payment_enable_birthdate' => 'yes', // Required for age verification
             'bna_smart_payment_enable_shipping_address' => 'no',
 
+            // Subscription options (v1.9.0)
+            'bna_smart_payment_enable_subscriptions' => 'no',
+            'bna_smart_payment_subscription_frequencies' => 'monthly,quarterly,annual',
+            'bna_smart_payment_allow_subscription_trials' => 'yes',
+            'bna_smart_payment_allow_signup_fees' => 'yes',
+
             // Debug and development
             'bna_smart_payment_debug_mode' => 'no'
         );
@@ -139,7 +147,7 @@ class BNA_Activator {
         }
 
         // Set plugin version for upgrade tracking
-        $current_version = defined('BNA_SMART_PAYMENT_VERSION') ? BNA_SMART_PAYMENT_VERSION : '1.8.0';
+        $current_version = defined('BNA_SMART_PAYMENT_VERSION') ? BNA_SMART_PAYMENT_VERSION : '1.9.0';
         update_option('bna_smart_payment_version', $current_version);
     }
 
@@ -151,14 +159,34 @@ class BNA_Activator {
         global $wpdb;
 
         // Reserved for future database tables if needed
-        // Example: payment method tokens, transaction logs, etc.
+        // Example: payment method tokens, transaction logs, subscription data, etc.
 
         // Charset and collation for tables
         $charset_collate = $wpdb->get_charset_collate();
 
         // Future table creation would go here
-        // require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        // dbDelta($sql);
+        // Example for subscriptions:
+        /*
+        $subscription_table = $wpdb->prefix . 'bna_subscriptions';
+        $sql = "CREATE TABLE $subscription_table (
+            id mediumint(9) NOT NULL AUTO_INCREMENT,
+            subscription_id varchar(100) NOT NULL,
+            customer_id bigint(20) NOT NULL,
+            order_id bigint(20) NOT NULL,
+            status varchar(20) NOT NULL,
+            frequency varchar(20) NOT NULL,
+            next_payment datetime DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY subscription_id (subscription_id),
+            KEY customer_id (customer_id),
+            KEY order_id (order_id)
+        ) $charset_collate;";
+        
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+        */
     }
 
     /**
@@ -225,7 +253,7 @@ class BNA_Activator {
     }
 
     /**
-     * Display activation notice with setup instructions
+     * Display activation notice with setup instructions (Updated for v1.9.0)
      */
     public static function display_activation_notice() {
         if (!get_transient('bna_smart_payment_activation_notice')) {
@@ -242,8 +270,12 @@ class BNA_Activator {
                 <li>Get your API credentials from <strong>BNA Merchant Portal</strong></li>
                 <li>Configure webhook secret from <strong>BNA Portal → Merchant Profile → Webhooks</strong></li>
                 <li><a href="<?php echo esc_url($settings_url); ?>">Configure the gateway settings</a></li>
+                <li><strong>NEW:</strong> Enable subscriptions for recurring billing (optional)</li>
                 <li>Test with staging environment before going live</li>
             </ol>
+            <div style="background: #f0f8ff; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #0073aa;">
+                <strong>📋 New in v1.9.0:</strong> Subscription support! Create recurring payment products and let customers manage subscriptions in My Account.
+            </div>
             <p><small><strong>Webhook URL:</strong> <code><?php echo esc_html(home_url('/wp-json/bna/v1/webhook')); ?></code></small></p>
         </div>
         <script>

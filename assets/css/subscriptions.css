@@ -1,0 +1,627 @@
+/**
+ * BNA Subscriptions Styles
+ * 
+ * CSS styles for subscription interface
+ * Admin and frontend styling
+ * 
+ * @since 1.9.0
+ * @package BNA_Smart_Payment
+ */
+
+/* ==========================================================================
+   Admin Product Edit - Subscription Tab
+   ========================================================================== */
+
+#bna_subscription_product_data {
+    background: #fff;
+}
+
+#bna_subscription_product_data .options_group {
+    border-bottom: 1px solid #eee;
+    padding-bottom: 20px;
+    margin-bottom: 20px;
+}
+
+#bna_subscription_product_data .options_group:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+#bna_subscription_product_data .form-field {
+    margin-bottom: 20px;
+}
+
+#bna_subscription_product_data .form-field label {
+    font-weight: 600;
+    color: #333;
+    display: block;
+    margin-bottom: 5px;
+}
+
+#bna_subscription_product_data .form-field .description {
+    font-style: italic;
+    color: #666;
+    font-size: 12px;
+    margin-top: 5px;
+    display: block;
+}
+
+#bna_subscription_product_data select,
+#bna_subscription_product_data input[type="number"] {
+    width: auto;
+    min-width: 150px;
+}
+
+.bna-subscription-settings-info {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 15px;
+    margin: 15px 0;
+}
+
+.bna-subscription-settings-info h4 {
+    color: #0073aa;
+    margin-top: 0;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bna-subscription-settings-info ul {
+    margin-left: 20px;
+    margin-bottom: 10px;
+}
+
+.bna-subscription-settings-info ul li {
+    margin-bottom: 5px;
+    color: #555;
+}
+
+/* Show/Hide subscription tab based on product type */
+.show_if_bna_subscription {
+    display: none;
+}
+
+#product-type option[value="bna_subscription"] {
+    font-weight: bold;
+    color: #0073aa;
+}
+
+/* ==========================================================================
+   Frontend Product Page - Subscription Info
+   ========================================================================== */
+
+.bna-subscription-info {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.bna-subscription-info h4 {
+    color: #0073aa;
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bna-subscription-info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.bna-subscription-info-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.bna-subscription-info-item strong {
+    color: #333;
+    margin-bottom: 4px;
+    font-size: 14px;
+}
+
+.bna-subscription-info-item span {
+    color: #0073aa;
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.bna-subscription-notice {
+    background: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    padding: 12px 16px;
+    margin: 15px 0;
+    border-radius: 0 4px 4px 0;
+    font-size: 14px;
+    color: #1565c0;
+}
+
+/* ==========================================================================
+   My Account - Subscriptions Page
+   ========================================================================== */
+
+.bna-my-account-subscriptions {
+    max-width: 100%;
+    margin: 0;
+}
+
+.bna-subscriptions-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #0073aa;
+}
+
+.bna-subscriptions-header h2 {
+    margin: 0;
+    color: #0073aa;
+    font-size: 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.subscription-count-badge {
+    background: #0073aa;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 15px;
+    font-size: 12px;
+    font-weight: bold;
+    min-width: 20px;
+    text-align: center;
+}
+
+.subscription-actions a {
+    background: #0073aa;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: background-color 0.3s ease;
+}
+
+.subscription-actions a:hover {
+    background: #005a87;
+    color: white;
+}
+
+/* No Subscriptions State */
+.bna-no-subscriptions {
+    text-align: center;
+    padding: 60px 40px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    border: 1px solid #dee2e6;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.bna-no-subscriptions .empty-icon {
+    font-size: 64px;
+    margin-bottom: 25px;
+    opacity: 0.8;
+}
+
+.bna-no-subscriptions h3 {
+    color: #6c757d;
+    margin-bottom: 15px;
+    font-size: 22px;
+}
+
+.bna-no-subscriptions p {
+    color: #6c757d;
+    margin-bottom: 30px;
+    font-size: 16px;
+    line-height: 1.5;
+    max-width: 500px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Subscription Items */
+.bna-subscriptions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.subscription-item {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 25px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    transition: box-shadow 0.3s ease, transform 0.2s ease;
+}
+
+.subscription-item:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(-2px);
+}
+
+.subscription-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+}
+
+.subscription-info h4 {
+    margin: 0 0 8px 0;
+    color: #333;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.subscription-meta {
+    font-size: 14px;
+    color: #666;
+}
+
+.subscription-status {
+    display: flex;
+    align-items: center;
+}
+
+.status-badge {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-active .status-badge { background: #28a745; }
+.status-suspended .status-badge { background: #ffc107; color: #212529; }
+.status-cancelled .status-badge { background: #dc3545; }
+.status-expired .status-badge { background: #6f42c1; }
+.status-failed .status-badge { background: #fd7e14; }
+.status-new .status-badge { background: #6c757d; }
+
+/* Subscription Details Grid */
+.subscription-details {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.detail-item strong {
+    color: #333;
+    margin-bottom: 4px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.detail-item span {
+    color: #555;
+    font-size: 15px;
+}
+
+.detail-item .amount {
+    font-size: 20px;
+    color: #0073aa;
+    font-weight: bold;
+}
+
+/* Subscription Products */
+.subscription-products {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    border: 1px solid #e9ecef;
+}
+
+.subscription-products strong {
+    color: #333;
+    margin-bottom: 12px;
+    display: block;
+    font-weight: 600;
+}
+
+.products-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.product-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.product-row:last-child {
+    border-bottom: none;
+}
+
+.product-name {
+    color: #333;
+    font-weight: 500;
+}
+
+.product-price {
+    color: #666;
+    font-weight: 500;
+}
+
+/* Subscription Actions */
+.subscription-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.subscription-actions .button {
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 4px;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    min-height: auto;
+    line-height: 1.4;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.subscription-actions .button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.button-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.button-secondary:hover {
+    background: #5a6268;
+    color: white;
+}
+
+.suspend-subscription {
+    background: #ffc107;
+    color: #212529;
+}
+
+.suspend-subscription:hover {
+    background: #e0a800;
+}
+
+.cancel-subscription {
+    background: #dc3545;
+    color: white;
+}
+
+.cancel-subscription:hover {
+    background: #c82333;
+}
+
+.resume-subscription {
+    background: #28a745;
+    color: white;
+}
+
+.resume-subscription:hover {
+    background: #218838;
+}
+
+.reactivate-subscription {
+    background: #17a2b8;
+    color: white;
+}
+
+.reactivate-subscription:hover {
+    background: #138496;
+}
+
+/* Subscription Notice */
+.subscription-notice {
+    background: #d1ecf1;
+    border: 1px solid #bee5eb;
+    border-radius: 6px;
+    padding: 20px;
+    margin-top: 25px;
+}
+
+.subscription-notice h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    color: #0c5460;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.subscription-notice ul {
+    margin-bottom: 0;
+    padding-left: 25px;
+    color: #0c5460;
+}
+
+.subscription-notice li {
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+/* ==========================================================================
+   Responsive Design
+   ========================================================================== */
+
+@media (max-width: 768px) {
+    .bna-subscriptions-header {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+    }
+    
+    .bna-subscriptions-header h2 {
+        font-size: 20px;
+    }
+    
+    .subscription-header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: stretch;
+    }
+    
+    .subscription-details {
+        grid-template-columns: 1fr !important;
+        gap: 15px;
+    }
+    
+    .subscription-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .subscription-actions .button {
+        width: 100%;
+        text-align: center;
+        justify-content: center;
+    }
+    
+    .bna-subscription-info-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    .bna-no-subscriptions {
+        padding: 40px 20px;
+    }
+    
+    .bna-no-subscriptions .empty-icon {
+        font-size: 48px;
+    }
+}
+
+@media (max-width: 480px) {
+    .subscription-item {
+        padding: 20px 15px;
+    }
+    
+    .bna-subscription-info {
+        padding: 15px;
+        margin: 15px 0;
+    }
+    
+    .subscription-notice {
+        padding: 15px;
+    }
+    
+    .status-badge {
+        font-size: 11px;
+        padding: 4px 10px;
+    }
+}
+
+/* ==========================================================================
+   Loading States and Animations
+   ========================================================================== */
+
+.subscription-loading {
+    opacity: 0.6;
+    pointer-events: none;
+    position: relative;
+}
+
+.subscription-loading::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.8);
+    border-radius: 8px;
+    z-index: 10;
+}
+
+.subscription-loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid #0073aa;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    z-index: 11;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ==========================================================================
+   Utility Classes
+   ========================================================================== */
+
+.text-center {
+    text-align: center;
+}
+
+.text-muted {
+    color: #6c757d;
+}
+
+.mb-0 {
+    margin-bottom: 0;
+}
+
+.mt-20 {
+    margin-top: 20px;
+}
+
+.font-weight-bold {
+    font-weight: bold;
+}
+
+.d-flex {
+    display: flex;
+}
+
+.align-items-center {
+    align-items: center;
+}
+
+.justify-content-between {
+    justify-content: space-between;
+}
+
+.gap-10 {
+    gap: 10px;
+}
