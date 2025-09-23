@@ -11,7 +11,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->icon = '';
         $this->has_fields = false;
         $this->method_title = 'BNA Smart Payment';
-        $this->method_description = 'Accept payments through BNA Smart Payment system with secure iframe integration, automatic customer data sync and subscription support.';
+        $this->method_description = 'Accept payments through BNA Smart Payment system with secure iframe integration, automatic customer data sync and subscription support using product meta fields.';
         $this->supports = array('products');
 
         $this->init_form_fields();
@@ -23,7 +23,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         bna_debug('BNA Gateway initialized', array(
             'gateway_id' => $this->id,
-            'enabled' => $this->enabled
+            'enabled' => $this->enabled,
+            'subscription_system' => 'meta_fields'
         ));
     }
 
@@ -41,9 +42,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->enable_birthdate = $this->get_option('enable_birthdate');
         $this->enable_shipping_address = $this->get_option('enable_shipping_address');
 
-        // Load subscription settings (v1.9.0)
+        // Load subscription settings (v1.9.0) - Simplified
         $this->enable_subscriptions = $this->get_option('enable_subscriptions');
-        $this->subscription_frequencies = $this->get_option('subscription_frequencies');
         $this->allow_subscription_trials = $this->get_option('allow_subscription_trials');
         $this->allow_signup_fees = $this->get_option('allow_signup_fees');
     }
@@ -67,6 +67,11 @@ class BNA_Gateway extends WC_Payment_Gateway {
             add_action('wp_enqueue_scripts', array($this, 'enqueue_shipping_scripts'));
             add_action('woocommerce_checkout_update_customer_data', array($this, 'save_customer_shipping_data'));
             add_filter('woocommerce_checkout_get_value', array($this, 'populate_checkout_shipping_fields'), 10, 2);
+        }
+
+        // Add subscription validation hooks (v1.9.0)
+        if ($this->get_option('enable_subscriptions') === 'yes') {
+            add_action('woocommerce_checkout_process', array($this, 'validate_subscription_checkout'));
         }
     }
 
@@ -189,50 +194,33 @@ class BNA_Gateway extends WC_Payment_Gateway {
                         <h4 style="margin-top: 0;">📋 BNA Subscription Features</h4>
                         <p style="margin-bottom: 10px;">Enable recurring payments and subscription products. This allows you to:</p>
                         <ul style="margin-left: 20px; margin-bottom: 10px;">
-                            <li>Create subscription products with custom billing intervals</li>
+                            <li>Add subscription options to any WooCommerce product</li>
                             <li>Offer free trials and sign-up fees</li>
                             <li>Let customers manage subscriptions in My Account</li>
                             <li>Automatic recurring billing through BNA API</li>
                         </ul>
-                        <p style="margin-bottom: 0;"><strong>Note:</strong> API integration for subscription management will be available in future updates. Currently provides UI and basic functionality.</p>
+                        <p style="margin-bottom: 0;"><strong>Note:</strong> Uses product meta fields for better compatibility.</p>
                     </div>
                 '
             ),
             'enable_subscriptions' => array(
                 'title' => 'Enable Subscriptions',
                 'type' => 'checkbox',
-                'label' => 'Enable subscription products and recurring billing',
+                'label' => 'Enable subscription options for products',
                 'default' => 'no',
-                'description' => 'Allow customers to purchase subscription products with recurring payments.',
-            ),
-            'subscription_frequencies' => array(
-                'title' => 'Available Frequencies',
-                'type' => 'multiselect',
-                'class' => 'wc-enhanced-select',
-                'default' => array('monthly', 'quarterly', 'annual'),
-                'options' => array(
-                    'daily' => 'Daily',
-                    'weekly' => 'Weekly',
-                    'biweekly' => 'Bi-Weekly (Every 2 weeks)',
-                    'monthly' => 'Monthly',
-                    'quarterly' => 'Quarterly (Every 3 months)',
-                    'biannual' => 'Bi-Annual (Every 6 months)',
-                    'annual' => 'Annual (Yearly)'
-                ),
-                'description' => 'Select which billing frequencies are available for subscription products.',
-                'desc_tip' => false,
+                'description' => 'Allow products to have subscription billing options.',
             ),
             'allow_subscription_trials' => array(
                 'title' => 'Allow Free Trials',
                 'type' => 'checkbox',
-                'label' => 'Allow subscription products to offer free trial periods',
+                'label' => 'Allow products to offer free trial periods',
                 'default' => 'yes',
                 'description' => 'Enable free trial periods for subscription products.',
             ),
             'allow_signup_fees' => array(
                 'title' => 'Allow Sign-up Fees',
                 'type' => 'checkbox',
-                'label' => 'Allow subscription products to charge one-time sign-up fees',
+                'label' => 'Allow products to charge one-time sign-up fees',
                 'default' => 'yes',
                 'description' => 'Enable one-time sign-up fees for subscription products.',
             ),
@@ -248,7 +236,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         // Sync subscription settings to global options for easy access
         $subscription_options = array(
             'bna_smart_payment_enable_subscriptions' => $this->get_option('enable_subscriptions', 'no'),
-            'bna_smart_payment_subscription_frequencies' => implode(',', (array) $this->get_option('subscription_frequencies', array('monthly', 'quarterly', 'annual'))),
             'bna_smart_payment_allow_subscription_trials' => $this->get_option('allow_subscription_trials', 'yes'),
             'bna_smart_payment_allow_signup_fees' => $this->get_option('allow_signup_fees', 'yes')
         );
@@ -260,11 +247,45 @@ class BNA_Gateway extends WC_Payment_Gateway {
         if ($saved) {
             bna_log('Gateway settings saved', array(
                 'subscriptions_enabled' => $this->get_option('enable_subscriptions', 'no'),
-                'frequencies_count' => count((array) $this->get_option('subscription_frequencies', array()))
+                'subscription_system' => 'meta_fields'
             ));
         }
 
         return $saved;
+    }
+
+    /**
+     * Validate subscription checkout - Updated for meta fields system (v1.9.0)
+     */
+    public function validate_subscription_checkout() {
+        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            return;
+        }
+
+        // Check if cart contains subscription products
+        $has_subscription = false;
+        foreach (WC()->cart->get_cart() as $cart_item) {
+            $product = $cart_item['data'];
+            if (BNA_Product_Subscription_Fields::is_subscription_product($product)) {
+                $has_subscription = true;
+                break;
+            }
+        }
+
+        if (!$has_subscription) {
+            return;
+        }
+
+        // Additional validation for subscription orders
+        if (empty($_POST['billing_email'])) {
+            wc_add_notice(__('Email address is required for subscription orders.', 'bna-smart-payment'), 'error');
+        }
+
+        // Check if user can create subscriptions (could be based on user role, etc.)
+        if (!is_user_logged_in()) {
+            // For now, allow guest subscriptions, but this could be changed
+            bna_debug('Guest subscription order detected');
+        }
     }
 
     public function add_birthdate_field($fields) {
@@ -656,7 +677,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         bna_log('Payment process initiated', array(
             'order_id' => $order_id,
-            'payment_url' => $payment_url
+            'payment_url' => $payment_url,
+            'has_subscription' => BNA_Subscriptions::order_has_subscription($order)
         ));
 
         return array(
@@ -714,6 +736,16 @@ class BNA_Gateway extends WC_Payment_Gateway {
             $errors[] = __('Billing name is required.', 'bna-smart-payment');
         }
 
+        // Additional validation for subscription orders
+        if (BNA_Subscriptions::order_has_subscription($order)) {
+            bna_debug('Validating subscription order', array('order_id' => $order->get_id()));
+            
+            // Add any subscription-specific validation here
+            if (!BNA_Subscriptions::is_enabled()) {
+                $errors[] = __('Subscription payments are currently disabled.', 'bna-smart-payment');
+            }
+        }
+
         return array(
             'valid' => empty($errors),
             'errors' => $errors
@@ -723,6 +755,12 @@ class BNA_Gateway extends WC_Payment_Gateway {
     private function prepare_order_for_payment($order) {
         $order->update_status('pending', __('Awaiting BNA payment.', 'bna-smart-payment'));
         $order->add_meta_data('_bna_payment_initiated', current_time('mysql'));
+        
+        // Add subscription flag if order contains subscriptions
+        if (BNA_Subscriptions::order_has_subscription($order)) {
+            $order->add_meta_data('_bna_order_type', 'subscription');
+        }
+        
         $order->save();
     }
 

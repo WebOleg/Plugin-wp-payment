@@ -11,7 +11,7 @@
  * WC requires at least: 5.0
  * WC tested up to: 8.0
  *
- * @since 1.9.0 Added subscription support and custom product types
+ * @since 1.9.0 Updated subscription support - replaced custom product type with product meta fields
  * @since 1.8.0 Added HMAC webhook signature verification and enhanced security
  * @since 1.7.0 Payment methods management and auto-saving
  * @since 1.6.0 Customer data sync and enhanced shipping address support
@@ -56,9 +56,9 @@ class BNA_Smart_Payment {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-template.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-my-account.php';
 
-        // Load subscription classes (v1.9.0)
+        // Load subscription classes (v1.9.0) - Updated to use product meta fields
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscriptions.php';
-        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscription-product.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-product-subscription-fields.php';
 
         if (is_admin()) {
             require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-admin.php';
@@ -170,11 +170,14 @@ class BNA_Smart_Payment {
             return true;
         }
 
-        // Load on product pages with subscription products (v1.9.0)
+        // Load on product pages with subscription products (v1.9.0) - Fixed type checking
         if (is_product()) {
             global $product;
-            if ($product && BNA_Subscriptions::is_subscription_product($product)) {
-                return true;
+            // Only check if we have a valid product object
+            if ($product && is_a($product, 'WC_Product')) {
+                if (BNA_Product_Subscription_Fields::is_subscription_product($product)) {
+                    return true;
+                }
             }
         }
 
@@ -293,7 +296,6 @@ class BNA_Smart_Payment {
 
             // Subscription options (v1.9.0)
             'bna_smart_payment_enable_subscriptions' => 'no',
-            'bna_smart_payment_subscription_frequencies' => 'monthly,quarterly,annual',
             'bna_smart_payment_allow_subscription_trials' => 'yes',
             'bna_smart_payment_allow_signup_fees' => 'yes'
         );
@@ -384,7 +386,6 @@ class BNA_Smart_Payment {
         // Add subscription options
         $subscription_defaults = array(
             'bna_smart_payment_enable_subscriptions' => 'no',
-            'bna_smart_payment_subscription_frequencies' => 'monthly,quarterly,annual',
             'bna_smart_payment_allow_subscription_trials' => 'yes',
             'bna_smart_payment_allow_signup_fees' => 'yes'
         );

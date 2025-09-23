@@ -1,0 +1,189 @@
+/**
+ * Admin Subscription Styles
+ * Styles for subscription fields in WooCommerce product admin
+ */
+
+/* Subscription options container */
+.bna_subscription_options {
+    border-left: 4px solid #007cba;
+    padding-left: 15px;
+    margin: 15px 0;
+}
+
+/* Subscription fields container */
+.bna_subscription_fields {
+    background: #f9f9f9;
+    padding: 15px;
+    border-radius: 5px;
+    margin-top: 10px;
+}
+
+.bna_subscription_fields .form-field {
+    margin-bottom: 15px;
+}
+
+/* Subscription checkbox styling */
+#_bna_is_subscription + label {
+    font-weight: bold;
+    color: #007cba;
+}
+
+#_bna_is_subscription:checked + label {
+    color: #00a32a;
+}
+
+/* Subscription frequency field */
+#_bna_subscription_frequency {
+    min-width: 200px;
+}
+
+/* Trial days and signup fee fields */
+#_bna_subscription_trial_days,
+#_bna_subscription_signup_fee {
+    max-width: 150px;
+}
+
+/* Help text styling */
+.bna_subscription_fields .description {
+    font-style: italic;
+    color: #666;
+    margin-top: 5px;
+}
+
+/* Validation error styling */
+.bna-validation-error {
+    border-color: #dc3232 !important;
+    box-shadow: 0 0 3px rgba(220, 50, 50, 0.3);
+}
+
+/* Success state */
+.bna-validation-success {
+    border-color: #00a32a !important;
+    box-shadow: 0 0 3px rgba(0, 163, 42, 0.3);
+}
+
+/* Subscription indicator in product list */
+.subscription-indicator {
+    display: inline-block;
+    background: #007cba;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    margin-left: 5px;
+}
+
+/* Frequency badge */
+.frequency-badge {
+    display: inline-block;
+    background: #f0f0f1;
+    color: #50575e;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    margin-left: 5px;
+}
+
+.frequency-badge.daily { background: #ff6b6b; color: white; }
+.frequency-badge.weekly { background: #4ecdc4; color: white; }
+.frequency-badge.monthly { background: #45b7d1; color: white; }
+.frequency-badge.quarterly { background: #96ceb4; color: white; }
+.frequency-badge.annual { background: #feca57; color: white; }
+
+/* Trial period indicator */
+.trial-indicator {
+    background: #00d4aa;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-left: 5px;
+}
+
+/* Signup fee indicator */
+.signup-fee-indicator {
+    background: #ff9ff3;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-left: 5px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 782px) {
+    .bna_subscription_fields {
+        padding: 10px;
+    }
+    
+    #_bna_subscription_frequency,
+    #_bna_subscription_trial_days,
+    #_bna_subscription_signup_fee {
+        width: 100%;
+        max-width: none;
+    }
+}
+
+/* Loading state */
+.bna-loading {
+    opacity: 0.6;
+    pointer-events: none;
+    position: relative;
+}
+
+.bna-loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    margin: -10px 0 0 -10px;
+    border: 2px solid #007cba;
+    border-radius: 50%;
+    border-top: 2px solid transparent;
+    animation: bna-spin 1s linear infinite;
+}
+
+@keyframes bna-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Tooltips */
+.bna-tooltip {
+    position: relative;
+    cursor: help;
+}
+
+.bna-tooltip::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+    z-index: 1000;
+}
+
+.bna-tooltip:hover::after {
+    opacity: 1;
+}
+
+/* Print styles */
+@media print {
+    .bna_subscription_options,
+    .bna_subscription_fields {
+        background: white !important;
+        border: 1px solid #ddd;
+    }
+}
