@@ -366,7 +366,7 @@ class BNA_Webhooks {
 
     /**
      * Handle transaction events
-     * ВИПРАВЛЕНО: додано пошук по invoiceId та обробку transaction.processed
+     * ВИПРАВЛЕНО: додано правильну логіку для розрізнення першого платежу від renewal
      *
      * @param string $event Event name
      * @param array $data Transaction data
@@ -438,8 +438,8 @@ class BNA_Webhooks {
             $order->save_meta_data();
         }
 
-        // Check if this is a subscription renewal transaction
-        if (self::is_subscription_renewal_transaction($data)) {
+        // ГОЛОВНЕ ВИПРАВЛЕННЯ: правильна перевірка чи це renewal transaction
+        if (self::is_subscription_renewal_transaction($order, $data)) {
             return self::handle_subscription_renewal_transaction($order, $data);
         }
 
@@ -864,10 +864,68 @@ class BNA_Webhooks {
     }
 
     /**
-     * Check if transaction is a subscription renewal
+     * ГОЛОВНЕ ВИПРАВЛЕННЯ: правильно розрізняє перший платіж від renewal
+     * Check if transaction is a subscription renewal (not first payment)
+     *
+     * @param WC_Order $order The order object
+     * @param array $data Transaction data
+     * @return bool True if this is a renewal transaction
      */
-    private static function is_subscription_renewal_transaction($data) {
-        return isset($data['subscriptionId']) && !empty($data['subscriptionId']);
+    private static function is_subscription_renewal_transaction($order, $data) {
+        // Must have subscriptionId
+        if (!isset($data['subscriptionId']) || empty($data['subscriptionId'])) {
+            return false;
+        }
+
+        bna_log('Checking if transaction is renewal', array(
+            'order_id' => $order->get_id(),
+            'order_status' => $order->get_status(),
+            'has_subscription_id' => !empty($data['subscriptionId']),
+            'subscription_id' => $data['subscriptionId'] ?? 'none'
+        ));
+
+        // КЛЮЧОВЕ ВИПРАВЛЕННЯ: якщо order має статус pending/on-hold - це ПЕРШИЙ платіж
+        if ($order->has_status(['pending', 'on-hold'])) {
+            bna_log('Order has pending/on-hold status - this is FIRST payment, not renewal', array(
+                'order_id' => $order->get_id(),
+                'status' => $order->get_status()
+            ));
+            return false;
+        }
+
+        // ДОДАТКОВА ПЕРЕВІРКА: якщо order ще не має subscription_id - це перший платіж
+        $existing_subscription_id = $order->get_meta('_bna_subscription_id');
+        if (empty($existing_subscription_id)) {
+            bna_log('Order has no existing subscription ID - this is FIRST payment', array(
+                'order_id' => $order->get_id()
+            ));
+            return false;
+        }
+
+        // ДОДАТКОВА ПЕРЕВІРКА: якщо це order з renewal flag - точно renewal
+        if ($order->get_meta('_bna_subscription_renewal') === 'yes') {
+            bna_log('Order marked as renewal order - this is renewal', array(
+                'order_id' => $order->get_id()
+            ));
+            return true;
+        }
+
+        // Якщо order вже completed/processing і має subscription_id - може бути renewal
+        if ($order->has_status(['completed', 'processing']) && !empty($existing_subscription_id)) {
+            bna_log('Order completed with subscription ID - this could be renewal', array(
+                'order_id' => $order->get_id(),
+                'status' => $order->get_status(),
+                'existing_subscription_id' => $existing_subscription_id
+            ));
+            return true;
+        }
+
+        // За замовчуванням - не renewal
+        bna_log('Default case - not a renewal transaction', array(
+            'order_id' => $order->get_id(),
+            'status' => $order->get_status()
+        ));
+        return false;
     }
 
     /**
