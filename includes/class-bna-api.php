@@ -60,6 +60,20 @@ class BNA_API {
         'EE' => 'Estonia'
     );
 
+    /**
+     * BNA API subscription frequency mapping
+     * @var array
+     */
+    private static $BNA_SUBSCRIPTION_FREQUENCIES = array(
+        'daily' => 'DAILY',
+        'weekly' => 'WEEKLY',
+        'biweekly' => 'BIWEEKLY',
+        'monthly' => 'MONTHLY',
+        'quarterly' => 'QUARTERLY',
+        'biannual' => 'BIANNUAL',
+        'annual' => 'ANNUAL'
+    );
+
     public function __construct() {
         $this->access_key = get_option('bna_smart_payment_access_key', '');
         $this->secret_key = get_option('bna_smart_payment_secret_key', '');
@@ -68,7 +82,8 @@ class BNA_API {
 
         bna_debug('BNA API initialized', array(
             'environment' => $this->environment,
-            'has_credentials' => $this->has_credentials()
+            'has_credentials' => $this->has_credentials(),
+            'subscriptions_supported' => true
         ));
     }
 
@@ -210,6 +225,317 @@ class BNA_API {
 
         return $decoded_response;
     }
+
+    // ==========================================
+    // SUBSCRIPTION MANAGEMENT METHODS (v1.9.0)
+    // ==========================================
+
+    /**
+     * Create subscription via BNA API
+     * @param string $customer_id BNA Customer ID
+     * @param string $frequency Subscription frequency (daily, weekly, monthly, etc.)
+     * @param float $amount Subscription amount
+     * @param string $currency Currency code (default: CAD)
+     * @param array $additional_data Additional subscription data
+     * @return array|WP_Error
+     */
+    public function create_subscription($customer_id, $frequency, $amount, $currency = 'CAD', $additional_data = array()) {
+        try {
+            if (empty($customer_id) || empty($frequency) || !$amount) {
+                return new WP_Error('invalid_subscription_data', 'Customer ID, frequency, and amount are required');
+            }
+
+            // Convert WooCommerce frequency to BNA format
+            $bna_frequency = $this->convert_frequency_to_bna($frequency);
+            if (!$bna_frequency) {
+                return new WP_Error('unsupported_frequency', 'Subscription frequency not supported: ' . $frequency);
+            }
+
+            $subscription_data = array(
+                'customerId' => $customer_id,
+                'recurrence' => $bna_frequency,
+                'amount' => (float) $amount,
+                'currency' => $currency,
+                'action' => 'SALE'
+            );
+
+            // Add additional data if provided
+            if (!empty($additional_data)) {
+                $subscription_data = array_merge($subscription_data, $additional_data);
+            }
+
+            bna_log('Creating BNA subscription', array(
+                'customer_id' => $customer_id,
+                'frequency' => $frequency,
+                'bna_frequency' => $bna_frequency,
+                'amount' => $amount,
+                'currency' => $currency
+            ));
+
+            $response = $this->make_request('v1/subscription', 'POST', $subscription_data);
+
+            if (is_wp_error($response)) {
+                bna_error('Subscription creation failed', array(
+                    'customer_id' => $customer_id,
+                    'error' => $response->get_error_message()
+                ));
+                return $response;
+            }
+
+            if (empty($response['id'])) {
+                return new WP_Error('invalid_subscription_response', 'Subscription ID not found in response');
+            }
+
+            bna_log('Subscription created successfully', array(
+                'subscription_id' => $response['id'],
+                'customer_id' => $customer_id,
+                'frequency' => $bna_frequency,
+                'amount' => $amount
+            ));
+
+            return $response;
+
+        } catch (Exception $e) {
+            bna_error('Exception in create_subscription', array(
+                'customer_id' => $customer_id,
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+
+            return new WP_Error('subscription_creation_exception', 'Subscription creation failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get subscription by ID
+     * @param string $subscription_id BNA Subscription ID
+     * @return array|WP_Error
+     */
+    public function get_subscription($subscription_id) {
+        if (empty($subscription_id)) {
+            return new WP_Error('missing_subscription_id', 'Subscription ID is required');
+        }
+
+        bna_debug('Retrieving subscription', array('subscription_id' => $subscription_id));
+
+        $response = $this->make_request('v1/subscription/' . $subscription_id, 'GET');
+
+        if (is_wp_error($response)) {
+            bna_error('Failed to retrieve subscription', array(
+                'subscription_id' => $subscription_id,
+                'error' => $response->get_error_message()
+            ));
+            return $response;
+        }
+
+        bna_log('Subscription retrieved successfully', array(
+            'subscription_id' => $subscription_id,
+            'status' => $response['status'] ?? 'unknown'
+        ));
+
+        return $response;
+    }
+
+    /**
+     * Get subscriptions for customer
+     * @param string $customer_id BNA Customer ID
+     * @param string $status Filter by status (optional)
+     * @return array|WP_Error
+     */
+    public function get_customer_subscriptions($customer_id, $status = null) {
+        if (empty($customer_id)) {
+            return new WP_Error('missing_customer_id', 'Customer ID is required');
+        }
+
+        $params = array('customerId' => $customer_id);
+        if ($status) {
+            $params['status'] = $status;
+        }
+
+        bna_debug('Retrieving customer subscriptions', $params);
+
+        $response = $this->make_request('v1/subscription', 'GET', $params);
+
+        if (is_wp_error($response)) {
+            bna_error('Failed to retrieve customer subscriptions', array(
+                'customer_id' => $customer_id,
+                'error' => $response->get_error_message()
+            ));
+            return $response;
+        }
+
+        $subscriptions = $response['data'] ?? array();
+
+        bna_log('Customer subscriptions retrieved', array(
+            'customer_id' => $customer_id,
+            'subscriptions_count' => count($subscriptions)
+        ));
+
+        return $subscriptions;
+    }
+
+    /**
+     * Suspend subscription
+     * @param string $subscription_id BNA Subscription ID
+     * @return array|WP_Error
+     */
+    public function suspend_subscription($subscription_id) {
+        if (empty($subscription_id)) {
+            return new WP_Error('missing_subscription_id', 'Subscription ID is required');
+        }
+
+        bna_log('Suspending subscription', array('subscription_id' => $subscription_id));
+
+        $response = $this->make_request('v1/subscription/' . $subscription_id, 'PATCH', array(
+            'suspend' => true
+        ));
+
+        if (is_wp_error($response)) {
+            bna_error('Failed to suspend subscription', array(
+                'subscription_id' => $subscription_id,
+                'error' => $response->get_error_message()
+            ));
+            return $response;
+        }
+
+        bna_log('Subscription suspended successfully', array('subscription_id' => $subscription_id));
+
+        return $response;
+    }
+
+    /**
+     * Resume suspended subscription
+     * @param string $subscription_id BNA Subscription ID
+     * @return array|WP_Error
+     */
+    public function resume_subscription($subscription_id) {
+        if (empty($subscription_id)) {
+            return new WP_Error('missing_subscription_id', 'Subscription ID is required');
+        }
+
+        bna_log('Resuming subscription', array('subscription_id' => $subscription_id));
+
+        $response = $this->make_request('v1/subscription/' . $subscription_id, 'PATCH', array(
+            'suspend' => false
+        ));
+
+        if (is_wp_error($response)) {
+            bna_error('Failed to resume subscription', array(
+                'subscription_id' => $subscription_id,
+                'error' => $response->get_error_message()
+            ));
+            return $response;
+        }
+
+        bna_log('Subscription resumed successfully', array('subscription_id' => $subscription_id));
+
+        return $response;
+    }
+
+    /**
+     * Delete subscription
+     * @param string $subscription_id BNA Subscription ID
+     * @return array|WP_Error
+     */
+    public function delete_subscription($subscription_id) {
+        if (empty($subscription_id)) {
+            return new WP_Error('missing_subscription_id', 'Subscription ID is required');
+        }
+
+        bna_log('Deleting subscription', array('subscription_id' => $subscription_id));
+
+        $response = $this->make_request('v1/subscription/' . $subscription_id, 'DELETE');
+
+        if (is_wp_error($response)) {
+            bna_error('Failed to delete subscription', array(
+                'subscription_id' => $subscription_id,
+                'error' => $response->get_error_message()
+            ));
+            return $response;
+        }
+
+        bna_log('Subscription deleted successfully', array('subscription_id' => $subscription_id));
+
+        return $response;
+    }
+
+    /**
+     * Resend subscription notification
+     * @param string $subscription_id BNA Subscription ID
+     * @return array|WP_Error
+     */
+    public function resend_subscription_notification($subscription_id) {
+        if (empty($subscription_id)) {
+            return new WP_Error('missing_subscription_id', 'Subscription ID is required');
+        }
+
+        bna_log('Resending subscription notification', array('subscription_id' => $subscription_id));
+
+        $response = $this->make_request('v1/subscription/' . $subscription_id . '/notify', 'POST');
+
+        if (is_wp_error($response)) {
+            bna_error('Failed to resend subscription notification', array(
+                'subscription_id' => $subscription_id,
+                'error' => $response->get_error_message()
+            ));
+            return $response;
+        }
+
+        bna_log('Subscription notification sent successfully', array('subscription_id' => $subscription_id));
+
+        return $response;
+    }
+
+    /**
+     * Convert WooCommerce frequency to BNA API format
+     * @param string $wc_frequency
+     * @return string|false
+     */
+    private function convert_frequency_to_bna($wc_frequency) {
+        return self::$BNA_SUBSCRIPTION_FREQUENCIES[$wc_frequency] ?? false;
+    }
+
+    /**
+     * Get supported subscription frequencies
+     * @return array
+     */
+    public static function get_supported_frequencies() {
+        return self::$BNA_SUBSCRIPTION_FREQUENCIES;
+    }
+
+    /**
+     * Check if order contains subscription products
+     * @param WC_Order $order
+     * @return bool
+     */
+    private function order_has_subscriptions($order) {
+        foreach ($order->get_items() as $item) {
+            $product = $item->get_product();
+            if ($product && BNA_Subscriptions::is_subscription_product($product)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Get subscription data from order items
+     * @param WC_Order $order
+     * @return array|false
+     */
+    private function get_order_subscription_data($order) {
+        foreach ($order->get_items() as $item) {
+            $product = $item->get_product();
+            if ($product && BNA_Subscriptions::is_subscription_product($product)) {
+                return BNA_Subscriptions::get_subscription_data($product);
+            }
+        }
+        return false;
+    }
+
+    // ==========================================
+    // EXISTING METHODS (Updated for Subscriptions)
+    // ==========================================
 
     private function build_shipping_address($order) {
         if (get_option('bna_smart_payment_enable_shipping_address') !== 'yes') {
@@ -448,9 +774,12 @@ class BNA_API {
                 return new WP_Error('missing_iframe_id', 'iFrame ID not configured');
             }
 
+            $is_subscription_order = $this->order_has_subscriptions($order);
+
             bna_log('Generating checkout token', array(
                 'order_id' => $order->get_id(),
-                'order_total' => $order->get_total()
+                'order_total' => $order->get_total(),
+                'is_subscription' => $is_subscription_order
             ));
 
             $customer_result = $this->get_or_create_customer($order);
@@ -490,6 +819,7 @@ class BNA_API {
                 return new WP_Error('missing_token', 'Token not found in API response');
             }
 
+            // Store customer data hash for future reference
             $customer_info = $this->build_customer_info($order);
             if ($customer_info) {
                 $current_hash = $this->generate_customer_data_hash($customer_info);
@@ -501,7 +831,8 @@ class BNA_API {
                 'order_id' => $order->get_id(),
                 'customer_id' => $customer_result['customer_id'] ?? 'unknown',
                 'was_updated' => $customer_result['was_updated'] ?? false,
-                'token_length' => strlen($response['token'])
+                'token_length' => strlen($response['token']),
+                'is_subscription' => $is_subscription_order
             ));
 
             return $response;
@@ -594,6 +925,9 @@ class BNA_API {
         }
     }
 
+    /**
+     * Create checkout payload - Enhanced for subscription support (v1.9.0)
+     */
     private function create_checkout_payload($order, $customer_result) {
         $payload = array(
             'iframeId' => get_option('bna_smart_payment_iframe_id'),
@@ -601,6 +935,37 @@ class BNA_API {
             'items' => $this->get_order_items($order)
         );
 
+        // Check if this is a subscription order
+        $subscription_data = $this->get_order_subscription_data($order);
+        if ($subscription_data && bna_subscriptions_enabled()) {
+            // Add recurrence data for subscription orders
+            $bna_frequency = $this->convert_frequency_to_bna($subscription_data['frequency']);
+
+            if ($bna_frequency) {
+                $payload['recurrence'] = $bna_frequency;
+                $payload['recurring'] = true;
+
+                bna_log('Added subscription data to checkout payload', array(
+                    'order_id' => $order->get_id(),
+                    'frequency' => $subscription_data['frequency'],
+                    'bna_frequency' => $bna_frequency,
+                    'trial_days' => $subscription_data['trial_days'],
+                    'signup_fee' => $subscription_data['signup_fee']
+                ));
+
+                // Add signup fee if present
+                if ($subscription_data['signup_fee'] > 0) {
+                    $payload['signupFee'] = (float) $subscription_data['signup_fee'];
+                }
+
+                // Add trial period if present
+                if ($subscription_data['trial_days'] > 0) {
+                    $payload['trialDays'] = (int) $subscription_data['trial_days'];
+                }
+            }
+        }
+
+        // Add customer information
         if (!empty($customer_result['customer_id'])) {
             $payload['customerId'] = $customer_result['customer_id'];
         } else {
@@ -611,10 +976,16 @@ class BNA_API {
             $payload['customerInfo'] = $customer_info;
         }
 
+        // Add invoice information
         $payload['invoiceInfo'] = array(
             'invoiceId' => $order->get_order_number(),
             'invoiceAdditionalInfo' => 'WooCommerce Order #' . $order->get_id()
         );
+
+        // Add saveCustomer flag for subscriptions (required for tokenization)
+        if ($subscription_data) {
+            $payload['saveCustomer'] = true;
+        }
 
         return $payload;
     }

@@ -4,6 +4,7 @@
  * Handles incoming webhook requests with HMAC security verification
  * Supports both new event-based format and legacy webhook formats
  *
+ * @since 1.9.0 Added comprehensive subscription webhook support
  * @since 1.8.0 Added HMAC signature verification and new event-based webhook support
  * @since 1.7.0 Payment methods webhook support
  * @since 1.6.0 Customer sync webhook support
@@ -19,6 +20,22 @@ class BNA_Webhooks {
      * Maximum allowed timestamp age in seconds (5 minutes)
      */
     const MAX_TIMESTAMP_AGE = 300;
+
+    /**
+     * BNA subscription status mapping to WooCommerce order status
+     * @var array
+     */
+    private static $SUBSCRIPTION_STATUS_MAP = array(
+        'new' => 'processing',
+        'active' => 'processing',
+        'suspended' => 'on-hold',
+        'expired' => 'completed',
+        'invalid' => 'failed',
+        'canceled' => 'cancelled',
+        'cancelled' => 'cancelled',
+        'failed' => 'failed',
+        'deleted' => 'cancelled'
+    );
 
     /**
      * Initialize webhook routes
@@ -300,6 +317,12 @@ class BNA_Webhooks {
             case 'subscription.will_expire':
             case 'subscription.updated':
             case 'subscription.deleted':
+            case 'subscription.canceled':
+            case 'subscription.cancelled':
+            case 'subscription.suspended':
+            case 'subscription.resumed':
+            case 'subscription.expired':
+            case 'subscription.failed':
                 return self::handle_subscription_event($event, $data);
 
             case 'customer.created':
@@ -415,6 +438,11 @@ class BNA_Webhooks {
             $order->save_meta_data();
         }
 
+        // Check if this is a subscription renewal transaction
+        if (self::is_subscription_renewal_transaction($data)) {
+            return self::handle_subscription_renewal_transaction($order, $data);
+        }
+
         // Update order status based on transaction status
         switch (strtolower($status)) {
             case 'approved':
@@ -477,21 +505,473 @@ class BNA_Webhooks {
     }
 
     /**
-     * Handle subscription events
+     * Handle subscription events - ПОВНА РЕАЛІЗАЦІЯ (v1.9.0)
      *
      * @param string $event Event name
      * @param array $data Subscription data
      * @return array Processing result
      */
     private static function handle_subscription_event($event, $data) {
+        if (!bna_subscriptions_enabled()) {
+            return array('status' => 'ignored', 'reason' => 'Subscriptions not enabled');
+        }
+
+        if (!isset($data['id'])) {
+            return array('status' => 'error', 'reason' => 'Missing subscription ID');
+        }
+
+        $subscription_id = $data['id'];
+        $customer_id = $data['customerId'] ?? '';
+        $status = strtolower($data['status'] ?? '');
+
         bna_log('Handling subscription event', array(
             'event' => $event,
-            'subscription_id' => $data['id'] ?? 'unknown'
+            'subscription_id' => $subscription_id,
+            'customer_id' => $customer_id,
+            'status' => $status,
+            'data_keys' => array_keys($data)
         ));
 
-        // Basic subscription event handling
-        // Can be extended based on subscription requirements
-        return array('status' => 'processed', 'event' => $event);
+        // Find original order with this subscription
+        $original_order = self::find_subscription_order($subscription_id, $customer_id);
+
+        if (!$original_order) {
+            bna_log('No original order found for subscription', array(
+                'subscription_id' => $subscription_id,
+                'customer_id' => $customer_id
+            ));
+            return array('status' => 'ignored', 'reason' => 'Original order not found');
+        }
+
+        // Store BNA subscription ID in order meta if not already stored
+        if (!$original_order->get_meta('_bna_subscription_id')) {
+            $original_order->update_meta_data('_bna_subscription_id', $subscription_id);
+            $original_order->save();
+        }
+
+        // Process event based on type
+        switch ($event) {
+            case 'subscription.created':
+                return self::handle_subscription_created($original_order, $data);
+
+            case 'subscription.processed':
+                return self::handle_subscription_processed($original_order, $data);
+
+            case 'subscription.updated':
+                return self::handle_subscription_updated($original_order, $data);
+
+            case 'subscription.suspended':
+                return self::handle_subscription_suspended($original_order, $data);
+
+            case 'subscription.resumed':
+                return self::handle_subscription_resumed($original_order, $data);
+
+            case 'subscription.canceled':
+            case 'subscription.cancelled':
+                return self::handle_subscription_cancelled($original_order, $data);
+
+            case 'subscription.expired':
+                return self::handle_subscription_expired($original_order, $data);
+
+            case 'subscription.failed':
+                return self::handle_subscription_failed($original_order, $data);
+
+            case 'subscription.deleted':
+                return self::handle_subscription_deleted($original_order, $data);
+
+            case 'subscription.will_expire':
+                return self::handle_subscription_will_expire($original_order, $data);
+
+            default:
+                bna_log('Unknown subscription event', array('event' => $event));
+                return array('status' => 'ignored', 'reason' => 'Unknown subscription event');
+        }
+    }
+
+    /**
+     * Find order associated with subscription
+     */
+    private static function find_subscription_order($subscription_id, $customer_id = '') {
+        // First, try to find by subscription ID
+        $orders = wc_get_orders(array(
+            'meta_key' => '_bna_subscription_id',
+            'meta_value' => $subscription_id,
+            'limit' => 1
+        ));
+
+        if (!empty($orders)) {
+            return $orders[0];
+        }
+
+        // If not found, try to find by customer ID and subscription flag
+        if (!empty($customer_id)) {
+            $orders = wc_get_orders(array(
+                'meta_key' => '_bna_customer_id',
+                'meta_value' => $customer_id,
+                'meta_query' => array(
+                    array(
+                        'key' => '_bna_has_subscription',
+                        'value' => 'yes',
+                        'compare' => '='
+                    )
+                ),
+                'limit' => 1,
+                'orderby' => 'date',
+                'order' => 'DESC'
+            ));
+
+            if (!empty($orders)) {
+                return $orders[0];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Handle subscription created event
+     */
+    private static function handle_subscription_created($order, $data) {
+        $order->update_meta_data('_bna_subscription_status', 'active');
+        $order->update_meta_data('_bna_subscription_last_event', 'created');
+        $order->add_order_note(__('BNA subscription created successfully.', 'bna-smart-payment'));
+        $order->save();
+
+        bna_log('Subscription created', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.created',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription processed event (recurring payment successful)
+     */
+    private static function handle_subscription_processed($order, $data) {
+        // Create renewal order for successful recurring payment
+        $renewal_order = self::create_subscription_renewal_order($order, $data);
+
+        if ($renewal_order) {
+            // Mark renewal order as paid
+            $transaction_id = $data['transactionId'] ?? $data['id'];
+            $renewal_order->payment_complete($transaction_id);
+            $renewal_order->add_order_note(__('Subscription renewal payment processed via BNA webhook.', 'bna-smart-payment'));
+
+            bna_log('Subscription renewal order created and completed', array(
+                'original_order_id' => $order->get_id(),
+                'renewal_order_id' => $renewal_order->get_id(),
+                'subscription_id' => $data['id']
+            ));
+        }
+
+        // Update original order
+        $order->update_meta_data('_bna_subscription_status', 'active');
+        $order->update_meta_data('_bna_subscription_last_event', 'processed');
+        $order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
+        $order->add_order_note(__('Subscription payment processed successfully.', 'bna-smart-payment'));
+        $order->save();
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.processed',
+            'order_id' => $order->get_id(),
+            'renewal_order_id' => $renewal_order ? $renewal_order->get_id() : null,
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription suspended event
+     */
+    private static function handle_subscription_suspended($order, $data) {
+        $order->update_meta_data('_bna_subscription_status', 'suspended');
+        $order->update_meta_data('_bna_subscription_last_event', 'suspended');
+        $order->update_status('on-hold', __('Subscription suspended via BNA webhook.', 'bna-smart-payment'));
+        $order->save();
+
+        bna_log('Subscription suspended', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.suspended',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription resumed event
+     */
+    private static function handle_subscription_resumed($order, $data) {
+        $order->update_meta_data('_bna_subscription_status', 'active');
+        $order->update_meta_data('_bna_subscription_last_event', 'resumed');
+        $order->update_status('processing', __('Subscription resumed via BNA webhook.', 'bna-smart-payment'));
+        $order->save();
+
+        bna_log('Subscription resumed', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.resumed',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription cancelled event
+     */
+    private static function handle_subscription_cancelled($order, $data) {
+        $order->update_meta_data('_bna_subscription_status', 'cancelled');
+        $order->update_meta_data('_bna_subscription_last_event', 'cancelled');
+        $order->update_status('cancelled', __('Subscription cancelled via BNA webhook.', 'bna-smart-payment'));
+        $order->save();
+
+        bna_log('Subscription cancelled', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.cancelled',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription expired event
+     */
+    private static function handle_subscription_expired($order, $data) {
+        $order->update_meta_data('_bna_subscription_status', 'expired');
+        $order->update_meta_data('_bna_subscription_last_event', 'expired');
+        $order->update_status('completed', __('Subscription expired via BNA webhook.', 'bna-smart-payment'));
+        $order->save();
+
+        bna_log('Subscription expired', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.expired',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription failed event
+     */
+    private static function handle_subscription_failed($order, $data) {
+        $order->update_meta_data('_bna_subscription_status', 'failed');
+        $order->update_meta_data('_bna_subscription_last_event', 'failed');
+        $order->add_order_note(__('Subscription payment failed via BNA webhook.', 'bna-smart-payment'));
+        $order->save();
+
+        bna_log('Subscription payment failed', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.failed',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription deleted event
+     */
+    private static function handle_subscription_deleted($order, $data) {
+        $order->update_meta_data('_bna_subscription_status', 'deleted');
+        $order->update_meta_data('_bna_subscription_last_event', 'deleted');
+        $order->update_status('cancelled', __('Subscription deleted via BNA webhook.', 'bna-smart-payment'));
+        $order->save();
+
+        bna_log('Subscription deleted', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.deleted',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription will expire event
+     */
+    private static function handle_subscription_will_expire($order, $data) {
+        $expiry_date = $data['expiryDate'] ?? 'unknown';
+        $order->update_meta_data('_bna_subscription_last_event', 'will_expire');
+        $order->update_meta_data('_bna_subscription_expiry_date', $expiry_date);
+        $order->add_order_note(sprintf(__('Subscription will expire on: %s', 'bna-smart-payment'), $expiry_date));
+        $order->save();
+
+        bna_log('Subscription will expire', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id'],
+            'expiry_date' => $expiry_date
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.will_expire',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Handle subscription updated event
+     */
+    private static function handle_subscription_updated($order, $data) {
+        $order->update_meta_data('_bna_subscription_last_event', 'updated');
+        $order->add_order_note(__('Subscription updated via BNA webhook.', 'bna-smart-payment'));
+        $order->save();
+
+        bna_log('Subscription updated', array(
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        ));
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.updated',
+            'order_id' => $order->get_id(),
+            'subscription_id' => $data['id']
+        );
+    }
+
+    /**
+     * Check if transaction is a subscription renewal
+     */
+    private static function is_subscription_renewal_transaction($data) {
+        return isset($data['subscriptionId']) && !empty($data['subscriptionId']);
+    }
+
+    /**
+     * Handle subscription renewal transaction
+     */
+    private static function handle_subscription_renewal_transaction($original_order, $data) {
+        $subscription_id = $data['subscriptionId'];
+        $transaction_id = $data['id'];
+        $status = strtolower($data['status'] ?? '');
+
+        bna_log('Handling subscription renewal transaction', array(
+            'original_order_id' => $original_order->get_id(),
+            'subscription_id' => $subscription_id,
+            'transaction_id' => $transaction_id,
+            'status' => $status
+        ));
+
+        // Create renewal order if payment is successful
+        if (in_array($status, array('approved', 'completed', 'processed'))) {
+            $renewal_order = self::create_subscription_renewal_order($original_order, $data);
+
+            if ($renewal_order) {
+                $renewal_order->payment_complete($transaction_id);
+                $renewal_order->add_order_note(__('Subscription renewal payment completed.', 'bna-smart-payment'));
+
+                // Update original order
+                $original_order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
+                $original_order->save();
+
+                return array(
+                    'status' => 'processed',
+                    'event' => 'subscription.renewal',
+                    'original_order_id' => $original_order->get_id(),
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'transaction_id' => $transaction_id
+                );
+            }
+        }
+
+        return array(
+            'status' => 'processed',
+            'event' => 'subscription.renewal_failed',
+            'original_order_id' => $original_order->get_id(),
+            'transaction_id' => $transaction_id
+        );
+    }
+
+    /**
+     * Create subscription renewal order
+     */
+    private static function create_subscription_renewal_order($original_order, $data) {
+        try {
+            // Create new order based on original
+            $renewal_order = wc_create_order(array(
+                'customer_id' => $original_order->get_customer_id(),
+                'status' => 'pending'
+            ));
+
+            if (!$renewal_order) {
+                bna_error('Failed to create renewal order');
+                return null;
+            }
+
+            // Copy items from original order
+            foreach ($original_order->get_items() as $item) {
+                $product = $item->get_product();
+                if ($product && BNA_Subscriptions::is_subscription_product($product)) {
+                    $renewal_order->add_product($product, $item->get_quantity());
+                }
+            }
+
+            // Copy billing/shipping addresses
+            $renewal_order->set_address($original_order->get_address('billing'), 'billing');
+            $renewal_order->set_address($original_order->get_address('shipping'), 'shipping');
+
+            // Set payment method
+            $renewal_order->set_payment_method('bna_smart_payment');
+
+            // Add renewal metadata
+            $renewal_order->update_meta_data('_bna_subscription_renewal', 'yes');
+            $renewal_order->update_meta_data('_bna_original_order_id', $original_order->get_id());
+            $renewal_order->update_meta_data('_bna_subscription_id', $data['subscriptionId'] ?? $data['id']);
+            $renewal_order->update_meta_data('_bna_customer_id', $data['customerId'] ?? '');
+
+            // Calculate totals
+            $renewal_order->calculate_totals();
+            $renewal_order->save();
+
+            bna_log('Subscription renewal order created', array(
+                'original_order_id' => $original_order->get_id(),
+                'renewal_order_id' => $renewal_order->get_id(),
+                'subscription_id' => $data['subscriptionId'] ?? $data['id']
+            ));
+
+            return $renewal_order;
+
+        } catch (Exception $e) {
+            bna_error('Exception creating renewal order', array(
+                'original_order_id' => $original_order->get_id(),
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine()
+            ));
+            return null;
+        }
     }
 
     /**
@@ -824,6 +1304,7 @@ class BNA_Webhooks {
         return new WP_REST_Response(array(
             'webhook_url' => rest_url('bna/v1/webhook'),
             'secret_configured' => true,
+            'subscriptions_enabled' => bna_subscriptions_enabled(),
             'test_payload' => $test_payload,
             'test_headers' => array(
                 'X-Bna-Signature' => $signature,

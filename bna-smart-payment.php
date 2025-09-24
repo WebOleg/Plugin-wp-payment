@@ -94,6 +94,10 @@ class BNA_Smart_Payment {
         add_action('wp_ajax_bna_test_connection', array($this, 'test_api_connection'));
         add_action('wp_ajax_nopriv_bna_test_connection', array($this, 'test_api_connection'));
 
+        // Add AJAX handlers for cart validation (v1.9.0)
+        add_action('wp_ajax_bna_validate_cart_item', array($this, 'ajax_validate_cart_item'));
+        add_action('wp_ajax_nopriv_bna_validate_cart_item', array($this, 'ajax_validate_cart_item'));
+
         bna_log('BNA Smart Payment initialized successfully');
     }
 
@@ -131,10 +135,65 @@ class BNA_Smart_Payment {
                 true
             );
 
+            // Load cart validation scripts for subscription products (v1.9.0)
+            if ($this->should_load_cart_validation()) {
+                wp_enqueue_script(
+                    'bna-cart-validation',
+                    BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/js/cart-validation.js',
+                    array('jquery'),
+                    BNA_SMART_PAYMENT_VERSION,
+                    true
+                );
+
+                // Localize cart validation script
+                wp_localize_script('bna-cart-validation', 'bna_cart_validation', array(
+                    'ajax_url' => admin_url('admin-ajax.php'),
+                    'nonce' => wp_create_nonce('bna_cart_validation'),
+                    'subscriptions_enabled' => bna_subscriptions_enabled(),
+                    'debug' => bna_is_debug_mode(),
+                    'messages' => array(
+                        'mixed_cart' => __('You cannot mix subscription products with regular products in the same order.', 'bna-smart-payment'),
+                        'multiple_subscriptions' => __('You can only have one subscription product in your cart at a time.', 'bna-smart-payment'),
+                        'subscription_quantity' => __('Subscription products can only have a quantity of 1.', 'bna-smart-payment'),
+                        'subscriptions_disabled' => __('Subscriptions are currently disabled.', 'bna-smart-payment'),
+                        'cart_invalid' => __('Your cart contains invalid items. Please review and try again.', 'bna-smart-payment'),
+                        'checkout_disabled' => __('Checkout is temporarily disabled due to cart validation issues.', 'bna-smart-payment')
+                    )
+                ));
+
+                bna_debug('Cart validation assets loaded');
+            }
+
             if (is_checkout()) {
                 $this->load_shipping_assets();
             }
         }
+    }
+
+    /**
+     * Check if cart validation scripts should be loaded (v1.9.0)
+     */
+    private function should_load_cart_validation() {
+        if (!bna_subscriptions_enabled()) {
+            return false;
+        }
+
+        // Load on cart, checkout, shop, and product pages
+        if (is_cart() || is_checkout() || is_shop() || is_product_category() || is_product_tag()) {
+            return true;
+        }
+
+        // Load on product pages with subscription products
+        if (is_product()) {
+            global $product;
+            if ($product && is_a($product, 'WC_Product')) {
+                if (BNA_Product_Subscription_Fields::is_subscription_product($product)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function load_shipping_assets() {
@@ -170,6 +229,16 @@ class BNA_Smart_Payment {
             return true;
         }
 
+        // Load on cart page (v1.9.0) - Added for cart validation
+        if (is_cart()) {
+            return true;
+        }
+
+        // Load on shop pages if subscriptions are enabled (v1.9.0)
+        if (bna_subscriptions_enabled() && (is_shop() || is_product_category() || is_product_tag())) {
+            return true;
+        }
+
         // Load on product pages with subscription products (v1.9.0) - Fixed type checking
         if (is_product()) {
             global $product;
@@ -188,6 +257,103 @@ class BNA_Smart_Payment {
 
         $request_uri = trim($_SERVER['REQUEST_URI'] ?? '', '/');
         return preg_match('/^bna-payment\/\d+\/[a-zA-Z0-9_-]+\/?$/', $request_uri);
+    }
+
+    /**
+     * AJAX handler for cart item validation (v1.9.0)
+     */
+    public function ajax_validate_cart_item() {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'bna_cart_validation')) {
+            wp_send_json_error(array('message' => __('Security check failed.', 'bna-smart-payment')));
+        }
+
+        $product_id = intval($_POST['product_id'] ?? 0);
+        if (!$product_id) {
+            wp_send_json_error(array('message' => __('Invalid product ID.', 'bna-smart-payment')));
+        }
+
+        $product = wc_get_product($product_id);
+        if (!$product) {
+            wp_send_json_error(array('message' => __('Product not found.', 'bna-smart-payment')));
+        }
+
+        // Check if subscriptions are enabled
+        if (!bna_subscriptions_enabled()) {
+            wp_send_json_error(array('message' => __('Subscriptions are disabled.', 'bna-smart-payment')));
+        }
+
+        $is_subscription = BNA_Product_Subscription_Fields::is_subscription_product($product);
+        $cart_analysis = $this->analyze_current_cart();
+
+        $validation_result = array(
+            'product_id' => $product_id,
+            'is_subscription' => $is_subscription,
+            'cart_analysis' => $cart_analysis,
+            'validation_passed' => true,
+            'messages' => array()
+        );
+
+        // Validate based on BNA rules
+        if ($is_subscription) {
+            // Check for existing subscriptions
+            if ($cart_analysis['subscription_count'] > 0) {
+                $validation_result['validation_passed'] = false;
+                $validation_result['messages'][] = __('You can only have one subscription product in your cart at a time.', 'bna-smart-payment');
+            }
+
+            // Check for regular products
+            if ($cart_analysis['regular_count'] > 0) {
+                $validation_result['validation_passed'] = false;
+                $validation_result['messages'][] = __('You cannot mix subscription products with regular products.', 'bna-smart-payment');
+            }
+        } else {
+            // Regular product - check for subscriptions in cart
+            if ($cart_analysis['subscription_count'] > 0) {
+                $validation_result['validation_passed'] = false;
+                $validation_result['messages'][] = __('You cannot add regular products to a cart containing subscriptions.', 'bna-smart-payment');
+            }
+        }
+
+        if ($validation_result['validation_passed']) {
+            wp_send_json_success($validation_result);
+        } else {
+            wp_send_json_error($validation_result);
+        }
+    }
+
+    /**
+     * Analyze current cart state (v1.9.0)
+     */
+    private function analyze_current_cart() {
+        if (empty(WC()->cart)) {
+            return array(
+                'subscription_count' => 0,
+                'regular_count' => 0,
+                'total_items' => 0,
+                'has_subscriptions' => false,
+                'has_regular' => false
+            );
+        }
+
+        $subscription_count = 0;
+        $regular_count = 0;
+
+        foreach (WC()->cart->get_cart() as $cart_item) {
+            if (isset($cart_item['bna_subscription'])) {
+                $subscription_count++;
+            } else {
+                $regular_count++;
+            }
+        }
+
+        return array(
+            'subscription_count' => $subscription_count,
+            'regular_count' => $regular_count,
+            'total_items' => WC()->cart->get_cart_contents_count(),
+            'has_subscriptions' => $subscription_count > 0,
+            'has_regular' => $regular_count > 0
+        );
     }
 
     public function handle_payment_request() {
