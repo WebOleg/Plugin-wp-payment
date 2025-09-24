@@ -926,7 +926,7 @@ class BNA_API {
     }
 
     /**
-     * Create checkout payload - Enhanced for subscription support (v1.9.0)
+     * Create checkout payload - Fixed for API compatibility (v1.9.0)
      */
     private function create_checkout_payload($order, $customer_result) {
         $payload = array(
@@ -943,7 +943,7 @@ class BNA_API {
 
             if ($bna_frequency) {
                 $payload['recurrence'] = $bna_frequency;
-                $payload['recurring'] = true;
+                // REMOVED: $payload['recurring'] = true; - not allowed by API
 
                 bna_log('Added subscription data to checkout payload', array(
                     'order_id' => $order->get_id(),
@@ -982,10 +982,7 @@ class BNA_API {
             'invoiceAdditionalInfo' => 'WooCommerce Order #' . $order->get_id()
         );
 
-        // Add saveCustomer flag for subscriptions (required for tokenization)
-        if ($subscription_data) {
-            $payload['saveCustomer'] = true;
-        }
+        // REMOVED: $payload['saveCustomer'] = true; - not allowed by API
 
         return $payload;
     }
