@@ -204,6 +204,30 @@ class BNA_API {
             return new WP_Error('api_error', 'API request failed with status ' . $status_code, array('response' => $body));
         }
 
+        // ИСПРАВЛЕНИЕ: Handle successful DELETE operations (204 No Content) and other empty responses
+        if ($status_code === 204) {
+            bna_log('API Request Successful (No Content)', array(
+                'endpoint' => $endpoint,
+                'method' => $method,
+                'status_code' => $status_code,
+                'duration_ms' => $duration_ms
+            ));
+
+            return array('success' => true, 'status' => 'deleted');
+        }
+
+        // Handle other successful responses with empty body
+        if (empty($body) && $status_code >= 200 && $status_code < 300) {
+            bna_log('API Request Successful (Empty Response)', array(
+                'endpoint' => $endpoint,
+                'method' => $method,
+                'status_code' => $status_code,
+                'duration_ms' => $duration_ms
+            ));
+
+            return array('success' => true);
+        }
+
         $decoded_response = json_decode($body, true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
