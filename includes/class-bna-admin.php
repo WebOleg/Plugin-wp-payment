@@ -722,10 +722,12 @@ class BNA_Admin {
         echo $logs;
     }
 
+
     /**
      * Display logs page
      */
     public static function logs_page() {
+        // Prepare all data for the template
         $data = array(
             'logs' => BNA_Logger::get_logs(1000),
             'log_size' => BNA_Logger::get_log_size(),
@@ -735,9 +737,14 @@ class BNA_Admin {
             'wc_version' => class_exists('WooCommerce') ? WC()->version : 'Not installed',
             'php_version' => PHP_VERSION,
             'wp_debug' => defined('WP_DEBUG') && WP_DEBUG,
-            'message' => isset($_GET['message']) ? sanitize_text_field($_GET['message']) : ''
+            'message' => isset($_GET['message']) ? sanitize_text_field($_GET['message']) : '',
+
+            // Generate secure nonce URLs for actions
+            'clear_logs_url' => wp_nonce_url(admin_url('admin.php?page=bna-logs&bna_action=clear_logs'), 'bna_admin_action'),
+            'download_logs_url' => wp_nonce_url(admin_url('admin.php?page=bna-logs&bna_action=download_logs'), 'bna_admin_action')
         );
 
+        // Render template with data
         BNA_Template::render_admin_logs($data);
     }
 

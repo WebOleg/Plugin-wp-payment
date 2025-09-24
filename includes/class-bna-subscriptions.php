@@ -155,49 +155,90 @@ class BNA_Subscriptions {
     }
 
     /**
-     * Check if subscriptions are enabled
+     * Check if subscriptions are enabled - WITH DEBUG
      * @return bool
      */
     public static function is_enabled() {
-        return get_option('bna_smart_payment_enable_subscriptions', 'no') === 'yes';
+        $enabled = get_option('bna_smart_payment_enable_subscriptions', 'no') === 'yes';
+
+        bna_debug('=== BNA_Subscriptions::is_enabled() ===', array(
+            'option_value' => get_option('bna_smart_payment_enable_subscriptions', 'no'),
+            'is_enabled' => $enabled
+        ));
+
+        return $enabled;
     }
 
     /**
-     * Check if product is subscription - Updated to use meta fields
+     * Check if product is subscription - Updated to use meta fields + DEBUG
      * @param WC_Product|int $product
      * @return bool
      */
     public static function is_subscription_product($product) {
+        bna_debug('=== BNA_Subscriptions::is_subscription_product() START ===', array(
+            'product_input' => is_numeric($product) ? "ID: $product" : (is_object($product) ? get_class($product) : gettype($product))
+        ));
+
         if (is_numeric($product)) {
             $product = wc_get_product($product);
+            bna_debug('Loaded product by ID', array(
+                'product_id' => $product ? $product->get_id() : 'failed_to_load'
+            ));
         }
 
         if (!$product) {
+            bna_debug('is_subscription_product: RETURNING FALSE - no product');
             return false;
         }
 
-        return get_post_meta($product->get_id(), '_bna_is_subscription', true) === 'yes';
+        $product_id = $product->get_id();
+        $meta_value = get_post_meta($product_id, '_bna_is_subscription', true);
+        $is_subscription = $meta_value === 'yes';
+
+        bna_debug('=== SUBSCRIPTION PRODUCT CHECK ===', array(
+            'product_id' => $product_id,
+            'product_name' => $product->get_name(),
+            'meta_value' => $meta_value,
+            'is_subscription' => $is_subscription
+        ));
+
+        return $is_subscription;
     }
 
     /**
-     * Get subscription data for product
+     * Get subscription data for product - WITH DEBUG
      * @param WC_Product|int $product
      * @return array|false
      */
     public static function get_subscription_data($product) {
+        bna_debug('=== BNA_Subscriptions::get_subscription_data() START ===');
+
         if (is_numeric($product)) {
             $product = wc_get_product($product);
         }
 
         if (!$product || !self::is_subscription_product($product)) {
+            bna_debug('get_subscription_data: RETURNING FALSE - not subscription product');
             return false;
         }
 
-        return array(
-            'frequency' => get_post_meta($product->get_id(), '_bna_subscription_frequency', true) ?: 'monthly',
-            'trial_days' => absint(get_post_meta($product->get_id(), '_bna_subscription_trial_days', true)),
-            'signup_fee' => floatval(get_post_meta($product->get_id(), '_bna_subscription_signup_fee', true))
+        $product_id = $product->get_id();
+        $frequency = get_post_meta($product_id, '_bna_subscription_frequency', true) ?: 'monthly';
+        $trial_days = absint(get_post_meta($product_id, '_bna_subscription_trial_days', true));
+        $signup_fee = floatval(get_post_meta($product_id, '_bna_subscription_signup_fee', true));
+
+        $data = array(
+            'frequency' => $frequency,
+            'trial_days' => $trial_days,
+            'signup_fee' => $signup_fee
         );
+
+        bna_debug('=== SUBSCRIPTION DATA RESULT ===', array(
+            'product_id' => $product_id,
+            'subscription_data' => $data
+        ));
+
+        return $data;
     }
 
     /**
@@ -210,10 +251,20 @@ class BNA_Subscriptions {
     public function add_subscription_cart_item_data($cart_item_data, $product_id, $variation_id) {
         $product = wc_get_product($product_id);
 
+        bna_debug('=== ADD SUBSCRIPTION CART ITEM DATA ===', array(
+            'product_id' => $product_id,
+            'variation_id' => $variation_id,
+            'is_subscription' => self::is_subscription_product($product)
+        ));
+
         if (self::is_subscription_product($product)) {
             $subscription_data = self::get_subscription_data($product);
             if ($subscription_data) {
                 $cart_item_data['bna_subscription'] = $subscription_data;
+                bna_debug('Added subscription data to cart item', array(
+                    'product_id' => $product_id,
+                    'subscription_data' => $subscription_data
+                ));
             }
         }
 
@@ -261,29 +312,44 @@ class BNA_Subscriptions {
     }
 
     /**
-     * Enhanced subscription cart validation (BNA Rules Implementation)
+     * Enhanced subscription cart validation (BNA Rules Implementation) - WITH DEBUG
      * @param bool $passed
      * @param int $product_id
      * @param int $quantity
      * @return bool
      */
     public function validate_subscription_cart($passed, $product_id, $quantity) {
+        bna_debug('=== VALIDATE SUBSCRIPTION CART START ===', array(
+            'passed' => $passed,
+            'product_id' => $product_id,
+            'quantity' => $quantity,
+            'subscriptions_enabled' => self::is_enabled()
+        ));
+
         $product = wc_get_product($product_id);
 
         if (!$product || !self::is_subscription_product($product)) {
+            bna_debug('Not subscription product, checking regular product validation');
             // If it's a regular product, check if cart has subscriptions
             return $this->validate_regular_product_with_subscriptions($passed, $product_id);
         }
 
+        bna_debug('=== SUBSCRIPTION PRODUCT VALIDATION ===', array(
+            'product_id' => $product_id,
+            'product_name' => $product->get_name()
+        ));
+
         // Check if subscriptions are enabled
         if (!self::is_enabled()) {
             wc_add_notice(__('Subscriptions are currently disabled.', 'bna-smart-payment'), 'error');
+            bna_error('SUBSCRIPTION CART VALIDATION FAILED: subscriptions disabled');
             return false;
         }
 
         // BNA Rule: Quantity must be 1 for subscription products
         if ($quantity > 1) {
             wc_add_notice(__('You can only purchase 1 unit of subscription products.', 'bna-smart-payment'), 'error');
+            bna_error('SUBSCRIPTION CART VALIDATION FAILED: quantity > 1', array('quantity' => $quantity));
             return false;
         }
 
@@ -291,6 +357,9 @@ class BNA_Subscriptions {
         $cart_subscription_count = $this->count_subscription_products_in_cart();
         if ($cart_subscription_count > 0) {
             wc_add_notice(__('You can only have one subscription product in your cart at a time.', 'bna-smart-payment'), 'error');
+            bna_error('SUBSCRIPTION CART VALIDATION FAILED: multiple subscriptions', array(
+                'existing_subscriptions' => $cart_subscription_count
+            ));
             return false;
         }
 
@@ -298,6 +367,9 @@ class BNA_Subscriptions {
         $cart_regular_count = $this->count_regular_products_in_cart();
         if ($cart_regular_count > 0) {
             wc_add_notice(__('You cannot mix subscription products with regular products in the same order.', 'bna-smart-payment'), 'error');
+            bna_error('SUBSCRIPTION CART VALIDATION FAILED: mixed cart', array(
+                'regular_products' => $cart_regular_count
+            ));
             return false;
         }
 
@@ -305,6 +377,9 @@ class BNA_Subscriptions {
         $subscription_data = self::get_subscription_data($product);
         if ($subscription_data && !isset(self::BNA_FREQUENCY_MAP[$subscription_data['frequency']])) {
             wc_add_notice(sprintf(__('Subscription frequency "%s" is not supported.', 'bna-smart-payment'), $subscription_data['frequency']), 'error');
+            bna_error('SUBSCRIPTION CART VALIDATION FAILED: unsupported frequency', array(
+                'frequency' => $subscription_data['frequency']
+            ));
             return false;
         }
 
@@ -318,19 +393,30 @@ class BNA_Subscriptions {
     }
 
     /**
-     * Validate regular product when subscriptions are in cart
+     * Validate regular product when subscriptions are in cart - WITH DEBUG
      * @param bool $passed
      * @param int $product_id
      * @return bool
      */
     private function validate_regular_product_with_subscriptions($passed, $product_id) {
         if (!$passed) {
+            bna_debug('Regular product validation already failed, returning false');
             return $passed;
         }
 
         $cart_subscription_count = $this->count_subscription_products_in_cart();
+
+        bna_debug('=== REGULAR PRODUCT VS SUBSCRIPTIONS CHECK ===', array(
+            'product_id' => $product_id,
+            'cart_subscription_count' => $cart_subscription_count
+        ));
+
         if ($cart_subscription_count > 0) {
             wc_add_notice(__('You cannot add regular products to a cart that contains subscription products.', 'bna-smart-payment'), 'error');
+            bna_error('REGULAR PRODUCT VALIDATION FAILED: cart has subscriptions', array(
+                'product_id' => $product_id,
+                'subscriptions_in_cart' => $cart_subscription_count
+            ));
             return false;
         }
 
@@ -338,80 +424,138 @@ class BNA_Subscriptions {
     }
 
     /**
-     * Count subscription products in cart
+     * Count subscription products in cart - WITH DEBUG
      * @return int
      */
     private function count_subscription_products_in_cart() {
         if (empty(WC()->cart)) {
+            bna_debug('count_subscription_products_in_cart: No cart available');
             return 0;
         }
 
         $count = 0;
+        $subscription_products = array();
+
         foreach (WC()->cart->get_cart() as $cart_item) {
             if (isset($cart_item['bna_subscription'])) {
                 $count++;
+                $subscription_products[] = array(
+                    'product_id' => $cart_item['data']->get_id(),
+                    'product_name' => $cart_item['data']->get_name(),
+                    'quantity' => $cart_item['quantity']
+                );
             }
         }
+
+        bna_debug('=== SUBSCRIPTION PRODUCTS IN CART ===', array(
+            'count' => $count,
+            'products' => $subscription_products
+        ));
 
         return $count;
     }
 
     /**
-     * Count regular (non-subscription) products in cart
+     * Count regular (non-subscription) products in cart - WITH DEBUG
      * @return int
      */
     private function count_regular_products_in_cart() {
         if (empty(WC()->cart)) {
+            bna_debug('count_regular_products_in_cart: No cart available');
             return 0;
         }
 
         $count = 0;
+        $regular_products = array();
+
         foreach (WC()->cart->get_cart() as $cart_item) {
             if (!isset($cart_item['bna_subscription'])) {
                 $count++;
+                $regular_products[] = array(
+                    'product_id' => $cart_item['data']->get_id(),
+                    'product_name' => $cart_item['data']->get_name(),
+                    'quantity' => $cart_item['quantity']
+                );
             }
         }
+
+        bna_debug('=== REGULAR PRODUCTS IN CART ===', array(
+            'count' => $count,
+            'products' => $regular_products
+        ));
 
         return $count;
     }
 
     /**
-     * Validate cart subscription rules on cart page
+     * Validate cart subscription rules on cart page - WITH DEBUG
      */
     public function validate_cart_subscription_rules() {
+        bna_debug('=== VALIDATE CART SUBSCRIPTION RULES START ===', array(
+            'subscriptions_enabled' => self::is_enabled()
+        ));
+
         if (!self::is_enabled()) {
+            bna_debug('Cart subscription rules validation skipped - subscriptions disabled');
             return;
         }
 
         $subscription_count = $this->count_subscription_products_in_cart();
         $regular_count = $this->count_regular_products_in_cart();
 
+        bna_debug('=== CART SUBSCRIPTION RULES CHECK ===', array(
+            'subscription_count' => $subscription_count,
+            'regular_count' => $regular_count
+        ));
+
         // Check for mixed cart (subscription + regular products)
         if ($subscription_count > 0 && $regular_count > 0) {
             wc_add_notice(__('Your cart contains both subscription and regular products. Please remove one type to proceed.', 'bna-smart-payment'), 'error');
+            bna_error('CART VALIDATION FAILED: mixed cart', array(
+                'subscriptions' => $subscription_count,
+                'regulars' => $regular_count
+            ));
         }
 
         // Check for multiple subscriptions
         if ($subscription_count > 1) {
             wc_add_notice(__('You can only have one subscription product in your cart. Please remove additional subscription products.', 'bna-smart-payment'), 'error');
+            bna_error('CART VALIDATION FAILED: multiple subscriptions', array(
+                'subscription_count' => $subscription_count
+            ));
         }
     }
 
     /**
-     * Validate subscription rules during checkout
+     * Validate subscription rules during checkout - WITH DEBUG
      */
     public function validate_checkout_subscription_rules() {
+        bna_debug('=== VALIDATE CHECKOUT SUBSCRIPTION RULES START ===', array(
+            'subscriptions_enabled' => self::is_enabled(),
+            'is_user_logged_in' => is_user_logged_in(),
+            'registration_enabled' => WC()->checkout()->is_registration_enabled()
+        ));
+
         if (!self::is_enabled()) {
+            bna_debug('Checkout subscription rules validation skipped - subscriptions disabled');
             return;
         }
 
         $this->validate_cart_subscription_rules();
 
         // Additional checkout validation
-        if ($this->count_subscription_products_in_cart() > 0) {
+        $subscription_count = $this->count_subscription_products_in_cart();
+        if ($subscription_count > 0) {
+            bna_debug('=== CHECKOUT SUBSCRIPTION VALIDATION ===', array(
+                'subscription_count' => $subscription_count,
+                'user_logged_in' => is_user_logged_in(),
+                'registration_enabled' => WC()->checkout()->is_registration_enabled()
+            ));
+
             // Ensure customer is logged in or can create account for subscriptions
             if (!is_user_logged_in() && !WC()->checkout()->is_registration_enabled()) {
                 wc_add_notice(__('You must create an account to purchase subscription products.', 'bna-smart-payment'), 'error');
+                bna_error('CHECKOUT SUBSCRIPTION VALIDATION FAILED: no account creation available');
             }
         }
     }
@@ -425,6 +569,10 @@ class BNA_Subscriptions {
      */
     public function limit_subscription_quantity($quantity, $cart_item_key, $cart_item) {
         if (isset($cart_item['bna_subscription'])) {
+            bna_debug('Limiting subscription quantity to 1', array(
+                'original_quantity' => $quantity,
+                'product_id' => $cart_item['data']->get_id()
+            ));
             return 1; // Force quantity to 1 for subscription products
         }
         return $quantity;
@@ -544,28 +692,45 @@ class BNA_Subscriptions {
     }
 
     /**
-     * Save subscription data from checkout
+     * Save subscription data from checkout - WITH DEBUG
      * @param int $order_id
      */
     public function save_subscription_data($order_id) {
+        bna_debug('=== SAVE SUBSCRIPTION DATA START ===', array(
+            'order_id' => $order_id
+        ));
+
         if (!$order_id) {
+            bna_debug('save_subscription_data: No order ID provided');
             return;
         }
 
         $order = wc_get_order($order_id);
         if (!$order) {
+            bna_debug('save_subscription_data: Order not found', array('order_id' => $order_id));
             return;
         }
 
         // Check if order contains subscription products
         $has_subscription = false;
+        $subscription_items = array();
+
         foreach ($order->get_items() as $item) {
             $product = $item->get_product();
             if (self::is_subscription_product($product)) {
                 $has_subscription = true;
-                break;
+                $subscription_items[] = array(
+                    'product_id' => $product->get_id(),
+                    'product_name' => $product->get_name()
+                );
             }
         }
+
+        bna_debug('=== ORDER SUBSCRIPTION CHECK ===', array(
+            'order_id' => $order_id,
+            'has_subscription' => $has_subscription,
+            'subscription_items' => $subscription_items
+        ));
 
         if ($has_subscription) {
             $order->update_meta_data('_bna_has_subscription', 'yes');
@@ -698,20 +863,34 @@ class BNA_Subscriptions {
     }
 
     /**
-     * Check if order has subscription products
+     * Check if order has subscription products - WITH DEBUG
      * @param WC_Order|int $order
      * @return bool
      */
     public static function order_has_subscription($order) {
+        bna_debug('=== BNA_Subscriptions::order_has_subscription() START ===');
+
         if (is_numeric($order)) {
             $order = wc_get_order($order);
+            bna_debug('Loaded order by ID', array(
+                'order_id' => $order ? $order->get_id() : 'failed_to_load'
+            ));
         }
 
         if (!$order) {
+            bna_debug('order_has_subscription: RETURNING FALSE - no order');
             return false;
         }
 
-        return $order->get_meta('_bna_has_subscription', true) === 'yes';
+        $has_subscription_meta = $order->get_meta('_bna_has_subscription', true) === 'yes';
+
+        bna_debug('=== ORDER SUBSCRIPTION CHECK ===', array(
+            'order_id' => $order->get_id(),
+            'meta_value' => $order->get_meta('_bna_has_subscription', true),
+            'has_subscription' => $has_subscription_meta
+        ));
+
+        return $has_subscription_meta;
     }
 
     /**

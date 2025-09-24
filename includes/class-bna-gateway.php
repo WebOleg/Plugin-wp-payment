@@ -255,36 +255,75 @@ class BNA_Gateway extends WC_Payment_Gateway {
     }
 
     /**
-     * Validate subscription checkout - Updated for meta fields system (v1.9.0)
+     * Validate subscription checkout - Updated for meta fields system (v1.9.0) + DEBUG
      */
     public function validate_subscription_checkout() {
+        bna_debug('=== SUBSCRIPTION CHECKOUT VALIDATION START ===', array(
+            'payment_method' => $_POST['payment_method'] ?? 'not_set',
+            'our_gateway_id' => $this->id,
+            'is_our_method' => ($_POST['payment_method'] ?? '') === $this->id,
+            'subscriptions_enabled' => $this->get_option('enable_subscriptions'),
+            'global_subscriptions_enabled' => get_option('bna_smart_payment_enable_subscriptions')
+        ));
+
         if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            bna_debug('SUBSCRIPTION VALIDATION SKIPPED - not our payment method');
             return;
         }
 
-        // Check if cart contains subscription products
+        // Перевіряйте subscription products в cart БЕЗПОСЕРЕДНЬО через meta поля
         $has_subscription = false;
-        foreach (WC()->cart->get_cart() as $cart_item) {
-            $product = $cart_item['data'];
-            if (BNA_Product_Subscription_Fields::is_subscription_product($product)) {
-                $has_subscription = true;
-                break;
+        $subscription_products = array();
+
+        if (WC()->cart) {
+            foreach (WC()->cart->get_cart() as $cart_item) {
+                $product = $cart_item['data'];
+                $is_subscription = get_post_meta($product->get_id(), '_bna_is_subscription', true) === 'yes';
+
+                if ($is_subscription) {
+                    $has_subscription = true;
+                    $subscription_products[] = array(
+                        'id' => $product->get_id(),
+                        'name' => $product->get_name(),
+                        'frequency' => get_post_meta($product->get_id(), '_bna_subscription_frequency', true)
+                    );
+                }
             }
         }
 
+        bna_debug('=== SUBSCRIPTION PRODUCTS CHECK ===', array(
+            'has_subscription' => $has_subscription,
+            'subscription_products_count' => count($subscription_products),
+            'subscription_products' => $subscription_products
+        ));
+
         if (!$has_subscription) {
+            bna_debug('SUBSCRIPTION VALIDATION SKIPPED - no subscription products');
             return;
         }
 
-        // Additional validation for subscription orders
+        // Валідація для підписок
+        $validation_errors = array();
+
         if (empty($_POST['billing_email'])) {
+            $validation_errors[] = 'missing_email';
             wc_add_notice(__('Email address is required for subscription orders.', 'bna-smart-payment'), 'error');
         }
 
-        // Check if user can create subscriptions (could be based on user role, etc.)
-        if (!is_user_logged_in()) {
-            // For now, allow guest subscriptions, but this could be changed
-            bna_debug('Guest subscription order detected');
+        // Перевірка чи може користувач створювати підписки
+        if (!is_user_logged_in() && !WC()->checkout()->is_registration_enabled()) {
+            $validation_errors[] = 'registration_required';
+            wc_add_notice(__('You must create an account to purchase subscription products.', 'bna-smart-payment'), 'error');
+        }
+
+        if (!empty($validation_errors)) {
+            bna_error('SUBSCRIPTION CHECKOUT VALIDATION FAILED', array(
+                'errors' => $validation_errors,
+                'is_logged_in' => is_user_logged_in(),
+                'registration_enabled' => WC()->checkout()->is_registration_enabled()
+            ));
+        } else {
+            bna_debug('SUBSCRIPTION CHECKOUT VALIDATION PASSED');
         }
     }
 
@@ -312,18 +351,63 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $value;
     }
 
+    /**
+     * Validate birthdate - WITH DETAILED DEBUG
+     */
     public function validate_birthdate() {
+        bna_debug('=== BIRTHDATE VALIDATION START ===', array(
+            'payment_method' => $_POST['payment_method'] ?? 'not_set',
+            'our_gateway_id' => $this->id,
+            'is_our_method' => ($_POST['payment_method'] ?? '') === $this->id,
+            'birthdate_enabled' => $this->get_option('enable_birthdate')
+        ));
+
+        // Перевіряємо чи це наш payment method
+        if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            bna_debug('BIRTHDATE VALIDATION SKIPPED - not our payment method');
+            return;
+        }
+
+        bna_debug('=== BIRTHDATE FIELD CHECK ===', array(
+            'birthdate_value' => $_POST['billing_birthdate'] ?? 'not_set',
+            'is_empty' => empty($_POST['billing_birthdate'])
+        ));
+
         if (empty($_POST['billing_birthdate'])) {
             wc_add_notice(__('Date of birth is a required field.', 'bna-smart-payment'), 'error');
+            bna_error('BIRTHDATE VALIDATION FAILED: field empty');
             return;
         }
 
         $birthdate = sanitize_text_field($_POST['billing_birthdate']);
         $birth_timestamp = strtotime($birthdate);
 
-        if ($birth_timestamp === false || $birth_timestamp > strtotime('-18 years') || $birth_timestamp > time()) {
-            wc_add_notice(__('Please enter a valid birth date. You must be at least 18 years old.', 'bna-smart-payment'), 'error');
+        bna_debug('=== BIRTHDATE VALIDATION DETAILS ===', array(
+            'birthdate' => $birthdate,
+            'birth_timestamp' => $birth_timestamp,
+            'is_valid_date' => $birth_timestamp !== false,
+            'current_time' => time(),
+            'eighteen_years_ago' => strtotime('-18 years')
+        ));
+
+        if ($birth_timestamp === false) {
+            wc_add_notice(__('Please enter a valid birth date.', 'bna-smart-payment'), 'error');
+            bna_error('BIRTHDATE VALIDATION FAILED: invalid format', array('birthdate' => $birthdate));
+            return;
         }
+
+        if ($birth_timestamp > strtotime('-18 years') || $birth_timestamp > time()) {
+            $age_years = floor((time() - $birth_timestamp) / (365.25 * 24 * 60 * 60));
+            wc_add_notice(__('Please enter a valid birth date. You must be at least 18 years old.', 'bna-smart-payment'), 'error');
+            bna_error('BIRTHDATE VALIDATION FAILED: age requirement', array(
+                'birthdate' => $birthdate,
+                'age_years' => $age_years,
+                'required_age' => 18
+            ));
+            return;
+        }
+
+        bna_debug('BIRTHDATE VALIDATION PASSED', array('birthdate' => $birthdate));
     }
 
     public function save_birthdate($order_id) {
@@ -411,12 +495,31 @@ class BNA_Gateway extends WC_Payment_Gateway {
         bna_debug('Shipping address assets loaded');
     }
 
+    /**
+     * Validate shipping address - WITH DETAILED DEBUG
+     */
     public function validate_shipping_address() {
+        bna_debug('=== SHIPPING VALIDATION START ===', array(
+            'payment_method' => $_POST['payment_method'] ?? 'not_set',
+            'our_gateway_id' => $this->id,
+            'is_our_method' => ($_POST['payment_method'] ?? '') === $this->id,
+            'shipping_enabled' => $this->get_option('enable_shipping_address')
+        ));
+
         if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
+            bna_debug('SHIPPING VALIDATION SKIPPED - not our payment method');
             return;
         }
 
         $same_as_billing = !empty($_POST['bna_shipping_same_as_billing']);
+
+        bna_debug('=== SHIPPING ADDRESS CHECK ===', array(
+            'same_as_billing' => $same_as_billing,
+            'bna_shipping_country' => $_POST['bna_shipping_country'] ?? 'not_set',
+            'bna_shipping_address_1' => $_POST['bna_shipping_address_1'] ?? 'not_set',
+            'bna_shipping_city' => $_POST['bna_shipping_city'] ?? 'not_set',
+            'bna_shipping_postcode' => $_POST['bna_shipping_postcode'] ?? 'not_set'
+        ));
 
         if (!$same_as_billing) {
             $required_fields = array(
@@ -426,11 +529,23 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'bna_shipping_postcode' => __('Postal code', 'bna-smart-payment')
             );
 
+            $missing_fields = array();
             foreach ($required_fields as $field => $label) {
                 if (empty($_POST[$field])) {
+                    $missing_fields[] = $label;
                     wc_add_notice(sprintf(__('%s is a required field.', 'bna-smart-payment'), $label), 'error');
                 }
             }
+
+            if (!empty($missing_fields)) {
+                bna_error('SHIPPING VALIDATION FAILED: missing fields', array(
+                    'missing_fields' => $missing_fields
+                ));
+            } else {
+                bna_debug('SHIPPING VALIDATION PASSED - all fields provided');
+            }
+        } else {
+            bna_debug('SHIPPING VALIDATION SKIPPED - using billing address');
         }
     }
 
@@ -653,7 +768,54 @@ class BNA_Gateway extends WC_Payment_Gateway {
         ));
     }
 
+    /**
+     * Process payment - WITH DETAILED DEBUG
+     */
     public function process_payment($order_id) {
+        // === ДЕТАЛЬНИЙ ДЕБАГ ===
+        bna_debug('=== PAYMENT PROCESS START ===', array(
+            'order_id' => $order_id,
+            'payment_method' => $_POST['payment_method'] ?? 'not_set',
+            'timestamp' => current_time('c')
+        ));
+
+        // Дебаг налаштувань subscription
+        bna_debug('=== SUBSCRIPTION SETTINGS ===', array(
+            'gateway_subscriptions_enabled' => $this->get_option('enable_subscriptions'),
+            'global_subscriptions_enabled' => get_option('bna_smart_payment_enable_subscriptions'),
+            'birthdate_enabled' => $this->get_option('enable_birthdate'),
+            'shipping_enabled' => $this->get_option('enable_shipping_address')
+        ));
+
+        // Дебаг cart contents
+        $cart_debug = array();
+        if (WC()->cart) {
+            foreach (WC()->cart->get_cart() as $cart_item_key => $cart_item) {
+                $product = $cart_item['data'];
+                $cart_debug[] = array(
+                    'product_id' => $product->get_id(),
+                    'product_name' => $product->get_name(),
+                    'quantity' => $cart_item['quantity'],
+                    'is_subscription_meta' => get_post_meta($product->get_id(), '_bna_is_subscription', true),
+                    'subscription_frequency' => get_post_meta($product->get_id(), '_bna_subscription_frequency', true),
+                    'has_bna_subscription_flag' => isset($cart_item['bna_subscription'])
+                );
+            }
+        }
+        bna_debug('=== CART CONTENTS ===', $cart_debug);
+
+        // Дебаг POST данних (тільки безпечні поля)
+        $post_debug = array(
+            'billing_email' => $_POST['billing_email'] ?? 'not_set',
+            'billing_first_name' => $_POST['billing_first_name'] ?? 'not_set',
+            'billing_last_name' => $_POST['billing_last_name'] ?? 'not_set',
+            'billing_birthdate' => $_POST['billing_birthdate'] ?? 'not_set',
+            'payment_method' => $_POST['payment_method'] ?? 'not_set',
+            'has_shipping_fields' => isset($_POST['bna_shipping_country']),
+            'bna_shipping_same_as_billing' => $_POST['bna_shipping_same_as_billing'] ?? 'not_set'
+        );
+        bna_debug('=== CHECKOUT POST DATA ===', $post_debug);
+
         bna_log('Processing payment for order', array('order_id' => $order_id));
 
         $order = wc_get_order($order_id);
@@ -665,6 +827,10 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         $validation = $this->validate_order_for_payment($order);
         if (!$validation['valid']) {
+            bna_error('Order validation failed', array(
+                'order_id' => $order_id,
+                'validation_errors' => $validation['errors']
+            ));
             foreach ($validation['errors'] as $error) {
                 wc_add_notice($error, 'error');
             }
@@ -721,6 +887,9 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
+    /**
+     * Validate order for payment - WITH DEBUG
+     */
     private function validate_order_for_payment($order) {
         $errors = array();
 
@@ -739,12 +908,24 @@ class BNA_Gateway extends WC_Payment_Gateway {
         // Additional validation for subscription orders
         if (BNA_Subscriptions::order_has_subscription($order)) {
             bna_debug('Validating subscription order', array('order_id' => $order->get_id()));
-            
+
             // Add any subscription-specific validation here
             if (!BNA_Subscriptions::is_enabled()) {
                 $errors[] = __('Subscription payments are currently disabled.', 'bna-smart-payment');
             }
         }
+
+        // DEBUG: Add validation result
+        bna_debug('=== ORDER VALIDATION RESULT ===', array(
+            'is_valid' => empty($errors),
+            'errors_count' => count($errors),
+            'errors' => $errors,
+            'order_id' => $order->get_id(),
+            'order_total' => $order->get_total(),
+            'billing_email' => $order->get_billing_email(),
+            'billing_name' => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name(),
+            'has_subscription_check' => BNA_Subscriptions::order_has_subscription($order)
+        ));
 
         return array(
             'valid' => empty($errors),
@@ -755,12 +936,12 @@ class BNA_Gateway extends WC_Payment_Gateway {
     private function prepare_order_for_payment($order) {
         $order->update_status('pending', __('Awaiting BNA payment.', 'bna-smart-payment'));
         $order->add_meta_data('_bna_payment_initiated', current_time('mysql'));
-        
+
         // Add subscription flag if order contains subscriptions
         if (BNA_Subscriptions::order_has_subscription($order)) {
             $order->add_meta_data('_bna_order_type', 'subscription');
         }
-        
+
         $order->save();
     }
 

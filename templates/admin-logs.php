@@ -1,3 +1,34 @@
+<?php
+/**
+ * Admin Logs Template
+ * Displays BNA payment logs with system information
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+// Safe extraction of template data with fallbacks
+if (isset($data) && is_array($data)) {
+    extract($data);
+} else {
+    // Fallback values if data is not provided
+    $logs = BNA_Logger::get_logs(1000);
+    $log_size = BNA_Logger::get_log_size();
+    $webhook_url = home_url('/wp-json/bna/v1/webhook');
+    $plugin_version = defined('BNA_SMART_PAYMENT_VERSION') ? BNA_SMART_PAYMENT_VERSION : 'Unknown';
+    $wp_version = get_bloginfo('version');
+    $wc_version = class_exists('WooCommerce') ? WC()->version : 'Not installed';
+    $php_version = PHP_VERSION;
+    $wp_debug = defined('WP_DEBUG') && WP_DEBUG;
+    $message = isset($_GET['message']) ? sanitize_text_field($_GET['message']) : '';
+
+    // Generate nonce URLs
+    $clear_logs_url = wp_nonce_url(admin_url('admin.php?page=bna-logs&bna_action=clear_logs'), 'bna_admin_action');
+    $download_logs_url = wp_nonce_url(admin_url('admin.php?page=bna-logs&bna_action=download_logs'), 'bna_admin_action');
+}
+?>
+
 <div class="wrap">
     <h1>🔧 BNA Payment Logs</h1>
 
@@ -18,8 +49,8 @@
         </p>
 
         <p>
-            <a href="?page=bna-logs&bna_action=download_logs" class="button">📥 Download Logs</a>
-            <a href="?page=bna-logs&bna_action=clear_logs" class="button" onclick="return confirm('Clear all logs? This cannot be undone.')">🗑️ Clear Logs</a>
+            <a href="<?php echo esc_url($download_logs_url); ?>" class="button">📥 Download Logs</a>
+            <a href="<?php echo esc_url($clear_logs_url); ?>" class="button" onclick="return confirm('Clear all logs? This cannot be undone.')">🗑️ Clear Logs</a>
         </p>
     </div>
 
@@ -60,63 +91,26 @@
     $health_percentage = round(($healthy_count / $total_count) * 100);
     ?>
     <div style="background: <?php echo $health_percentage >= 80 ? '#d4edda' : ($health_percentage >= 60 ? '#fff3cd' : '#f8d7da'); ?>; padding: 15px; margin: 15px 0; border: 1px solid <?php echo $health_percentage >= 80 ? '#28a745' : ($health_percentage >= 60 ? '#ffc107' : '#dc3545'); ?>; border-radius: 4px;">
-        <h3>🏥 System Health (<?php echo $health_percentage; ?>%)</h3>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px;">
-            <div>
-                <strong><?php echo $health['wp_version_ok'] ? '✅' : '❌'; ?> WordPress Version</strong><br>
-                <small><?php echo get_bloginfo('version'); ?> (Required: 5.0+)</small>
-            </div>
-            <div>
-                <strong><?php echo $health['wc_installed'] && $health['wc_version_ok'] ? '✅' : '❌'; ?> WooCommerce</strong><br>
-                <small><?php echo $health['wc_installed'] ? (class_exists('WooCommerce') ? WC()->version : 'Unknown') : 'Not installed'; ?> (Required: 5.0+)</small>
-            </div>
-            <div>
-                <strong><?php echo $health['php_version_ok'] ? '✅' : '❌'; ?> PHP Version</strong><br>
-                <small><?php echo PHP_VERSION; ?> (Recommended: 7.4+)</small>
-            </div>
-            <div>
-                <strong><?php echo $health['ssl_enabled'] ? '✅' : '❌'; ?> SSL Certificate</strong><br>
-                <small><?php echo $health['ssl_enabled'] ? 'HTTPS enabled' : 'HTTP only - SSL recommended'; ?></small>
-            </div>
-            <div>
-                <strong><?php echo $health['credentials_configured'] ? '✅' : '❌'; ?> API Credentials</strong><br>
-                <small><?php echo $health['credentials_configured'] ? 'Configured' : 'Missing access/secret key'; ?></small>
-            </div>
-            <div>
-                <strong><?php echo $health['iframe_id_configured'] ? '✅' : '❌'; ?> iFrame ID</strong><br>
-                <small><?php echo $health['iframe_id_configured'] ? 'Configured' : 'Missing iFrame ID'; ?></small>
-            </div>
+        <h3>⚡ System Health (<?php echo $health_percentage; ?>%)</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+            <?php foreach ($health as $check => $status): ?>
+                <div>
+                    <?php echo $status ? '✅' : '❌'; ?> <strong><?php echo esc_html(ucwords(str_replace('_', ' ', $check))); ?></strong>
+                </div>
+            <?php endforeach; ?>
         </div>
     </div>
 
-    <div style="background: white; padding: 15px; border: 1px solid #ccd0d4; border-radius: 4px;">
-        <h2>Recent Logs (Last 1000 lines)</h2>
-
-        <?php if (!empty(trim($logs))): ?>
-            <div style="margin-bottom: 15px;">
-                <button id="bna-auto-scroll" class="button" onclick="toggleAutoScroll()">📜 Enable Auto-scroll</button>
-                <button class="button" onclick="searchLogs()">🔍 Search in Logs</button>
-                <input type="text" id="search-input" placeholder="Search logs..." style="margin-left: 10px; width: 200px;">
-            </div>
-
-            <textarea id="bna-logs-content" readonly style="
-                width: 100%;
-                height: 500px;
-                font-family: 'Courier New', monospace;
-                font-size: 12px;
-                background: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #444;
-                padding: 10px;
-                resize: vertical;
-                white-space: pre;
-                overflow: auto;
-            "><?php echo esc_textarea($logs); ?></textarea>
-
-            <p style="margin-top: 10px; color: #666; font-size: 12px;">
-                💡 <strong>Tips:</strong> Logs auto-refresh every 30 seconds when auto-scroll is enabled.
-                Use Ctrl+F to search within the logs. Look for "Payment method saved", "Payment method deleted", or "Webhook received" to track payment methods activity.
-            </p>
+    <?php if (!empty($logs)): ?>
+    <div style="background: white; padding: 15px; margin: 15px 0; border: 1px solid #ccd0d4; border-radius: 4px;">
+        <h3>📋 Recent Logs (Last 1000 entries)</h3>
+        <div style="background: #f8f9fa; padding: 15px; border: 1px solid #dee2e6; border-radius: 4px; max-height: 500px; overflow-y: auto;">
+            <pre style="margin: 0; font-size: 12px; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word;"><?php echo esc_html($logs); ?></pre>
+        </div>
+        <p style="margin-top: 10px; color: #666; font-size: 13px;">
+            <strong>💡 Tip:</strong>
+            Use Ctrl+F to search within the logs. Look for "Payment method saved", "Payment method deleted", or "Webhook received" to track payment methods activity.
+        </p>
 
         <?php else: ?>
             <div style="text-align: center; padding: 40px; color: #666;">
@@ -158,210 +152,43 @@
                     <li><strong>PHP:</strong> <?php echo esc_html($php_version); ?> <?php echo version_compare(PHP_VERSION, '7.4', '>=') ? '✅' : (version_compare(PHP_VERSION, '7.0', '>=') ? '⚠️' : '❌'); ?></li>
                     <li><strong>JSON Support:</strong> <?php echo function_exists('json_encode') ? '✅ Available' : '❌ Missing'; ?></li>
                     <li><strong>JSON Constants:</strong> <?php echo (defined('JSON_UNESCAPED_UNICODE') && defined('JSON_SORT_KEYS')) ? '✅ Full' : '⚠️ Limited'; ?></li>
-                    <li><strong>WP Debug:</strong> <?php echo $wp_debug ? '✅ Enabled' : '❌ Disabled'; ?></li>
-                    <li><strong>SSL:</strong> <?php echo is_ssl() ? '✅ Enabled' : '⚠️ Disabled'; ?></li>
-                    <li><strong>cURL:</strong> <?php echo function_exists('curl_init') ? '✅ Available' : '❌ Missing'; ?></li>
+                    <li><strong>WP Debug:</strong> <?php echo $wp_debug ? '🔍 Enabled' : '❌ Disabled'; ?></li>
+                    <li><strong>SSL:</strong> <?php echo is_ssl() ? '🔒 Enabled' : '⚠️ Disabled'; ?></li>
+                    <li><strong>Permalinks:</strong> <?php echo get_option('permalink_structure') ? '✅ Pretty' : '⚠️ Plain'; ?></li>
                 </ul>
             </div>
         </div>
+    </div>
 
-        <div style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px;">
-            <h4>💳 Payment Methods Management (v1.7.0)</h4>
-            <p><strong>What gets saved:</strong> Credit cards, debit cards, bank transfers (EFT), e-transfers</p>
-            <p><strong>Where to manage:</strong> My Account → Payment Methods</p>
-            <p><strong>Auto-saving:</strong> Payment methods are automatically saved after successful payments</p>
-            <p><strong>Security:</strong> Only payment method IDs and safe details (last 4 digits, type) are stored locally</p>
-        </div>
-
-        <div style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px;">
-            <h4>🔄 Customer Sync Features (v1.6.0)</h4>
-            <p><strong>What syncs automatically:</strong> Customer name, email, phone, address, shipping address, birthdate</p>
-            <p><strong>When it syncs:</strong> When customer data changes between orders</p>
-            <p><strong>How to track:</strong> Look for log entries containing "Customer updated" or "Customer data changed"</p>
-        </div>
-
-        <div style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px;">
-            <h4>🛠️ Error Handling Improvements (v1.6.1)</h4>
-            <p><strong>Country Code Mapping:</strong> Automatic conversion of WooCommerce country codes (CA, US, UA) to BNA API format</p>
-            <p><strong>Phone Number Processing:</strong> Smart detection of country codes based on phone patterns and billing country</p>
-            <p><strong>API Error Recovery:</strong> Graceful fallbacks when customer updates fail, continues with existing customer data</p>
-            <p><strong>Data Validation:</strong> Pre-validation of customer data before API submission to prevent errors</p>
-        </div>
-
-        <div style="margin-top: 15px; padding: 10px; background: #fff; border-radius: 4px;">
-            <h4>🗺️ Supported Payment Methods</h4>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 12px;">
-                <div>
-                    <strong>Cards:</strong><br>
-                    💳 Credit Cards<br>
-                    💳 Debit Cards<br>
-                    💳 Prepaid Cards
-                </div>
-                <div>
-                    <strong>Bank Transfers:</strong><br>
-                    🏦 EFT (Electronic Funds Transfer)<br>
-                    📧 E-Transfer (Interac)
-                </div>
-                <div>
-                    <strong>Digital Wallets:</strong><br>
-                    📱 Apple Pay<br>
-                    📱 Google Pay<br>
-                    📱 Samsung Pay
-                </div>
+    <div style="background: #fff8e1; padding: 15px; margin: 15px 0; border: 1px solid #ffb300; border-radius: 4px;">
+        <h3>📖 Quick Help</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
+            <div>
+                <h4>🔍 Log Analysis</h4>
+                <ul style="margin: 0; font-size: 13px;">
+                    <li><code>[INFO]</code> - Normal operations</li>
+                    <li><code>[DEBUG]</code> - Detailed debugging info</li>
+                    <li><code>[ERROR]</code> - Problems that need attention</li>
+                    <li>Look for patterns in timestamps</li>
+                </ul>
+            </div>
+            <div>
+                <h4>🚨 Common Issues</h4>
+                <ul style="margin: 0; font-size: 13px;">
+                    <li><strong>Webhook failures:</strong> Check URL accessibility</li>
+                    <li><strong>API errors:</strong> Verify credentials</li>
+                    <li><strong>SSL warnings:</strong> Enable HTTPS</li>
+                    <li><strong>Large logs:</strong> Enable log rotation</li>
+                </ul>
+            </div>
+            <div>
+                <h4>⚙️ Settings</h4>
+                <ul style="margin: 0; font-size: 13px;">
+                    <li><a href="<?php echo admin_url('admin.php?page=wc-settings&tab=checkout&section=bna_smart_payment'); ?>">Gateway Settings</a></li>
+                    <li><a href="<?php echo admin_url('admin.php?page=bna-subscriptions'); ?>">Subscriptions</a></li>
+                    <li><a href="<?php echo admin_url('admin.php?page=wc-status'); ?>">WooCommerce Status</a></li>
+                </ul>
             </div>
         </div>
     </div>
 </div>
-
-<script>
-    let autoScrollEnabled = false;
-    let refreshInterval = null;
-
-    function toggleAutoScroll() {
-        const button = document.getElementById('bna-auto-scroll');
-        const textarea = document.getElementById('bna-logs-content');
-
-        autoScrollEnabled = !autoScrollEnabled;
-
-        if (autoScrollEnabled) {
-            button.textContent = '⏸️ Disable Auto-scroll';
-            button.style.background = '#dc3232';
-            button.style.color = 'white';
-
-            textarea.scrollTop = textarea.scrollHeight;
-
-            refreshInterval = setInterval(function() {
-                location.reload();
-            }, 30000);
-
-        } else {
-            button.textContent = '📜 Enable Auto-scroll';
-            button.style.background = '';
-            button.style.color = '';
-
-            if (refreshInterval) {
-                clearInterval(refreshInterval);
-                refreshInterval = null;
-            }
-        }
-    }
-
-    function searchLogs() {
-        const searchTerm = document.getElementById('search-input').value.toLowerCase();
-        const textarea = document.getElementById('bna-logs-content');
-        const content = textarea.value.toLowerCase();
-
-        if (!searchTerm) {
-            alert('Please enter a search term');
-            return;
-        }
-
-        const commonSearches = {
-            'error': 'Find error messages and failures',
-            'payment method saved': 'Track when payment methods are saved',
-            'payment method deleted': 'Track when payment methods are deleted',
-            'customer updated': 'Track customer synchronization events',
-            'customer data changed': 'Find customer data change events',
-            'country code mapped': 'Track country code conversions',
-            'phone number processed': 'Track phone number processing',
-            'webhook': 'Track webhook events',
-            'payment completed': 'Find successful payments',
-            'api error': 'Find API communication errors'
-        };
-
-        if (commonSearches[searchTerm]) {
-            alert('💡 Tip: ' + commonSearches[searchTerm]);
-        }
-
-        const index = content.indexOf(searchTerm);
-        if (index !== -1) {
-            const beforeSearch = content.substring(0, index);
-            const lineNumber = beforeSearch.split('\n').length;
-
-            const totalLines = content.split('\n').length;
-            const scrollPosition = (lineNumber / totalLines) * textarea.scrollHeight;
-            textarea.scrollTop = scrollPosition;
-
-            alert(`Found "${searchTerm}" at approximately line ${lineNumber}`);
-        } else {
-            alert(`"${searchTerm}" not found in logs`);
-        }
-    }
-
-    document.getElementById('search-input').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            searchLogs();
-        }
-    });
-
-    document.addEventListener('DOMContentLoaded', function() {
-        const textarea = document.getElementById('bna-logs-content');
-        if (textarea && textarea.value.trim()) {
-            textarea.scrollTop = textarea.scrollHeight;
-        }
-
-        const searchInput = document.getElementById('search-input');
-        if (searchInput) {
-            const quickButtons = document.createElement('div');
-            quickButtons.style.marginTop = '10px';
-            quickButtons.innerHTML = `
-            <small>Quick searches: </small>
-            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='Payment method saved'; searchLogs();">Payment Methods</button>
-            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='Customer updated'; searchLogs();">Customer Updates</button>
-            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='Country code mapped'; searchLogs();">Country Mapping</button>
-            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='webhook'; searchLogs();">Webhooks</button>
-            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='error'; searchLogs();">Errors</button>
-            <button type="button" class="button button-small" onclick="document.getElementById('search-input').value='API error'; searchLogs();">API Errors</button>
-        `;
-            searchInput.parentNode.appendChild(quickButtons);
-        }
-    });
-</script>
-
-<style>
-    #bna-logs-content::-webkit-scrollbar {
-        width: 12px;
-    }
-
-    #bna-logs-content::-webkit-scrollbar-track {
-        background: #2c2c2c;
-    }
-
-    #bna-logs-content::-webkit-scrollbar-thumb {
-        background: #555;
-        border-radius: 6px;
-    }
-
-    #bna-logs-content::-webkit-scrollbar-thumb:hover {
-        background: #777;
-    }
-
-    .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-        gap: 15px;
-    }
-
-    .button-small {
-        font-size: 11px !important;
-        padding: 2px 6px !important;
-        height: auto !important;
-        line-height: 1.2 !important;
-        margin: 1px !important;
-    }
-
-    .health-good {
-        color: #28a745;
-        font-weight: bold;
-    }
-
-    .health-warning {
-        color: #ffc107;
-        font-weight: bold;
-    }
-
-    .health-error {
-        color: #dc3545;
-        font-weight: bold;
-    }
-</style>
