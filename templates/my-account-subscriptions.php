@@ -1,6 +1,6 @@
 <?php
 /**
- * My Account Subscriptions Template - ИСПРАВЛЕННАЯ ВЕРСИЯ
+ * My Account Subscriptions Template
  *
  * @since 1.9.0
  * @package BNA_Smart_Payment
@@ -16,7 +16,7 @@ $subscription_count = count($subscriptions);
 ?>
 
 <div class="bna-my-account-subscriptions">
-    <div class="bna-subscriptions-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #0073aa;">
+    <div class="bna-subscriptions-header" style="margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid #0073aa;">
         <h2 style="margin: 0; color: #0073aa;">
             <?php _e('My Subscriptions', 'bna-smart-payment'); ?>
             <?php if ($subscription_count > 0) : ?>
@@ -25,12 +25,6 @@ $subscription_count = count($subscriptions);
                 </span>
             <?php endif; ?>
         </h2>
-
-        <div class="subscription-actions">
-            <a href="<?php echo esc_url(wc_get_page_permalink('shop')); ?>" class="button button-primary">
-                <?php _e('Browse Products', 'bna-smart-payment'); ?>
-            </a>
-        </div>
     </div>
 
     <?php if (empty($subscriptions)) : ?>
@@ -39,30 +33,26 @@ $subscription_count = count($subscriptions);
             <h3 style="color: #6c757d; margin-bottom: 15px;">
                 <?php _e('No Subscriptions Yet', 'bna-smart-payment'); ?>
             </h3>
-            <p style="color: #6c757d; margin-bottom: 25px;">
-                <?php _e('You don\'t have any active subscriptions. Browse our products to find subscription services that work for you.', 'bna-smart-payment'); ?>
+            <p style="color: #6c757d;">
+                <?php _e('You don\'t have any subscription services yet.', 'bna-smart-payment'); ?>
             </p>
-            <a href="<?php echo esc_url(wc_get_page_permalink('shop')); ?>" class="button button-primary">
-                <?php _e('Start Shopping', 'bna-smart-payment'); ?>
-            </a>
         </div>
 
     <?php else : ?>
         <div class="bna-subscriptions-list">
             <?php foreach ($subscriptions as $subscription) :
-                // ИСПРАВЛЕНО: правильные вызовы методов
                 $status = $subscription['status'] ?? 'new';
                 $status_class = 'status-' . esc_attr($status);
                 $status_color = BNA_My_Account::get_subscription_status_color($status);
                 $status_label = BNA_My_Account::get_subscription_status_label($status);
+                $order_id = $subscription['order_id'] ?? $subscription['id'];
+                $subscription_id = $subscription['subscription_id'] ?? $subscription['id'];
 
-                // ИСПРАВЛЕНО: правильная обработка даты
                 $next_payment = 'N/A';
                 if (!empty($subscription['next_payment'])) {
                     $next_payment = date('M j, Y', strtotime($subscription['next_payment']));
                 }
 
-                // Обработка created_date (может быть объект WC_DateTime)
                 $created_date = 'N/A';
                 if (isset($subscription['created_date'])) {
                     if (is_object($subscription['created_date'])) {
@@ -72,7 +62,6 @@ $subscription_count = count($subscriptions);
                     }
                 }
 
-                // Обработка items и frequency
                 $items = $subscription['items'] ?? array();
                 $first_item = !empty($items) ? reset($items) : null;
                 $frequency = 'monthly';
@@ -84,7 +73,7 @@ $subscription_count = count($subscriptions);
                 }
                 ?>
 
-                <div class="subscription-item" style="background: white; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <div class="subscription-item" style="background: white; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>">
                     <div class="subscription-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                         <div>
                             <h4 style="margin: 0 0 5px 0;">
@@ -120,7 +109,6 @@ $subscription_count = count($subscriptions);
                         </div>
                     </div>
 
-                    <!-- Subscription Items -->
                     <?php if (!empty($items)) : ?>
                         <div class="subscription-items" style="margin-bottom: 20px;">
                             <h5 style="margin: 0 0 10px 0; color: #333;"><?php _e('Items:', 'bna-smart-payment'); ?></h5>
@@ -140,43 +128,45 @@ $subscription_count = count($subscriptions);
                         </div>
                     <?php endif; ?>
 
-                    <!-- Subscription Actions -->
                     <div class="subscription-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <?php
-                        $order_id = $subscription['order_id'] ?? $subscription['id'];
-
-                        // Show available actions based on status
-                        if (BNA_My_Account::is_subscription_action_allowed($status, 'suspend') && $status === 'active') : ?>
-                            <button type="button" class="button bna-suspend-subscription" data-order-id="<?php echo esc_attr($order_id); ?>">
+                        <?php if (BNA_My_Account::is_subscription_action_allowed($status, 'suspend') && $status === 'active') : ?>
+                            <button type="button" class="button bna-subscription-action" data-action="suspend" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>">
                                 <?php _e('Pause', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
                         <?php if (BNA_My_Account::is_subscription_action_allowed($status, 'resume') && $status === 'suspended') : ?>
-                            <button type="button" class="button button-primary bna-resume-subscription" data-order-id="<?php echo esc_attr($order_id); ?>">
+                            <button type="button" class="button button-primary bna-subscription-action" data-action="resume" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>">
                                 <?php _e('Resume', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
                         <?php if (BNA_My_Account::is_subscription_action_allowed($status, 'cancel') && in_array($status, array('active', 'suspended', 'new'))) : ?>
-                            <button type="button" class="button bna-cancel-subscription" data-order-id="<?php echo esc_attr($order_id); ?>" style="color: #dc3545;">
+                            <button type="button" class="button bna-subscription-action" data-action="cancel" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="color: #dc3545;">
                                 <?php _e('Cancel', 'bna-smart-payment'); ?>
+                            </button>
+                        <?php endif; ?>
+
+                        <?php if ($status === 'cancelled') : ?>
+                            <button type="button" class="button bna-subscription-action" data-action="delete" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #dc3545; color: white; border-color: #dc3545;">
+                                <?php _e('Delete', 'bna-smart-payment'); ?>
+                            </button>
+                        <?php endif; ?>
+
+                        <?php if ($status !== 'deleted') : ?>
+                            <button type="button" class="button bna-subscription-action" data-action="resend_notification" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #28a745; color: white; border-color: #28a745;">
+                                <?php _e('Resend Notification', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
                         <button type="button" class="button bna-view-subscription-details" data-order-id="<?php echo esc_attr($order_id); ?>">
                             <?php _e('View Details', 'bna-smart-payment'); ?>
                         </button>
-
-                        <a href="<?php echo admin_url('post.php?post=' . $order_id . '&action=edit'); ?>" class="button" target="_blank">
-                            <?php _e('View Order', 'bna-smart-payment'); ?>
-                        </a>
                     </div>
                 </div>
             <?php endforeach; ?>
         </div>
 
-        <!-- Status Legend -->
         <div class="subscription-legend" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6;">
             <h4><?php _e('Status Legend:', 'bna-smart-payment'); ?></h4>
             <div style="display: flex; flex-wrap: wrap; gap: 15px;">
@@ -194,54 +184,16 @@ $subscription_count = count($subscriptions);
 </div>
 
 <style>
-    /* Responsive styles */
     @media (max-width: 768px) {
         .subscription-details {
             grid-template-columns: 1fr !important;
         }
-
         .subscription-actions {
             flex-direction: column;
         }
-
         .subscription-actions .button {
             width: 100%;
             text-align: center;
         }
     }
 </style>
-
-<script type="text/javascript">
-    jQuery(document).ready(function($) {
-        // Обработка кнопок управления подписками
-        $('.bna-suspend-subscription').on('click', function(e) {
-            e.preventDefault();
-            if (confirm('<?php _e('Are you sure you want to pause this subscription?', 'bna-smart-payment'); ?>')) {
-                // AJAX вызов для приостановки
-                console.log('Pause subscription:', $(this).data('order-id'));
-            }
-        });
-
-        $('.bna-resume-subscription').on('click', function(e) {
-            e.preventDefault();
-            if (confirm('<?php _e('Are you sure you want to resume this subscription?', 'bna-smart-payment'); ?>')) {
-                // AJAX вызов для возобновления
-                console.log('Resume subscription:', $(this).data('order-id'));
-            }
-        });
-
-        $('.bna-cancel-subscription').on('click', function(e) {
-            e.preventDefault();
-            if (confirm('<?php _e('Are you sure you want to cancel this subscription? This action cannot be undone.', 'bna-smart-payment'); ?>')) {
-                // AJAX вызов для отмены
-                console.log('Cancel subscription:', $(this).data('order-id'));
-            }
-        });
-
-        $('.bna-view-subscription-details').on('click', function(e) {
-            e.preventDefault();
-            // Показать детали подписки
-            console.log('View details:', $(this).data('order-id'));
-        });
-    });
-</script>
