@@ -48,7 +48,7 @@ class BNA_My_Account {
         add_action('wp_ajax_bna_resume_subscription', array($this, 'handle_resume_subscription'));
         add_action('wp_ajax_bna_cancel_subscription', array($this, 'handle_cancel_subscription'));
         add_action('wp_ajax_bna_delete_subscription', array($this, 'handle_delete_subscription'));
-        add_action('wp_ajax_bna_resend_notification', array($this, 'handle_resend_notification'));
+        add_action('wp_ajax_bna_resend_notification_subscription', array($this, 'handle_resend_notification'));
         add_action('wp_ajax_bna_reactivate_subscription', array($this, 'handle_reactivate_subscription'));
         add_action('wp_ajax_bna_get_subscription_details', array($this, 'handle_get_subscription_details'));
 
@@ -461,14 +461,15 @@ class BNA_My_Account {
                 wp_send_json_error($result->get_error_message());
             }
 
-            $order->update_meta_data('_bna_subscription_status', 'cancelled');
+            // ЗМІНА: статус тепер 'suspended' замість 'cancelled' для синхронізації з BNA
+            $order->update_meta_data('_bna_subscription_status', 'suspended');
             $order->update_meta_data('_bna_subscription_last_action', 'cancelled_by_customer');
             $order->update_status('cancelled', __('Subscription cancelled by customer.', 'bna-smart-payment'));
             $order->save();
 
             wp_send_json_success(array(
                 'message' => __('Subscription cancelled successfully.', 'bna-smart-payment'),
-                'new_status' => 'cancelled'
+                'new_status' => 'suspended'  // ЗМІНА: повертаємо 'suspended'
             ));
 
         } catch (Exception $e) {
@@ -592,14 +593,17 @@ class BNA_My_Account {
             }
 
             $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
-            if ($current_status === 'deleted') {
-                wp_send_json_error(__('Cannot send notifications for deleted subscriptions.', 'bna-smart-payment'));
+
+            // ЗМІНА: дозволяємо resend для suspended (були заблоковані cancelled)
+            if (in_array($current_status, ['deleted'])) {
+                wp_send_json_error(__('Cannot send notifications for permanently deleted subscriptions.', 'bna-smart-payment'));
             }
 
             bna_log('Resending subscription notification via My Account', array(
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
-                'subscription_id' => $subscription_id
+                'subscription_id' => $subscription_id,
+                'current_status' => $current_status
             ));
 
             $result = $this->api->resend_subscription_notification($subscription_id);
@@ -607,9 +611,21 @@ class BNA_My_Account {
             if (is_wp_error($result)) {
                 bna_error('Failed to resend subscription notification', array(
                     'subscription_id' => $subscription_id,
-                    'error' => $result->get_error_message()
+                    'error' => $result->get_error_message(),
+                    'current_status' => $current_status
                 ));
-                wp_send_json_error($result->get_error_message());
+
+                // Кращі повідомлення про помилки
+                $error_message = $result->get_error_message();
+                if (strpos($error_message, '500') !== false) {
+                    $error_message = 'Unable to send notification. The subscription may no longer be active in the payment system.';
+                } elseif (strpos($error_message, '404') !== false) {
+                    $error_message = 'Subscription not found in the payment system.';
+                } elseif (strpos($error_message, '403') !== false) {
+                    $error_message = 'Permission denied. Please contact support.';
+                }
+
+                wp_send_json_error($error_message);
             }
 
             $order->update_meta_data('_bna_subscription_last_notification', current_time('mysql'));
