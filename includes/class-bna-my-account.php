@@ -32,23 +32,18 @@ class BNA_My_Account {
             return;
         }
 
-        // Add rewrite endpoints
         add_rewrite_endpoint('payment-methods', EP_ROOT | EP_PAGES);
         add_rewrite_endpoint('subscriptions', EP_ROOT | EP_PAGES);
 
-        // Add menu tabs
         add_filter('woocommerce_account_menu_items', array($this, 'add_payment_methods_tab'), 40);
         add_filter('woocommerce_account_menu_items', array($this, 'add_subscriptions_tab'), 41);
 
-        // Add content handlers
         add_action('woocommerce_account_payment-methods_endpoint', array($this, 'payment_methods_content'));
         add_action('woocommerce_account_subscriptions_endpoint', array($this, 'subscriptions_content'));
 
-        // Scripts and AJAX
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_ajax_bna_delete_payment_method', array($this, 'handle_delete_payment_method'));
 
-        // Subscription management AJAX handlers
         add_action('wp_ajax_bna_suspend_subscription', array($this, 'handle_suspend_subscription'));
         add_action('wp_ajax_bna_resume_subscription', array($this, 'handle_resume_subscription'));
         add_action('wp_ajax_bna_cancel_subscription', array($this, 'handle_cancel_subscription'));
@@ -57,7 +52,6 @@ class BNA_My_Account {
         add_action('wp_ajax_bna_reactivate_subscription', array($this, 'handle_reactivate_subscription'));
         add_action('wp_ajax_bna_get_subscription_details', array($this, 'handle_get_subscription_details'));
 
-        // Query vars
         add_filter('woocommerce_get_query_vars', array($this, 'add_query_vars'));
 
         bna_log('BNA My Account initialized', array(
@@ -228,6 +222,12 @@ class BNA_My_Account {
             }
         }
 
+        $local_subscriptions = array_filter($local_subscriptions, function($subscription) {
+            $order = wc_get_order($subscription['order_id']);
+            $status = $order->get_meta('_bna_subscription_status') ?: 'new';
+            return $status !== 'deleted';
+        });
+
         return $local_subscriptions;
     }
 
@@ -315,10 +315,6 @@ class BNA_My_Account {
             'subscriptions_script' => BNA_Subscriptions::is_enabled()
         ));
     }
-
-    // ==========================================
-    // SUBSCRIPTION MANAGEMENT AJAX HANDLERS (FIXED)
-    // ==========================================
 
     public function handle_suspend_subscription() {
         try {
@@ -503,9 +499,6 @@ class BNA_My_Account {
 
             if (empty($subscription_id)) {
                 $subscription_id = $order->get_meta('_bna_subscription_id');
-                if (empty($subscription_id)) {
-                    wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
-                }
             }
 
             $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
@@ -516,23 +509,47 @@ class BNA_My_Account {
             bna_log('Deleting subscription permanently via My Account', array(
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
-                'subscription_id' => $subscription_id
+                'subscription_id' => $subscription_id,
+                'current_status' => $current_status
             ));
 
-            $result = $this->api->delete_subscription($subscription_id);
+            if (!empty($subscription_id) && $subscription_id !== $order_id) {
+                $result = $this->api->delete_subscription($subscription_id);
 
-            if (is_wp_error($result)) {
-                bna_error('Failed to delete subscription permanently', array(
-                    'subscription_id' => $subscription_id,
-                    'error' => $result->get_error_message()
-                ));
-                wp_send_json_error($result->get_error_message());
+                if (is_wp_error($result)) {
+                    $error_message = $result->get_error_message();
+                    if (strpos($error_message, '404') !== false || strpos(strtolower($error_message), 'not found') !== false) {
+                        bna_log('Subscription already deleted from BNA API', array(
+                            'subscription_id' => $subscription_id,
+                            'order_id' => $order_id
+                        ));
+                    } else {
+                        bna_error('Failed to delete subscription from BNA API', array(
+                            'subscription_id' => $subscription_id,
+                            'error' => $error_message
+                        ));
+                        wp_send_json_error(sprintf(
+                            __('Error deleting from payment system: %s', 'bna-smart-payment'),
+                            $error_message
+                        ));
+                    }
+                } else {
+                    bna_log('Subscription deleted successfully from BNA API', array(
+                        'subscription_id' => $subscription_id
+                    ));
+                }
             }
 
             $order->update_meta_data('_bna_subscription_status', 'deleted');
             $order->update_meta_data('_bna_subscription_last_action', 'deleted_by_customer');
+            $order->update_meta_data('_bna_subscription_deleted_date', current_time('mysql'));
             $order->add_order_note(__('Subscription deleted permanently by customer.', 'bna-smart-payment'));
             $order->save();
+
+            bna_log('Subscription marked as deleted locally', array(
+                'order_id' => $order_id,
+                'user_id' => get_current_user_id()
+            ));
 
             wp_send_json_success(array(
                 'message' => __('Subscription deleted permanently.', 'bna-smart-payment'),
@@ -543,7 +560,9 @@ class BNA_My_Account {
             bna_error('Exception in handle_delete_subscription', array(
                 'order_id' => $_POST['order_id'] ?? 'unknown',
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile()
             ));
             wp_send_json_error(__('An error occurred while deleting the subscription. Please try again.', 'bna-smart-payment'));
         }
@@ -628,21 +647,11 @@ class BNA_My_Account {
             $subscription_id = $order->get_meta('_bna_subscription_id');
             $subscription_status = $order->get_meta('_bna_subscription_status') ?: 'new';
 
-            $bna_details = null;
-            if (!empty($subscription_id) && $this->api->has_credentials()) {
-                try {
-                    $api_result = $this->api->get_subscription($subscription_id);
-                    if (!is_wp_error($api_result)) {
-                        $bna_details = $api_result;
-                    }
-                } catch (Exception $api_e) {
-                    bna_error('Failed to get BNA subscription details', array(
-                        'subscription_id' => $subscription_id,
-                        'error' => $api_e->getMessage()
-                    ));
-                    // Continue without BNA details
-                }
-            }
+            bna_log('Loading subscription details', array(
+                'order_id' => $order_id,
+                'subscription_id' => $subscription_id,
+                'local_status' => $subscription_status
+            ));
 
             $details = array(
                 'order_id' => $order_id,
@@ -651,59 +660,69 @@ class BNA_My_Account {
                 'total' => $order->get_formatted_order_total(),
                 'created_date' => $order->get_date_created() ? $order->get_date_created()->format('Y-m-d H:i:s') : '',
                 'items' => array(),
-                'bna_details' => $bna_details
+                'bna_details' => null
             );
 
-            // Safely process order items
             try {
                 foreach ($order->get_items() as $item) {
-                    $product = null;
+                    if (!$item) continue;
+
+                    $item_data = array(
+                        'name' => $item->get_name(),
+                        'quantity' => $item->get_quantity(),
+                        'total' => wc_price($item->get_total()),
+                        'frequency' => 'monthly',
+                        'trial_days' => 0,
+                        'signup_fee' => 0
+                    );
 
                     try {
                         $product = $item->get_product();
+                        if ($product && BNA_Subscriptions::is_subscription_product($product)) {
+                            $subscription_data = BNA_Subscriptions::get_subscription_data($product);
+                            $item_data['frequency'] = $subscription_data['frequency'] ?? 'monthly';
+                            $item_data['trial_days'] = $subscription_data['trial_days'] ?? 0;
+                            $item_data['signup_fee'] = $subscription_data['signup_fee'] ?? 0;
+                        }
                     } catch (Exception $product_e) {
-                        bna_debug('Failed to get product for item', array(
+                        bna_debug('Failed to get subscription data for item', array(
                             'item_id' => $item->get_id(),
                             'error' => $product_e->getMessage()
                         ));
-                        // Continue with null product
                     }
 
-                    if ($product && BNA_Subscriptions::is_subscription_product($product)) {
-                        try {
-                            $subscription_data = BNA_Subscriptions::get_subscription_data($product);
-                            $details['items'][] = array(
-                                'name' => $item->get_name(),
-                                'quantity' => $item->get_quantity(),
-                                'total' => $item->get_formatted_total(),
-                                'frequency' => $subscription_data['frequency'] ?? 'monthly',
-                                'trial_days' => $subscription_data['trial_days'] ?? 0,
-                                'signup_fee' => $subscription_data['signup_fee'] ?? 0
-                            );
-                        } catch (Exception $sub_e) {
-                            bna_error('Failed to get subscription data', array(
-                                'product_id' => $product->get_id(),
-                                'error' => $sub_e->getMessage()
-                            ));
-                            // Add item without subscription data
-                            $details['items'][] = array(
-                                'name' => $item->get_name(),
-                                'quantity' => $item->get_quantity(),
-                                'total' => $item->get_formatted_total(),
-                                'frequency' => 'monthly',
-                                'trial_days' => 0,
-                                'signup_fee' => 0
-                            );
-                        }
-                    }
+                    $details['items'][] = $item_data;
                 }
             } catch (Exception $items_e) {
-                bna_error('Failed to process order items', array(
+                bna_error('Failed to process order items for details', array(
                     'order_id' => $order_id,
                     'error' => $items_e->getMessage()
                 ));
-                // Continue with empty items
             }
+
+            if (!empty($subscription_id) && $this->api->has_credentials() && $subscription_id !== $order_id) {
+                try {
+                    $api_result = $this->api->get_subscription($subscription_id);
+                    if (!is_wp_error($api_result)) {
+                        $details['bna_details'] = $api_result;
+                        bna_debug('BNA API details loaded for subscription', array(
+                            'subscription_id' => $subscription_id,
+                            'api_status' => $api_result['status'] ?? 'unknown'
+                        ));
+                    }
+                } catch (Exception $api_e) {
+                    bna_debug('Could not load BNA subscription details', array(
+                        'subscription_id' => $subscription_id,
+                        'error' => $api_e->getMessage()
+                    ));
+                }
+            }
+
+            bna_log('Subscription details loaded successfully', array(
+                'order_id' => $order_id,
+                'items_count' => count($details['items']),
+                'has_bna_details' => !empty($details['bna_details'])
+            ));
 
             wp_send_json_success($details);
 
@@ -711,7 +730,8 @@ class BNA_My_Account {
             bna_error('Exception in handle_get_subscription_details', array(
                 'order_id' => $_POST['order_id'] ?? 'unknown',
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'line' => $e->getLine()
             ));
             wp_send_json_error(__('An error occurred while loading subscription details. Please try again.', 'bna-smart-payment'));
         }
@@ -765,29 +785,46 @@ class BNA_My_Account {
 
     private function verify_subscription_ajax_request() {
         try {
-            if (!check_ajax_referer('bna_manage_subscription', 'nonce', false)) {
+            if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'bna_manage_subscription')) {
+                bna_error('AJAX nonce verification failed', array(
+                    'nonce_provided' => isset($_POST['nonce']),
+                    'action' => $_POST['action'] ?? 'unknown',
+                    'user_id' => get_current_user_id()
+                ));
                 wp_send_json_error(__('Security check failed.', 'bna-smart-payment'));
             }
 
             if (!is_user_logged_in()) {
+                bna_error('AJAX request from non-logged user', array(
+                    'action' => $_POST['action'] ?? 'unknown',
+                    'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+                ));
                 wp_send_json_error(__('You must be logged in.', 'bna-smart-payment'));
             }
 
             if (!BNA_Subscriptions::is_enabled()) {
+                bna_error('AJAX request but subscriptions disabled', array(
+                    'action' => $_POST['action'] ?? 'unknown',
+                    'user_id' => get_current_user_id()
+                ));
                 wp_send_json_error(__('Subscriptions are not enabled.', 'bna-smart-payment'));
             }
+
+            bna_debug('AJAX subscription request verified', array(
+                'action' => $_POST['action'] ?? 'unknown',
+                'user_id' => get_current_user_id(),
+                'order_id' => $_POST['order_id'] ?? 'not_provided'
+            ));
+
         } catch (Exception $e) {
             bna_error('Exception in verify_subscription_ajax_request', array(
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'action' => $_POST['action'] ?? 'unknown'
             ));
             wp_send_json_error(__('Security verification failed.', 'bna-smart-payment'));
         }
     }
-
-    // ==========================================
-    // PAYMENT METHODS HANDLERS
-    // ==========================================
 
     public function handle_delete_payment_method() {
         try {
@@ -856,10 +893,6 @@ class BNA_My_Account {
             wp_send_json_error(__('An error occurred while deleting the payment method. Please try again.', 'bna-smart-payment'));
         }
     }
-
-    // ==========================================
-    // HELPER METHODS (unchanged)
-    // ==========================================
 
     public function get_payment_method_display_name($method) {
         $type = strtolower($method['type'] ?? 'unknown');

@@ -1,10 +1,4 @@
 <?php
-/**
- * BNA Admin Interface
- * Handles admin pages and functionality
- *
- * @since 1.9.0 Added subscription management
- */
 
 if (!defined('ABSPATH')) {
     exit;
@@ -15,9 +9,6 @@ class BNA_Admin {
     private static $api;
     private static $subscriptions;
 
-    /**
-     * Initialize admin functionality
-     */
     public static function init() {
         self::$api = new BNA_API();
         self::$subscriptions = BNA_Subscriptions::get_instance();
@@ -26,21 +17,15 @@ class BNA_Admin {
         add_action('admin_init', array(__CLASS__, 'handle_actions'));
         add_action('admin_enqueue_scripts', array(__CLASS__, 'enqueue_admin_scripts'));
 
-        // AJAX handlers for subscription management (v1.9.0)
         add_action('wp_ajax_bna_admin_manage_subscription', array(__CLASS__, 'handle_subscription_action'));
         add_action('wp_ajax_bna_admin_sync_subscriptions', array(__CLASS__, 'handle_sync_subscriptions'));
         add_action('wp_ajax_bna_admin_bulk_subscription_action', array(__CLASS__, 'handle_bulk_subscription_action'));
 
-        // Add subscription columns to orders list
         add_filter('manage_edit-shop_order_columns', array(__CLASS__, 'add_order_subscription_column'));
         add_action('manage_shop_order_posts_custom_column', array(__CLASS__, 'display_order_subscription_column'), 10, 2);
     }
 
-    /**
-     * Add admin menu under WooCommerce
-     */
     public static function add_menu() {
-        // Logs page
         add_submenu_page(
             'woocommerce',
             'BNA Payment Logs',
@@ -50,7 +35,6 @@ class BNA_Admin {
             array(__CLASS__, 'logs_page')
         );
 
-        // Subscriptions page (v1.9.0)
         if (BNA_Subscriptions::is_enabled()) {
             add_submenu_page(
                 'woocommerce',
@@ -62,7 +46,6 @@ class BNA_Admin {
             );
         }
 
-        // Settings shortcut
         add_submenu_page(
             'woocommerce',
             'BNA Payment Settings',
@@ -73,11 +56,7 @@ class BNA_Admin {
         );
     }
 
-    /**
-     * Enqueue admin scripts
-     */
     public static function enqueue_admin_scripts($hook) {
-        // Only load on our admin pages
         if (strpos($hook, 'bna-') === false) {
             return;
         }
@@ -97,7 +76,6 @@ class BNA_Admin {
             BNA_SMART_PAYMENT_VERSION
         );
 
-        // Localize script for subscriptions page
         if (strpos($hook, 'bna-subscriptions') !== false) {
             wp_localize_script('bna-admin', 'bna_admin_subscriptions', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
@@ -120,24 +98,39 @@ class BNA_Admin {
         }
     }
 
-    /**
-     * Handle admin actions
-     */
     public static function handle_actions() {
         if (!isset($_GET['bna_action']) || !current_user_can('manage_woocommerce')) {
             return;
         }
 
         $action = sanitize_text_field($_GET['bna_action']);
-        $nonce = sanitize_text_field($_GET['_wpnonce'] ?? '');
+        $nonce = isset($_GET['_wpnonce']) ? $_GET['_wpnonce'] : '';
+
+        if (empty($nonce)) {
+            bna_error('Admin action attempted without nonce', array(
+                'action' => $action,
+                'user_id' => get_current_user_id()
+            ));
+            wp_die(__('Security token missing.', 'bna-smart-payment'));
+        }
 
         if (!wp_verify_nonce($nonce, 'bna_admin_action')) {
-            wp_die(__('Security check failed.', 'bna-smart-payment'));
+            bna_error('Admin nonce verification failed', array(
+                'action' => $action,
+                'nonce_provided' => !empty($nonce),
+                'user_can_manage' => current_user_can('manage_woocommerce'),
+                'current_user' => get_current_user_id()
+            ));
+
+            wp_die(__('Security check failed. Please try again.', 'bna-smart-payment'));
         }
 
         switch ($action) {
             case 'clear_logs':
                 BNA_Logger::clear();
+                bna_log('Admin cleared logs', array(
+                    'user_id' => get_current_user_id()
+                ));
                 wp_redirect(admin_url('admin.php?page=bna-logs&message=logs_cleared'));
                 exit;
 
@@ -153,16 +146,16 @@ class BNA_Admin {
             case 'export_subscriptions':
                 self::export_subscriptions();
                 exit;
+
+            default:
+                bna_error('Unknown admin action attempted', array(
+                    'action' => $action,
+                    'user_id' => get_current_user_id()
+                ));
+                wp_die(__('Invalid action.', 'bna-smart-payment'));
         }
     }
 
-    // ==========================================
-    // SUBSCRIPTION MANAGEMENT (v1.9.0)
-    // ==========================================
-
-    /**
-     * Display subscriptions management page
-     */
     public static function subscriptions_page() {
         if (!BNA_Subscriptions::is_enabled()) {
             echo '<div class="wrap"><h1>BNA Subscriptions</h1>';
@@ -176,13 +169,11 @@ class BNA_Admin {
         $search = sanitize_text_field($_GET['s'] ?? '');
         $per_page = 20;
 
-        // Get subscriptions data
         $subscriptions_data = self::get_admin_subscriptions($page, $per_page, $status_filter, $search);
         $subscriptions = $subscriptions_data['subscriptions'];
         $total_subscriptions = $subscriptions_data['total'];
         $total_pages = ceil($total_subscriptions / $per_page);
 
-        // Get statistics
         $stats = self::get_subscription_stats();
 
         $message = sanitize_text_field($_GET['message'] ?? '');
@@ -197,7 +188,6 @@ class BNA_Admin {
                 </div>
             <?php endif; ?>
 
-            <!-- Statistics Cards -->
             <div class="bna-admin-stats" style="display: flex; gap: 20px; margin: 20px 0;">
                 <div class="bna-stat-card" style="background: white; padding: 20px; border-radius: 5px; border-left: 4px solid #28a745; min-width: 150px;">
                     <div style="font-size: 24px; font-weight: bold; color: #28a745;"><?php echo $stats['active']; ?></div>
@@ -217,7 +207,6 @@ class BNA_Admin {
                 </div>
             </div>
 
-            <!-- Filters and Search -->
             <div class="tablenav top">
                 <div class="alignleft actions">
                     <form method="get">
@@ -261,7 +250,6 @@ class BNA_Admin {
                 </div>
             </div>
 
-            <!-- Subscriptions Table -->
             <table class="wp-list-table widefat fixed striped">
                 <thead>
                 <tr>
@@ -293,7 +281,6 @@ class BNA_Admin {
                 </tbody>
             </table>
 
-            <!-- Bulk Actions -->
             <div class="tablenav bottom">
                 <div class="alignleft actions">
                     <select name="bulk_action" id="bulk-action-selector">
@@ -309,9 +296,6 @@ class BNA_Admin {
         <?php
     }
 
-    /**
-     * Render individual subscription row
-     */
     private static function render_subscription_row($subscription) {
         $order = wc_get_order($subscription['order_id']);
         $customer = $order ? $order->get_user() : null;
@@ -374,9 +358,6 @@ class BNA_Admin {
         <?php
     }
 
-    /**
-     * Render subscription action buttons
-     */
     private static function render_subscription_actions($order_id, $status) {
         $actions = array();
 
@@ -397,9 +378,6 @@ class BNA_Admin {
         echo implode(' ', $actions);
     }
 
-    /**
-     * Get admin subscriptions data
-     */
     private static function get_admin_subscriptions($page = 1, $per_page = 20, $status_filter = 'all', $search = '') {
         $offset = ($page - 1) * $per_page;
 
@@ -412,7 +390,6 @@ class BNA_Admin {
             'order' => 'DESC'
         );
 
-        // Status filter
         if ($status_filter !== 'all') {
             $args['meta_query'] = array(
                 array(
@@ -423,7 +400,6 @@ class BNA_Admin {
             );
         }
 
-        // Search filter
         if (!empty($search)) {
             $args['search'] = $search;
         }
@@ -448,7 +424,6 @@ class BNA_Admin {
             }
         }
 
-        // Get total count
         $total_args = $args;
         unset($total_args['limit'], $total_args['offset']);
         $total_subscriptions = count(wc_get_orders($total_args));
@@ -459,9 +434,6 @@ class BNA_Admin {
         );
     }
 
-    /**
-     * Get subscription statistics
-     */
     private static function get_subscription_stats() {
         $stats = array(
             'total' => 0,
@@ -490,9 +462,6 @@ class BNA_Admin {
         return $stats;
     }
 
-    /**
-     * Handle subscription action AJAX
-     */
     public static function handle_subscription_action() {
         check_ajax_referer('bna_admin_subscription_action', 'nonce');
 
@@ -552,9 +521,6 @@ class BNA_Admin {
         }
     }
 
-    /**
-     * Handle sync subscriptions
-     */
     public static function handle_sync_subscriptions() {
         check_ajax_referer('bna_admin_subscription_action', 'nonce');
 
@@ -570,9 +536,6 @@ class BNA_Admin {
         ));
     }
 
-    /**
-     * Sync all subscriptions with BNA API
-     */
     private static function sync_all_subscriptions() {
         $orders = wc_get_orders(array(
             'meta_key' => '_bna_subscription_created',
@@ -591,7 +554,6 @@ class BNA_Admin {
             try {
                 $bna_subscriptions = self::$api->get_customer_subscriptions($bna_customer_id);
                 if (!is_wp_error($bna_subscriptions) && is_array($bna_subscriptions)) {
-                    // Update order with fresh subscription data
                     foreach ($bna_subscriptions as $bna_sub) {
                         $subscription_id = $order->get_meta('_bna_subscription_id');
                         if ($bna_sub['id'] === $subscription_id) {
@@ -613,9 +575,6 @@ class BNA_Admin {
         return $synced_count;
     }
 
-    /**
-     * Export subscriptions to CSV
-     */
     private static function export_subscriptions() {
         $data = self::get_admin_subscriptions(1, -1);
         $subscriptions = $data['subscriptions'];
@@ -627,7 +586,6 @@ class BNA_Admin {
 
         $output = fopen('php://output', 'w');
 
-        // CSV headers
         fputcsv($output, array(
             'Order ID',
             'Status',
@@ -639,7 +597,6 @@ class BNA_Admin {
             'BNA Subscription ID'
         ));
 
-        // CSV data
         foreach ($subscriptions as $subscription) {
             $order = wc_get_order($subscription['order_id']);
             $frequency = 'monthly';
@@ -663,9 +620,6 @@ class BNA_Admin {
         fclose($output);
     }
 
-    /**
-     * Add subscription column to orders list
-     */
     public static function add_order_subscription_column($columns) {
         $new_columns = array();
         foreach ($columns as $key => $column) {
@@ -677,9 +631,6 @@ class BNA_Admin {
         return $new_columns;
     }
 
-    /**
-     * Display subscription column content
-     */
     public static function display_order_subscription_column($column, $order_id) {
         if ($column !== 'subscription_status') {
             return;
@@ -704,13 +655,6 @@ class BNA_Admin {
         echo '</span>';
     }
 
-    // ==========================================
-    // LOGS PAGE (EXISTING)
-    // ==========================================
-
-    /**
-     * Download logs as text file
-     */
     private static function download_logs() {
         $logs = BNA_Logger::get_logs(0);
         $filename = 'bna-payment-logs-' . date('Y-m-d-H-i-s') . '.txt';
@@ -722,12 +666,7 @@ class BNA_Admin {
         echo $logs;
     }
 
-
-    /**
-     * Display logs page
-     */
     public static function logs_page() {
-        // Prepare all data for the template
         $data = array(
             'logs' => BNA_Logger::get_logs(1000),
             'log_size' => BNA_Logger::get_log_size(),
@@ -738,19 +677,13 @@ class BNA_Admin {
             'php_version' => PHP_VERSION,
             'wp_debug' => defined('WP_DEBUG') && WP_DEBUG,
             'message' => isset($_GET['message']) ? sanitize_text_field($_GET['message']) : '',
-
-            // Generate secure nonce URLs for actions
             'clear_logs_url' => wp_nonce_url(admin_url('admin.php?page=bna-logs&bna_action=clear_logs'), 'bna_admin_action'),
             'download_logs_url' => wp_nonce_url(admin_url('admin.php?page=bna-logs&bna_action=download_logs'), 'bna_admin_action')
         );
 
-        // Render template with data
         BNA_Template::render_admin_logs($data);
     }
 
-    /**
-     * Get admin message text
-     */
     private static function get_admin_message($message) {
         $messages = array(
             'logs_cleared' => __('Logs cleared successfully.', 'bna-smart-payment'),

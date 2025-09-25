@@ -1,19 +1,40 @@
-/**
- * My Account Subscriptions JavaScript
- * Handles AJAX actions for subscription management
- */
-
 jQuery(document).ready(function($) {
     'use strict';
 
-    var config = window.bna_subscriptions || {};
-    var ajaxUrl = config.ajax_url || '/wp-admin/admin-ajax.php';
-    var nonce = config.nonce || '';
+    if (typeof window.bna_subscriptions === 'undefined' || !window.bna_subscriptions) {
+        console.error('BNA Subscriptions: Configuration not loaded. Subscriptions may be disabled.');
+        $('.bna-my-account-subscriptions').html(
+            '<div class="woocommerce-info">' +
+            '<p>Subscriptions functionality is currently unavailable. Please contact support if this persists.</p>' +
+            '</div>'
+        );
+        return;
+    }
+
+    var config = window.bna_subscriptions;
+    var ajaxUrl = config.ajax_url;
+    var nonce = config.nonce;
     var messages = config.messages || {};
 
-    /**
-     * Show loading state for subscription item
-     */
+    if (!ajaxUrl || !nonce) {
+        console.error('BNA Subscriptions: Missing AJAX URL or nonce token', {
+            has_ajax_url: !!ajaxUrl,
+            has_nonce: !!nonce
+        });
+        $('.bna-my-account-subscriptions').prepend(
+            '<div class="woocommerce-error">' +
+            '<p>Configuration error: Missing required authentication tokens.</p>' +
+            '</div>'
+        );
+        return;
+    }
+
+    console.log('BNA Subscriptions: Initialized successfully', {
+        ajax_url: ajaxUrl,
+        has_nonce: !!nonce,
+        messages_loaded: Object.keys(messages).length
+    });
+
     function setLoadingState($subscriptionItem, isLoading) {
         if (isLoading) {
             $subscriptionItem.addClass('subscription-loading');
@@ -24,9 +45,6 @@ jQuery(document).ready(function($) {
         }
     }
 
-    /**
-     * Show notification message
-     */
     function showMessage(message, type = 'success') {
         var messageClass = type === 'error' ? 'woocommerce-error' : 'woocommerce-message';
         var $notice = $('<div class="' + messageClass + '"><p>' + message + '</p></div>');
@@ -41,9 +59,6 @@ jQuery(document).ready(function($) {
         }, 5000);
     }
 
-    /**
-     * Update subscription status in UI
-     */
     function updateSubscriptionStatus($subscriptionItem, newStatus) {
         var $statusBadge = $subscriptionItem.find('.status-badge');
         var statusColors = {
@@ -74,17 +89,12 @@ jQuery(document).ready(function($) {
         }
     }
 
-    /**
-     * Update available action buttons based on status
-     */
     function updateAvailableActions($subscriptionItem, status) {
         var $actions = $subscriptionItem.find('.subscription-actions');
 
-        // Hide all action buttons except view details
         $actions.find('.bna-subscription-action').hide();
         $actions.find('.bna-view-subscription-details').show();
 
-        // Show appropriate buttons based on status
         switch (status) {
             case 'active':
                 $actions.find('[data-action="suspend"], [data-action="cancel"]').show();
@@ -104,15 +114,11 @@ jQuery(document).ready(function($) {
                 break;
         }
 
-        // Show resend notification for all except deleted
         if (status !== 'deleted') {
             $actions.find('[data-action="resend_notification"]').show();
         }
     }
 
-    /**
-     * Generic AJAX handler for subscription actions
-     */
     function handleSubscriptionAction(action, orderId, subscriptionId, confirmMessage) {
         if (confirmMessage && !confirm(confirmMessage)) {
             return;
@@ -127,7 +133,6 @@ jQuery(document).ready(function($) {
             order_id: orderId
         };
 
-        // Add subscription_id if provided
         if (subscriptionId) {
             data.subscription_id = subscriptionId;
         }
@@ -143,11 +148,9 @@ jQuery(document).ready(function($) {
                 if (response.success) {
                     showMessage(response.data.message || messages['success_' + action] || 'Action completed successfully.');
 
-                    // Handle delete action - hide the item
                     if (action === 'delete' && response.data.new_status === 'deleted') {
                         $subscriptionItem.fadeOut(300, function() {
                             $(this).remove();
-                            // Check if no subscriptions left
                             if ($('.subscription-item').length === 0) {
                                 location.reload();
                             }
@@ -155,7 +158,6 @@ jQuery(document).ready(function($) {
                         return;
                     }
 
-                    // Update UI if new status provided
                     if (response.data.new_status) {
                         updateSubscriptionStatus($subscriptionItem, response.data.new_status);
                     }
@@ -171,7 +173,6 @@ jQuery(document).ready(function($) {
         });
     }
 
-    // Unified handler for new bna-subscription-action buttons
     $(document).on('click', '.bna-subscription-action', function(e) {
         e.preventDefault();
 
@@ -181,7 +182,6 @@ jQuery(document).ready(function($) {
         var subscriptionId = $button.data('subscription-id');
         var confirmMessage = '';
 
-        // Set confirmation message based on action
         switch (action) {
             case 'suspend':
                 confirmMessage = messages.confirm_suspend || 'Are you sure you want to pause this subscription?';
@@ -208,7 +208,6 @@ jQuery(document).ready(function($) {
         }
     });
 
-    // Backward compatibility handlers
     $(document).on('click', '.bna-suspend-subscription', function(e) {
         e.preventDefault();
         var orderId = $(this).data('order-id');
@@ -253,7 +252,6 @@ jQuery(document).ready(function($) {
         handleSubscriptionAction('reactivate', orderId, null, confirmMessage);
     });
 
-    // View subscription details handler
     $(document).on('click', '.bna-view-subscription-details', function(e) {
         e.preventDefault();
         var orderId = $(this).data('order-id');
@@ -289,9 +287,6 @@ jQuery(document).ready(function($) {
         });
     });
 
-    /**
-     * Show subscription details in a modal
-     */
     function showSubscriptionDetailsModal(details) {
         var modalHtml = '<div id="subscription-details-modal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center;">' +
             '<div style="background: white; padding: 30px; border-radius: 8px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">' +
@@ -336,29 +331,25 @@ jQuery(document).ready(function($) {
 
         $('body').append(modalHtml);
 
-        // Close modal handlers
         $('#close-modal, #close-modal-btn').on('click', function(e) {
             e.preventDefault();
             $('#subscription-details-modal').remove();
         });
 
-        // Close on backdrop click
         $('#subscription-details-modal').on('click', function(e) {
             if (e.target === this) {
                 $('#subscription-details-modal').remove();
             }
         });
 
-        // Close on escape key
         $(document).on('keydown.modal', function(e) {
-            if (e.keyCode === 27) { // Escape key
+            if (e.keyCode === 27) {
                 $('#subscription-details-modal').remove();
                 $(document).off('keydown.modal');
             }
         });
     }
 
-    // Add loading styles if not present
     if (!$('#bna-subscription-loading-styles').length) {
         $('<style id="bna-subscription-loading-styles">' +
             '.subscription-loading { opacity: 0.6; pointer-events: none; position: relative; }' +
@@ -371,6 +362,5 @@ jQuery(document).ready(function($) {
             '</style>').appendTo('head');
     }
 
-    // Initialize
     console.log('BNA Subscriptions JS initialized with new actions support');
 });
