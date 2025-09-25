@@ -1,14 +1,4 @@
 <?php
-/**
- * BNA Webhooks Handler
- * Handles incoming webhook requests with HMAC security verification
- * Supports both new event-based format and legacy webhook formats
- *
- * @since 1.9.0 Added comprehensive subscription webhook support
- * @since 1.8.0 Added HMAC signature verification and new event-based webhook support
- * @since 1.7.0 Payment methods webhook support
- * @since 1.6.0 Customer sync webhook support
- */
 
 if (!defined('ABSPATH')) {
     exit;
@@ -16,15 +6,8 @@ if (!defined('ABSPATH')) {
 
 class BNA_Webhooks {
 
-    /**
-     * Maximum allowed timestamp age in seconds (5 minutes)
-     */
     const MAX_TIMESTAMP_AGE = 300;
 
-    /**
-     * BNA subscription status mapping to WooCommerce order status
-     * @var array
-     */
     private static $SUBSCRIPTION_STATUS_MAP = array(
         'new' => 'processing',
         'active' => 'processing',
@@ -37,16 +20,10 @@ class BNA_Webhooks {
         'deleted' => 'cancelled'
     );
 
-    /**
-     * Initialize webhook routes
-     */
     public static function init() {
         add_action('rest_api_init', array(__CLASS__, 'register_routes'));
     }
 
-    /**
-     * Register REST API routes for webhooks
-     */
     public static function register_routes() {
         register_rest_route('bna/v1', '/webhook', array(
             'methods' => 'POST',
@@ -61,16 +38,9 @@ class BNA_Webhooks {
         ));
     }
 
-    /**
-     * Main webhook handler with security verification
-     *
-     * @param WP_REST_Request $request
-     * @return WP_REST_Response
-     */
     public static function handle_webhook($request) {
         $start_time = microtime(true);
 
-        // Get headers and payload
         $signature = $request->get_header('X-Bna-Signature');
         $timestamp = $request->get_header('X-Bna-Timestamp');
         $payload = $request->get_json_params();
@@ -85,7 +55,6 @@ class BNA_Webhooks {
             'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
         ));
 
-        // Verify webhook signature if configured
         $webhook_secret = get_option('bna_smart_payment_webhook_secret', '');
         if (!empty($webhook_secret)) {
             $signature_valid = self::verify_webhook_signature($raw_body, $signature, $timestamp, $webhook_secret);
@@ -100,16 +69,13 @@ class BNA_Webhooks {
             bna_log('Webhook signature verification skipped (no secret configured)');
         }
 
-        // Validate payload
         if (!is_array($payload)) {
             bna_error('Invalid webhook payload format');
             return new WP_REST_Response(array('error' => 'Invalid payload'), 400);
         }
 
-        // Process webhook based on format
         $result = self::process_webhook($payload);
 
-        // Log processing result
         $processing_time = round((microtime(true) - $start_time) * 1000, 2);
         bna_log('Webhook processed successfully', array(
             'processing_time_ms' => $processing_time,
@@ -119,21 +85,11 @@ class BNA_Webhooks {
         return new WP_REST_Response($result, 200);
     }
 
-    /**
-     * Verify webhook signature using HMAC-SHA256
-     *
-     * @param string $raw_body Raw request body
-     * @param string $signature Provided signature
-     * @param string $timestamp Request timestamp
-     * @param string $webhook_secret Webhook secret key
-     * @return bool True if signature is valid
-     */
     private static function verify_webhook_signature($raw_body, $signature, $timestamp, $webhook_secret) {
         if (empty($signature) || empty($timestamp) || empty($webhook_secret)) {
             return false;
         }
 
-        // Check timestamp age (5 minutes tolerance)
         $timestamp_unix = strtotime($timestamp);
         if ($timestamp_unix === false || abs(time() - $timestamp_unix) > self::MAX_TIMESTAMP_AGE) {
             bna_log('Webhook timestamp validation failed', array(
@@ -144,7 +100,6 @@ class BNA_Webhooks {
             return false;
         }
 
-        // Parse payload to extract data part
         $payload_data = json_decode($raw_body, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
             bna_error('Failed to parse webhook payload for signature verification', array(
@@ -153,22 +108,17 @@ class BNA_Webhooks {
             return false;
         }
 
-        // Extract only 'data' part (same as TypeScript code signs)
         $data_part = isset($payload_data['data']) ? $payload_data['data'] : $payload_data;
 
-        // Prepare test approaches
         $all_tests = array();
 
-        // APPROACH 1: Try raw extraction of data part
         $raw_data_json = self::extract_data_from_raw_json($raw_body);
         if ($raw_data_json !== false) {
             $all_tests['raw_data_manual'] = $raw_data_json;
         }
 
-        // APPROACH 2: Maybe TypeScript signs the whole payload
         $all_tests['full_payload_raw'] = trim($raw_body);
 
-        // APPROACH 3: Test different serialization approaches for data part
         $serialization_tests = array(
             'compact_unescaped' => json_encode($data_part, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             'compact_default' => json_encode($data_part),
@@ -178,13 +128,11 @@ class BNA_Webhooks {
             'compact_no_flags' => json_encode($data_part, 0),
         );
 
-        // APPROACH 4: Test full payload serialization
         $full_payload_tests = array(
             'full_payload_unescaped' => json_encode($payload_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             'full_payload_default' => json_encode($payload_data),
         );
 
-        // Combine all approaches
         $all_tests = array_merge($all_tests, $serialization_tests, $full_payload_tests);
 
         $debug_info = array();
@@ -196,16 +144,10 @@ class BNA_Webhooks {
                 continue;
             }
 
-            // Step 1: Create SHA-256 hash of serialized data
             $data_hash = hash('sha256', $serialized_data);
-
-            // Step 2: Combine hash and timestamp with colon (same as TypeScript: `${hash}:${timestamp}`)
             $signing_string = $data_hash . ':' . $timestamp;
-
-            // Step 3: Create HMAC-SHA256 signature
             $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
 
-            // Debug info
             $preview_length = 200;
             $serialized_preview = strlen($serialized_data) > $preview_length
                 ? substr($serialized_data, 0, $preview_length) . '...'
@@ -247,20 +189,12 @@ class BNA_Webhooks {
         return false;
     }
 
-    /**
-     * Extract raw data JSON from raw body for signature verification
-     *
-     * @param string $raw_body Raw request body
-     * @return string|false Extracted data JSON or false
-     */
     private static function extract_data_from_raw_json($raw_body) {
-        // Try simple pattern first
         $pattern = '/"data"\s*:\s*(\{[^}]*(?:\{[^}]*\}[^}]*)*\})\s*\}$/';
         if (preg_match($pattern, $raw_body, $matches)) {
             return trim($matches[1]);
         }
 
-        // Try more complex extraction
         $pattern = '/"data"\s*:\s*(\{(?:[^{}]|(?1))*\})/';
         if (preg_match($pattern, $raw_body, $matches)) {
             return trim($matches[1]);
@@ -269,28 +203,14 @@ class BNA_Webhooks {
         return false;
     }
 
-    /**
-     * Process webhook payload
-     *
-     * @param array $payload Webhook payload
-     * @return array Processing result
-     */
     private static function process_webhook($payload) {
-        // Handle new webhook format with events
         if (isset($payload['event']) && isset($payload['data'])) {
             return self::process_event_webhook($payload);
         }
 
-        // Handle legacy webhook format (direct data)
         return self::process_legacy_webhook($payload);
     }
 
-    /**
-     * Process new event-based webhook format
-     *
-     * @param array $payload Event webhook payload
-     * @return array Processing result
-     */
     private static function process_event_webhook($payload) {
         $event = $payload['event'];
         $data = $payload['data'];
@@ -340,23 +260,15 @@ class BNA_Webhooks {
         }
     }
 
-    /**
-     * Process legacy webhook format (direct transaction data)
-     *
-     * @param array $payload Legacy webhook payload
-     * @return array Processing result
-     */
     private static function process_legacy_webhook($payload) {
         bna_log('Processing legacy webhook', array(
             'payload_keys' => array_keys($payload)
         ));
 
-        // Check for transaction data
         if (isset($payload['id']) && isset($payload['status'])) {
             return self::handle_transaction_event('transaction.updated', $payload);
         }
 
-        // Check for customer data
         if (isset($payload['customerId']) || isset($payload['email'])) {
             return self::handle_customer_event('customer.updated', $payload);
         }
@@ -364,14 +276,6 @@ class BNA_Webhooks {
         return array('status' => 'ignored', 'reason' => 'Unrecognized legacy format');
     }
 
-    /**
-     * Handle transaction events
-     * ВИПРАВЛЕНО: додано правильну логіку для розрізнення першого платежу від renewal
-     *
-     * @param string $event Event name
-     * @param array $data Transaction data
-     * @return array Processing result
-     */
     private static function handle_transaction_event($event, $data) {
         if (!isset($data['id'])) {
             return array('status' => 'error', 'reason' => 'Missing transaction ID');
@@ -386,15 +290,12 @@ class BNA_Webhooks {
             'status' => $status
         ));
 
-        // ВИПРАВЛЕННЯ: пошук замовлення кількома способами
-        // Спочатку по transaction ID
         $orders = wc_get_orders(array(
             'meta_key' => '_bna_transaction_id',
             'meta_value' => $transaction_id,
             'limit' => 1
         ));
 
-        // ВИПРАВЛЕННЯ: якщо не знайдено, шукаємо по invoiceId
         if (empty($orders) && isset($data['invoiceInfo']['invoiceId'])) {
             $invoice_id = $data['invoiceInfo']['invoiceId'];
             bna_log('Transaction not found by ID, trying invoiceId search', array(
@@ -411,7 +312,6 @@ class BNA_Webhooks {
             }
         }
 
-        // ВИПРАВЛЕННЯ: також спробуємо пошук по referenceUUID
         if (empty($orders) && isset($data['referenceUUID'])) {
             $reference_uuid = $data['referenceUUID'];
             $orders = wc_get_orders(array(
@@ -432,33 +332,49 @@ class BNA_Webhooks {
 
         $order = $orders[0];
 
-        // Save transaction ID to order meta if not already saved
         if (!$order->get_meta('_bna_transaction_id')) {
             $order->update_meta_data('_bna_transaction_id', $transaction_id);
             $order->save_meta_data();
         }
 
-        // ГОЛОВНЕ ВИПРАВЛЕННЯ: правильна перевірка чи це renewal transaction
         if (self::is_subscription_renewal_transaction($order, $data)) {
             return self::handle_subscription_renewal_transaction($order, $data);
         }
 
-        // Update order status based on transaction status
         switch (strtolower($status)) {
             case 'approved':
             case 'completed':
                 if (!$order->has_status(array('processing', 'completed'))) {
                     $order->payment_complete($transaction_id);
+
+                    // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
+                    if (self::order_has_only_subscription_products($order)) {
+                        $order->update_status('completed', __('Subscription order completed (virtual products).', 'bna-smart-payment'));
+                        bna_log('Order completed automatically (subscription products)', array(
+                            'order_id' => $order->get_id(),
+                            'final_status' => 'completed'
+                        ));
+                    }
+
                     $order->add_order_note(__('Payment approved via BNA webhook.', 'bna-smart-payment'));
                 }
                 break;
 
             case 'processed':
-                // ВИПРАВЛЕННЯ: для EFT та eTransfer - processed означає успішну обробку
                 $payment_method = $data['paymentMethod']['method'] ?? '';
                 if ($payment_method === 'EFT' || $payment_method === 'E_TRANSFER') {
                     if (!$order->has_status(array('processing', 'completed'))) {
                         $order->payment_complete($transaction_id);
+
+                        // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
+                        if (self::order_has_only_subscription_products($order)) {
+                            $order->update_status('completed', __('Subscription order completed (virtual products).', 'bna-smart-payment'));
+                            bna_log('Order completed automatically (subscription products)', array(
+                                'order_id' => $order->get_id(),
+                                'final_status' => 'completed'
+                            ));
+                        }
+
                         $order->add_order_note(__('Payment processed via BNA webhook (EFT/eTransfer).', 'bna-smart-payment'));
                         bna_log('Order payment processed for EFT/eTransfer', array(
                             'order_id' => $order->get_id(),
@@ -466,7 +382,6 @@ class BNA_Webhooks {
                         ));
                     }
                 } else {
-                    // Для інших методів processed означає очікування
                     $order->add_order_note(__('Payment processing via BNA webhook.', 'bna-smart-payment'));
                 }
                 break;
@@ -505,12 +420,23 @@ class BNA_Webhooks {
     }
 
     /**
-     * Handle subscription events - ПОВНА РЕАЛІЗАЦІЯ (v1.9.0)
-     *
-     * @param string $event Event name
-     * @param array $data Subscription data
-     * @return array Processing result
+     * Check if order contains only subscription products
      */
+    private static function order_has_only_subscription_products($order) {
+        if (!function_exists('BNA_Subscriptions') || !class_exists('BNA_Subscriptions')) {
+            return false;
+        }
+
+        foreach ($order->get_items() as $item) {
+            $product = $item->get_product();
+            if (!$product || !BNA_Subscriptions::is_subscription_product($product)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static function handle_subscription_event($event, $data) {
         if (!bna_subscriptions_enabled()) {
             return array('status' => 'ignored', 'reason' => 'Subscriptions not enabled');
@@ -532,7 +458,6 @@ class BNA_Webhooks {
             'data_keys' => array_keys($data)
         ));
 
-        // Find original order with this subscription
         $original_order = self::find_subscription_order($subscription_id, $customer_id);
 
         if (!$original_order) {
@@ -543,13 +468,11 @@ class BNA_Webhooks {
             return array('status' => 'ignored', 'reason' => 'Original order not found');
         }
 
-        // Store BNA subscription ID in order meta if not already stored
         if (!$original_order->get_meta('_bna_subscription_id')) {
             $original_order->update_meta_data('_bna_subscription_id', $subscription_id);
             $original_order->save();
         }
 
-        // Process event based on type
         switch ($event) {
             case 'subscription.created':
                 return self::handle_subscription_created($original_order, $data);
@@ -588,11 +511,7 @@ class BNA_Webhooks {
         }
     }
 
-    /**
-     * Find order associated with subscription
-     */
     private static function find_subscription_order($subscription_id, $customer_id = '') {
-        // First, try to find by subscription ID
         $orders = wc_get_orders(array(
             'meta_key' => '_bna_subscription_id',
             'meta_value' => $subscription_id,
@@ -603,7 +522,6 @@ class BNA_Webhooks {
             return $orders[0];
         }
 
-        // If not found, try to find by customer ID and subscription flag
         if (!empty($customer_id)) {
             $orders = wc_get_orders(array(
                 'meta_key' => '_bna_customer_id',
@@ -628,9 +546,6 @@ class BNA_Webhooks {
         return null;
     }
 
-    /**
-     * Handle subscription created event
-     */
     private static function handle_subscription_created($order, $data) {
         $order->update_meta_data('_bna_subscription_status', 'active');
         $order->update_meta_data('_bna_subscription_last_event', 'created');
@@ -651,16 +566,77 @@ class BNA_Webhooks {
     }
 
     /**
-     * Handle subscription processed event (recurring payment successful)
+     * ВИПРАВЛЕННЯ: Handle subscription processed event
      */
     private static function handle_subscription_processed($order, $data) {
-        // Create renewal order for successful recurring payment
+        $subscription_id = $data['id'];
+
+        // ВИПРАВЛЕННЯ: Правильно визначаємо чи це перший платіж
+        $is_first_payment = self::is_first_subscription_payment($order, $subscription_id);
+
+        if ($is_first_payment) {
+            bna_log('First subscription payment processing - completing original order', array(
+                'order_id' => $order->get_id(),
+                'subscription_id' => $subscription_id,
+                'status' => $order->get_status()
+            ));
+
+            $transaction_id = $data['transactionId'] ?? $data['id'];
+
+            // Завершити оригінальне замовлення
+            $order->payment_complete($transaction_id);
+
+            // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
+            if (self::order_has_only_subscription_products($order)) {
+                $order->update_status('completed', __('First subscription payment completed (virtual products).', 'bna-smart-payment'));
+                bna_log('Order completed automatically (subscription products)', array(
+                    'order_id' => $order->get_id(),
+                    'final_status' => 'completed'
+                ));
+            }
+
+            $order->update_meta_data('_bna_subscription_status', 'active');
+            $order->update_meta_data('_bna_subscription_last_event', 'processed');
+            $order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
+            $order->add_order_note(__('First subscription payment processed successfully.', 'bna-smart-payment'));
+            $order->save();
+
+            return array(
+                'status' => 'processed',
+                'event' => 'subscription.processed',
+                'order_id' => $order->get_id(),
+                'is_first_payment' => true,
+                'subscription_id' => $data['id']
+            );
+        }
+
+        // ТІЛЬКИ ЯКЩО ЦЕ RENEWAL - створювати нове замовлення
+        bna_log('Renewal payment processing - creating renewal order', array(
+            'order_id' => $order->get_id(),
+            'status' => $order->get_status()
+        ));
+
         $renewal_order = self::create_subscription_renewal_order($order, $data);
 
         if ($renewal_order) {
-            // Mark renewal order as paid
             $transaction_id = $data['transactionId'] ?? $data['id'];
+
             $renewal_order->payment_complete($transaction_id);
+
+            // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
+            if (self::order_has_only_subscription_products($renewal_order)) {
+                $renewal_order->update_status('completed', __('Subscription renewal completed (virtual products).', 'bna-smart-payment'));
+                bna_log('Renewal order completed automatically (subscription products)', array(
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'final_status' => 'completed'
+                ));
+            } else {
+                bna_log('Renewal order marked as processing (physical products)', array(
+                    'renewal_order_id' => $renewal_order->get_id(),
+                    'final_status' => $renewal_order->get_status()
+                ));
+            }
+
             $renewal_order->add_order_note(__('Subscription renewal payment processed via BNA webhook.', 'bna-smart-payment'));
 
             bna_log('Subscription renewal order created and completed', array(
@@ -670,11 +646,10 @@ class BNA_Webhooks {
             ));
         }
 
-        // Update original order
         $order->update_meta_data('_bna_subscription_status', 'active');
         $order->update_meta_data('_bna_subscription_last_event', 'processed');
         $order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
-        $order->add_order_note(__('Subscription payment processed successfully.', 'bna-smart-payment'));
+        $order->add_order_note(__('Subscription renewal payment processed successfully.', 'bna-smart-payment'));
         $order->save();
 
         return array(
@@ -687,8 +662,50 @@ class BNA_Webhooks {
     }
 
     /**
-     * Handle subscription suspended event
+     * ВИПРАВЛЕННЯ: Правильно визначити чи це перший платіж підписки
      */
+    private static function is_first_subscription_payment($order, $subscription_id) {
+        // Перевірка 1: чи є вже renewal замовлення для цієї підписки
+        $existing_renewals = wc_get_orders(array(
+            'meta_key' => '_bna_original_order_id',
+            'meta_value' => $order->get_id(),
+            'limit' => 1
+        ));
+
+        if (!empty($existing_renewals)) {
+            bna_log('Found existing renewal orders - this is NOT first payment', array(
+                'order_id' => $order->get_id(),
+                'existing_renewals' => count($existing_renewals)
+            ));
+            return false;
+        }
+
+        // Перевірка 2: чи є мітка про останній платіж
+        $last_payment = $order->get_meta('_bna_subscription_last_payment');
+        if (!empty($last_payment)) {
+            bna_log('Found last payment timestamp - this is NOT first payment', array(
+                'order_id' => $order->get_id(),
+                'last_payment' => $last_payment
+            ));
+            return false;
+        }
+
+        // Перевірка 3: статус замовлення
+        if ($order->has_status(['pending', 'on-hold'])) {
+            bna_log('Order has pending/on-hold status - this IS first payment', array(
+                'order_id' => $order->get_id(),
+                'status' => $order->get_status()
+            ));
+            return true;
+        }
+
+        // За замовчуванням - якщо немає renewals і немає last_payment - це перший платіж
+        bna_log('No renewals found, no last payment - this IS first payment', array(
+            'order_id' => $order->get_id()
+        ));
+        return true;
+    }
+
     private static function handle_subscription_suspended($order, $data) {
         $order->update_meta_data('_bna_subscription_status', 'suspended');
         $order->update_meta_data('_bna_subscription_last_event', 'suspended');
@@ -708,9 +725,6 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Handle subscription resumed event
-     */
     private static function handle_subscription_resumed($order, $data) {
         $order->update_meta_data('_bna_subscription_status', 'active');
         $order->update_meta_data('_bna_subscription_last_event', 'resumed');
@@ -730,9 +744,6 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Handle subscription cancelled event
-     */
     private static function handle_subscription_cancelled($order, $data) {
         $order->update_meta_data('_bna_subscription_status', 'cancelled');
         $order->update_meta_data('_bna_subscription_last_event', 'cancelled');
@@ -752,9 +763,6 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Handle subscription expired event
-     */
     private static function handle_subscription_expired($order, $data) {
         $order->update_meta_data('_bna_subscription_status', 'expired');
         $order->update_meta_data('_bna_subscription_last_event', 'expired');
@@ -774,9 +782,6 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Handle subscription failed event
-     */
     private static function handle_subscription_failed($order, $data) {
         $order->update_meta_data('_bna_subscription_status', 'failed');
         $order->update_meta_data('_bna_subscription_last_event', 'failed');
@@ -796,9 +801,6 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Handle subscription deleted event
-     */
     private static function handle_subscription_deleted($order, $data) {
         $order->update_meta_data('_bna_subscription_status', 'deleted');
         $order->update_meta_data('_bna_subscription_last_event', 'deleted');
@@ -818,9 +820,6 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Handle subscription will expire event
-     */
     private static function handle_subscription_will_expire($order, $data) {
         $expiry_date = $data['expiryDate'] ?? 'unknown';
         $order->update_meta_data('_bna_subscription_last_event', 'will_expire');
@@ -842,9 +841,6 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Handle subscription updated event
-     */
     private static function handle_subscription_updated($order, $data) {
         $order->update_meta_data('_bna_subscription_last_event', 'updated');
         $order->add_order_note(__('Subscription updated via BNA webhook.', 'bna-smart-payment'));
@@ -863,16 +859,7 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * ГОЛОВНЕ ВИПРАВЛЕННЯ: правильно розрізняє перший платіж від renewal
-     * Check if transaction is a subscription renewal (not first payment)
-     *
-     * @param WC_Order $order The order object
-     * @param array $data Transaction data
-     * @return bool True if this is a renewal transaction
-     */
     private static function is_subscription_renewal_transaction($order, $data) {
-        // Must have subscriptionId
         if (!isset($data['subscriptionId']) || empty($data['subscriptionId'])) {
             return false;
         }
@@ -884,7 +871,6 @@ class BNA_Webhooks {
             'subscription_id' => $data['subscriptionId'] ?? 'none'
         ));
 
-        // КЛЮЧОВЕ ВИПРАВЛЕННЯ: якщо order має статус pending/on-hold - це ПЕРШИЙ платіж
         if ($order->has_status(['pending', 'on-hold'])) {
             bna_log('Order has pending/on-hold status - this is FIRST payment, not renewal', array(
                 'order_id' => $order->get_id(),
@@ -893,7 +879,6 @@ class BNA_Webhooks {
             return false;
         }
 
-        // ДОДАТКОВА ПЕРЕВІРКА: якщо order ще не має subscription_id - це перший платіж
         $existing_subscription_id = $order->get_meta('_bna_subscription_id');
         if (empty($existing_subscription_id)) {
             bna_log('Order has no existing subscription ID - this is FIRST payment', array(
@@ -902,7 +887,6 @@ class BNA_Webhooks {
             return false;
         }
 
-        // ДОДАТКОВА ПЕРЕВІРКА: якщо це order з renewal flag - точно renewal
         if ($order->get_meta('_bna_subscription_renewal') === 'yes') {
             bna_log('Order marked as renewal order - this is renewal', array(
                 'order_id' => $order->get_id()
@@ -910,7 +894,6 @@ class BNA_Webhooks {
             return true;
         }
 
-        // Якщо order вже completed/processing і має subscription_id - може бути renewal
         if ($order->has_status(['completed', 'processing']) && !empty($existing_subscription_id)) {
             bna_log('Order completed with subscription ID - this could be renewal', array(
                 'order_id' => $order->get_id(),
@@ -920,7 +903,6 @@ class BNA_Webhooks {
             return true;
         }
 
-        // За замовчуванням - не renewal
         bna_log('Default case - not a renewal transaction', array(
             'order_id' => $order->get_id(),
             'status' => $order->get_status()
@@ -928,9 +910,6 @@ class BNA_Webhooks {
         return false;
     }
 
-    /**
-     * Handle subscription renewal transaction
-     */
     private static function handle_subscription_renewal_transaction($original_order, $data) {
         $subscription_id = $data['subscriptionId'];
         $transaction_id = $data['id'];
@@ -943,15 +922,19 @@ class BNA_Webhooks {
             'status' => $status
         ));
 
-        // Create renewal order if payment is successful
         if (in_array($status, array('approved', 'completed', 'processed'))) {
             $renewal_order = self::create_subscription_renewal_order($original_order, $data);
 
             if ($renewal_order) {
                 $renewal_order->payment_complete($transaction_id);
+
+                // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
+                if (self::order_has_only_subscription_products($renewal_order)) {
+                    $renewal_order->update_status('completed', __('Subscription renewal completed (virtual products).', 'bna-smart-payment'));
+                }
+
                 $renewal_order->add_order_note(__('Subscription renewal payment completed.', 'bna-smart-payment'));
 
-                // Update original order
                 $original_order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
                 $original_order->save();
 
@@ -973,12 +956,8 @@ class BNA_Webhooks {
         );
     }
 
-    /**
-     * Create subscription renewal order
-     */
     private static function create_subscription_renewal_order($original_order, $data) {
         try {
-            // Create new order based on original
             $renewal_order = wc_create_order(array(
                 'customer_id' => $original_order->get_customer_id(),
                 'status' => 'pending'
@@ -989,7 +968,6 @@ class BNA_Webhooks {
                 return null;
             }
 
-            // Copy items from original order
             foreach ($original_order->get_items() as $item) {
                 $product = $item->get_product();
                 if ($product && BNA_Subscriptions::is_subscription_product($product)) {
@@ -997,20 +975,16 @@ class BNA_Webhooks {
                 }
             }
 
-            // Copy billing/shipping addresses
             $renewal_order->set_address($original_order->get_address('billing'), 'billing');
             $renewal_order->set_address($original_order->get_address('shipping'), 'shipping');
 
-            // Set payment method
             $renewal_order->set_payment_method('bna_smart_payment');
 
-            // Add renewal metadata
             $renewal_order->update_meta_data('_bna_subscription_renewal', 'yes');
             $renewal_order->update_meta_data('_bna_original_order_id', $original_order->get_id());
             $renewal_order->update_meta_data('_bna_subscription_id', $data['subscriptionId'] ?? $data['id']);
             $renewal_order->update_meta_data('_bna_customer_id', $data['customerId'] ?? '');
 
-            // Calculate totals
             $renewal_order->calculate_totals();
             $renewal_order->save();
 
@@ -1032,25 +1006,16 @@ class BNA_Webhooks {
         }
     }
 
-    /**
-     * Handle customer events
-     *
-     * @param string $event Event name
-     * @param array $data Customer data
-     * @return array Processing result
-     */
     private static function handle_customer_event($event, $data) {
         bna_log('Handling customer event', array(
             'event' => $event,
             'customer_id' => $data['id'] ?? 'unknown'
         ));
 
-        // Find or create WordPress user
         if (isset($data['email']) && !empty($data['email'])) {
             $user = get_user_by('email', $data['email']);
 
             if (!$user && $event === 'customer.created') {
-                // Create new user
                 $user_data = array(
                     'user_login' => $data['email'],
                     'user_email' => $data['email'],
@@ -1061,7 +1026,6 @@ class BNA_Webhooks {
 
                 $user_id = wp_insert_user($user_data);
                 if (!is_wp_error($user_id)) {
-                    // Store BNA customer ID
                     if (isset($data['id'])) {
                         update_user_meta($user_id, '_bna_customer_id', $data['id']);
                     }
@@ -1072,13 +1036,6 @@ class BNA_Webhooks {
         return array('status' => 'processed', 'event' => $event);
     }
 
-    /**
-     * Handle payment method events - ПОВНІСТЮ РЕАЛІЗОВАНО!
-     *
-     * @param string $event Event name
-     * @param array $data Payment method data
-     * @return array Processing result
-     */
     private static function handle_payment_method_event($event, $data) {
         if (!isset($data['customerId'])) {
             bna_error('Payment method event missing customerId', array(
@@ -1098,7 +1055,6 @@ class BNA_Webhooks {
             'method_type' => $data['method'] ?? 'unknown'
         ));
 
-        // Find WordPress user by BNA customer ID
         $users = get_users(array(
             'meta_key' => '_bna_customer_id',
             'meta_value' => $customer_id,
@@ -1128,14 +1084,6 @@ class BNA_Webhooks {
         }
     }
 
-    /**
-     * Handle payment method created event
-     *
-     * @param int $user_id WordPress user ID
-     * @param array $data Payment method data from webhook
-     * @param BNA_Payment_Methods $payment_methods_handler Payment methods handler instance
-     * @return array Processing result
-     */
     private static function handle_payment_method_created($user_id, $data, $payment_methods_handler) {
         bna_log('Processing payment method created', array(
             'user_id' => $user_id,
@@ -1143,7 +1091,6 @@ class BNA_Webhooks {
             'webhook_method_type' => $data['method'] ?? 'unknown'
         ));
 
-        // Transform webhook data to internal format
         $payment_method_data = self::transform_webhook_payment_method_data($data);
 
         if (!$payment_method_data) {
@@ -1153,7 +1100,6 @@ class BNA_Webhooks {
             return array('status' => 'error', 'reason' => 'Invalid payment method data');
         }
 
-        // Save payment method using existing handler
         $result = $payment_methods_handler->save_payment_method($user_id, $payment_method_data);
 
         if ($result) {
@@ -1178,14 +1124,6 @@ class BNA_Webhooks {
         }
     }
 
-    /**
-     * Handle payment method deleted event
-     *
-     * @param int $user_id WordPress user ID
-     * @param string $payment_method_id Payment method ID
-     * @param BNA_Payment_Methods $payment_methods_handler Payment methods handler instance
-     * @return array Processing result
-     */
     private static function handle_payment_method_deleted($user_id, $payment_method_id, $payment_methods_handler) {
         if (empty($payment_method_id)) {
             return array('status' => 'error', 'reason' => 'Missing payment method ID');
@@ -1196,7 +1134,6 @@ class BNA_Webhooks {
             'method_id' => $payment_method_id
         ));
 
-        // Delete payment method using existing handler
         $result = $payment_methods_handler->delete_payment_method_by_id($user_id, $payment_method_id);
 
         if ($result) {
@@ -1217,20 +1154,13 @@ class BNA_Webhooks {
             ));
 
             return array(
-                'status' => 'processed', // Consider it processed since it's not there anyway
+                'status' => 'processed',
                 'event' => 'payment_method.deleted',
                 'method_id' => $payment_method_id
             );
         }
     }
 
-    /**
-     * Transform webhook payment method data to internal format
-     * ВИПРАВЛЕНО: додана нормалізація method type!
-     *
-     * @param array $webhook_data Raw webhook data
-     * @return array|false Transformed data or false on failure
-     */
     private static function transform_webhook_payment_method_data($webhook_data) {
         if (!isset($webhook_data['id']) || !isset($webhook_data['method'])) {
             bna_log('Missing required fields in webhook payment method data', array(
@@ -1246,8 +1176,7 @@ class BNA_Webhooks {
             'created_at' => $webhook_data['createdAt'] ?? current_time('Y-m-d H:i:s')
         );
 
-        // ВИПРАВЛЕННЯ: нормалізація method type - додана підтримка малих літер!
-        $method_type = strtoupper($webhook_data['method']); // Приводимо до великих літер
+        $method_type = strtoupper($webhook_data['method']);
 
         bna_log('Transforming webhook payment method', array(
             'original_method' => $webhook_data['method'],
@@ -1255,7 +1184,6 @@ class BNA_Webhooks {
             'method_id' => $webhook_data['id']
         ));
 
-        // Transform based on webhook method type
         switch ($method_type) {
             case 'CARD':
                 return self::transform_card_method_data($webhook_data, $base_data);
@@ -1276,13 +1204,9 @@ class BNA_Webhooks {
         }
     }
 
-    /**
-     * Transform CARD method data
-     */
     private static function transform_card_method_data($webhook_data, $base_data) {
-        // Map CARD + cardType to internal type
         $card_type = strtoupper($webhook_data['cardType'] ?? 'CREDIT');
-        $internal_type = strtolower($card_type); // 'CREDIT' -> 'credit', 'DEBIT' -> 'debit'
+        $internal_type = strtolower($card_type);
 
         return array_merge($base_data, array(
             'type' => $internal_type,
@@ -1296,9 +1220,6 @@ class BNA_Webhooks {
         ));
     }
 
-    /**
-     * Transform E_TRANSFER method data
-     */
     private static function transform_e_transfer_method_data($webhook_data, $base_data) {
         return array_merge($base_data, array(
             'type' => 'e_transfer',
@@ -1311,9 +1232,6 @@ class BNA_Webhooks {
         ));
     }
 
-    /**
-     * Transform EFT method data
-     */
     private static function transform_eft_method_data($webhook_data, $base_data) {
         return array_merge($base_data, array(
             'type' => 'eft',
@@ -1324,9 +1242,6 @@ class BNA_Webhooks {
         ));
     }
 
-    /**
-     * Test endpoint to help debug webhook signature issues
-     */
     public static function test_endpoint($request) {
         $webhook_secret = get_option('bna_smart_payment_webhook_secret', '');
 
@@ -1338,7 +1253,6 @@ class BNA_Webhooks {
             ), 400);
         }
 
-        // Example payload for testing
         $test_payload = array(
             'event' => 'transaction.approved',
             'deliveryId' => '12345678-1234-1234-1234-123456789012',
@@ -1351,10 +1265,9 @@ class BNA_Webhooks {
             )
         );
 
-        $timestamp = gmdate('Y-m-d\TH:i:s.000\Z'); // Current UTC time in ISO 8601
+        $timestamp = gmdate('Y-m-d\TH:i:s.000\Z');
 
-        // Generate signature using BNA algorithm
-        $string_data = json_encode($test_payload, 0); // Compact format
+        $string_data = json_encode($test_payload, 0);
         $data_hash = hash('sha256', $string_data);
         $signing_string = $data_hash . ':' . $timestamp;
         $signature = hash_hmac('sha256', $signing_string, $webhook_secret);
