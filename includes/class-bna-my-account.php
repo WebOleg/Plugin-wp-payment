@@ -445,31 +445,65 @@ class BNA_My_Account {
                 wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
             }
 
+            $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
+
+            // Перевіряємо чи можна скасувати підписку
+            if (!in_array($current_status, array('new', 'active', 'suspended'))) {
+                wp_send_json_error(__('This subscription cannot be cancelled.', 'bna-smart-payment'));
+            }
+
             bna_log('Cancelling subscription via My Account', array(
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
-                'subscription_id' => $subscription_id
+                'subscription_id' => $subscription_id,
+                'current_status' => $current_status
             ));
 
-            $result = $this->api->suspend_subscription($subscription_id);
+            // ВИПРАВЛЕНО: Використовуємо cancel_subscription замість suspend_subscription
+            $result = $this->api->cancel_subscription($subscription_id);
 
             if (is_wp_error($result)) {
-                bna_error('Failed to cancel subscription', array(
-                    'subscription_id' => $subscription_id,
-                    'error' => $result->get_error_message()
+                $error_message = $result->get_error_message();
+
+                // Якщо підписка вже скасована/видалена, це не помилка
+                if (strpos($error_message, '404') !== false || strpos(strtolower($error_message), 'not found') !== false) {
+                    bna_log('Subscription already cancelled/deleted from BNA API', array(
+                        'subscription_id' => $subscription_id,
+                        'order_id' => $order_id
+                    ));
+                } else {
+                    bna_error('Failed to cancel subscription', array(
+                        'subscription_id' => $subscription_id,
+                        'current_status' => $current_status,
+                        'error' => $error_message
+                    ));
+                    wp_send_json_error(sprintf(
+                        __('Failed to cancel subscription: %s', 'bna-smart-payment'),
+                        $error_message
+                    ));
+                }
+            } else {
+                bna_log('Subscription cancelled successfully', array(
+                    'subscription_id' => $subscription_id
                 ));
-                wp_send_json_error($result->get_error_message());
             }
 
-            // ЗМІНА: статус тепер 'suspended' замість 'cancelled' для синхронізації з BNA
-            $order->update_meta_data('_bna_subscription_status', 'suspended');
+            // ВИПРАВЛЕНО: Статус тепер 'cancelled' замість 'suspended'
+            $order->update_meta_data('_bna_subscription_status', 'cancelled');
             $order->update_meta_data('_bna_subscription_last_action', 'cancelled_by_customer');
+            $order->update_meta_data('_bna_subscription_cancelled_date', current_time('mysql'));
             $order->update_status('cancelled', __('Subscription cancelled by customer.', 'bna-smart-payment'));
             $order->save();
 
+            bna_log('Subscription status updated locally', array(
+                'order_id' => $order_id,
+                'old_status' => $current_status,
+                'new_status' => 'cancelled'
+            ));
+
             wp_send_json_success(array(
                 'message' => __('Subscription cancelled successfully.', 'bna-smart-payment'),
-                'new_status' => 'suspended'  // ЗМІНА: повертаємо 'suspended'
+                'new_status' => 'cancelled'  // ВИПРАВЛЕНО: повертаємо 'cancelled'
             ));
 
         } catch (Exception $e) {
@@ -503,8 +537,10 @@ class BNA_My_Account {
             }
 
             $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
-            if ($current_status !== 'cancelled') {
-                wp_send_json_error(__('Only cancelled subscriptions can be deleted permanently.', 'bna-smart-payment'));
+
+            // ВИПРАВЛЕНО: Дозволяємо видалення тільки для cancelled або suspended статусів
+            if (!in_array($current_status, array('cancelled', 'suspended'))) {
+                wp_send_json_error(__('Only cancelled or suspended subscriptions can be deleted permanently. Please cancel the subscription first.', 'bna-smart-payment'));
             }
 
             bna_log('Deleting subscription permanently via My Account', array(
@@ -515,6 +551,7 @@ class BNA_My_Account {
             ));
 
             if (!empty($subscription_id) && $subscription_id !== $order_id) {
+                // Другий DELETE виклик для повного видалення
                 $result = $this->api->delete_subscription($subscription_id);
 
                 if (is_wp_error($result)) {
@@ -535,12 +572,13 @@ class BNA_My_Account {
                         ));
                     }
                 } else {
-                    bna_log('Subscription deleted successfully from BNA API', array(
+                    bna_log('Subscription deleted permanently from BNA API', array(
                         'subscription_id' => $subscription_id
                     ));
                 }
             }
 
+            // Позначаємо як видалену локально
             $order->update_meta_data('_bna_subscription_status', 'deleted');
             $order->update_meta_data('_bna_subscription_last_action', 'deleted_by_customer');
             $order->update_meta_data('_bna_subscription_deleted_date', current_time('mysql'));
@@ -996,7 +1034,7 @@ class BNA_My_Account {
     public static function is_subscription_action_allowed($status, $action) {
         $allowed_actions = array(
             'active' => array('suspend', 'cancel', 'view'),
-            'suspended' => array('resume', 'cancel', 'view'),
+            'suspended' => array('resume', 'cancel', 'view', 'delete'),
             'new' => array('cancel', 'view'),
             'cancelled' => array('view', 'delete'),
             'expired' => array('view', 'reactivate'),

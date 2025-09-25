@@ -459,6 +459,34 @@ class BNA_API {
     }
 
     /**
+     * Cancel subscription (переводить в статус CANCELLED)
+     * @param string $subscription_id BNA Subscription ID
+     * @return array|WP_Error
+     */
+    public function cancel_subscription($subscription_id) {
+        if (empty($subscription_id)) {
+            return new WP_Error('missing_subscription_id', 'Subscription ID is required');
+        }
+
+        bna_log('Cancelling subscription (first DELETE call)', array('subscription_id' => $subscription_id));
+
+        // Використовуємо DELETE API - перший раз переводить у статус CANCELLED
+        $response = $this->make_request('v1/subscription/' . $subscription_id, 'DELETE');
+
+        if (is_wp_error($response)) {
+            bna_error('Failed to cancel subscription', array(
+                'subscription_id' => $subscription_id,
+                'error' => $response->get_error_message()
+            ));
+            return $response;
+        }
+
+        bna_log('Subscription cancelled successfully (status should be CANCELLED)', array('subscription_id' => $subscription_id));
+
+        return $response;
+    }
+
+    /**
      * Delete subscription
      * @param string $subscription_id BNA Subscription ID
      * @return array|WP_Error
