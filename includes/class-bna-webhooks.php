@@ -276,6 +276,9 @@ class BNA_Webhooks {
         return array('status' => 'ignored', 'reason' => 'Unrecognized legacy format');
     }
 
+    /**
+     * ВИПРАВЛЕНИЙ handle_transaction_event - уникнути подвійну обробку
+     */
     private static function handle_transaction_event($event, $data) {
         if (!isset($data['id'])) {
             return array('status' => 'error', 'reason' => 'Missing transaction ID');
@@ -332,55 +335,60 @@ class BNA_Webhooks {
 
         $order = $orders[0];
 
-        if (!$order->get_meta('_bna_transaction_id')) {
-            $order->update_meta_data('_bna_transaction_id', $transaction_id);
-            $order->save_meta_data();
+        // КРИТИЧНО: Перевіряємо чи вже оброблено цю транзакцію
+        $processed_transaction = $order->get_meta('_bna_processed_transaction_id');
+        if ($processed_transaction === $transaction_id) {
+            bna_log('Transaction already processed, skipping', array(
+                'order_id' => $order->get_id(),
+                'transaction_id' => $transaction_id,
+                'event' => $event
+            ));
+            return array('status' => 'already_processed', 'order_id' => $order->get_id());
         }
 
-        if (self::is_subscription_renewal_transaction($order, $data)) {
-            return self::handle_subscription_renewal_transaction($order, $data);
+        // КРИТИЧНО: Якщо це підписочна транзакція, позначаємо що це має обробити subscription.processed
+        if (isset($data['subscriptionId']) && !empty($data['subscriptionId'])) {
+            bna_log('Transaction has subscription ID - will be handled by subscription.processed', array(
+                'order_id' => $order->get_id(),
+                'transaction_id' => $transaction_id,
+                'subscription_id' => $data['subscriptionId']
+            ));
+
+            // Тільки зберігаємо ID, статус встановить subscription.processed
+            if (!$order->get_meta('_bna_transaction_id')) {
+                $order->update_meta_data('_bna_transaction_id', $transaction_id);
+                $order->save_meta_data();
+            }
+
+            return array('status' => 'deferred_to_subscription', 'order_id' => $order->get_id());
+        }
+
+        // Обробляємо тільки NON-subscription транзакції
+        return self::process_transaction_status($order, $transaction_id, $status, $event, $data);
+    }
+
+    /**
+     * НОВИЙ метод для правильної обробки статусів
+     */
+    private static function process_transaction_status($order, $transaction_id, $status, $event, $data) {
+        $order_id = $order->get_id();
+
+        // Зберігаємо що транзакцію оброблено
+        $order->update_meta_data('_bna_processed_transaction_id', $transaction_id);
+        if (!$order->get_meta('_bna_transaction_id')) {
+            $order->update_meta_data('_bna_transaction_id', $transaction_id);
         }
 
         switch (strtolower($status)) {
             case 'approved':
             case 'completed':
-                if (!$order->has_status(array('processing', 'completed'))) {
-                    $order->payment_complete($transaction_id);
-
-                    // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
-                    if (self::order_has_only_subscription_products($order)) {
-                        $order->update_status('completed', __('Subscription order completed (virtual products).', 'bna-smart-payment'));
-                        bna_log('Order completed automatically (subscription products)', array(
-                            'order_id' => $order->get_id(),
-                            'final_status' => 'completed'
-                        ));
-                    }
-
-                    $order->add_order_note(__('Payment approved via BNA webhook.', 'bna-smart-payment'));
-                }
+                self::complete_order_properly($order, $transaction_id, __('Payment approved via BNA webhook.', 'bna-smart-payment'));
                 break;
 
             case 'processed':
                 $payment_method = $data['paymentMethod']['method'] ?? '';
                 if ($payment_method === 'EFT' || $payment_method === 'E_TRANSFER') {
-                    if (!$order->has_status(array('processing', 'completed'))) {
-                        $order->payment_complete($transaction_id);
-
-                        // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
-                        if (self::order_has_only_subscription_products($order)) {
-                            $order->update_status('completed', __('Subscription order completed (virtual products).', 'bna-smart-payment'));
-                            bna_log('Order completed automatically (subscription products)', array(
-                                'order_id' => $order->get_id(),
-                                'final_status' => 'completed'
-                            ));
-                        }
-
-                        $order->add_order_note(__('Payment processed via BNA webhook (EFT/eTransfer).', 'bna-smart-payment'));
-                        bna_log('Order payment processed for EFT/eTransfer', array(
-                            'order_id' => $order->get_id(),
-                            'payment_method' => $payment_method
-                        ));
-                    }
+                    self::complete_order_properly($order, $transaction_id, __('Payment processed via BNA webhook (EFT/eTransfer).', 'bna-smart-payment'));
                 } else {
                     $order->add_order_note(__('Payment processing via BNA webhook.', 'bna-smart-payment'));
                 }
@@ -411,6 +419,8 @@ class BNA_Webhooks {
                 break;
         }
 
+        $order->save();
+
         return array(
             'status' => 'processed',
             'event' => $event,
@@ -420,21 +430,124 @@ class BNA_Webhooks {
     }
 
     /**
-     * Check if order contains only subscription products
+     * ВИПРАВЛЕНА функція завершення замовлення з правильним статусом
      */
-    private static function order_has_only_subscription_products($order) {
-        if (!function_exists('BNA_Subscriptions') || !class_exists('BNA_Subscriptions')) {
-            return false;
+    private static function complete_order_properly($order, $transaction_id, $note = '') {
+        $order_id = $order->get_id();
+        $current_status = $order->get_status();
+
+        bna_log('Completing payment with status check', array(
+            'order_id' => $order_id,
+            'current_status' => $current_status,
+            'transaction_id' => $transaction_id
+        ));
+
+        // Якщо замовлення вже completed або processing, не робимо нічого
+        if ($order->has_status(array('processing', 'completed'))) {
+            bna_log('Order already processed/completed, skipping', array(
+                'order_id' => $order_id,
+                'status' => $current_status
+            ));
+            return;
         }
+
+        // Перевіряємо чи має бути completed
+        $should_be_completed = self::order_should_be_completed($order);
+
+        if ($should_be_completed) {
+            // Встановлюємо completed безпосередньо, пропускаючи payment_complete()
+            $order->update_status('completed', $note ?: __('Payment completed for virtual/subscription products.', 'bna-smart-payment'));
+
+            // Зберігаємо transaction ID
+            $order->update_meta_data('_transaction_id', $transaction_id);
+            $order->update_meta_data('_bna_transaction_id', $transaction_id);
+
+            // Встановлюємо дату сплати
+            $order->set_date_paid(current_time('timestamp'));
+
+            bna_log('Order set to completed (virtual/subscription products)', array(
+                'order_id' => $order_id,
+                'final_status' => 'completed',
+                'transaction_id' => $transaction_id
+            ));
+        } else {
+            // Стандартне завершення платежу для фізичних товарів
+            $order->payment_complete($transaction_id);
+
+            if (!empty($note)) {
+                $order->add_order_note($note);
+            }
+
+            bna_log('Order completed via standard WC method (physical products)', array(
+                'order_id' => $order_id,
+                'final_status' => $order->get_status(),
+                'transaction_id' => $transaction_id
+            ));
+        }
+
+        $order->save();
+    }
+
+    /**
+     * ВИПРАВЛЕНА функція перевірки чи замовлення має бути completed
+     */
+    private static function order_should_be_completed($order) {
+        if (!function_exists('BNA_Subscriptions') || !class_exists('BNA_Subscriptions')) {
+            // Fallback: перевіряємо стандартну логіку WooCommerce
+            return self::wc_order_has_only_virtual_products($order);
+        }
+
+        $has_subscription = false;
+        $all_virtual_or_subscription = true;
 
         foreach ($order->get_items() as $item) {
             $product = $item->get_product();
-            if (!$product || !BNA_Subscriptions::is_subscription_product($product)) {
-                return false;
+            if (!$product) {
+                $all_virtual_or_subscription = false;
+                continue;
+            }
+
+            $is_subscription = BNA_Subscriptions::is_subscription_product($product);
+            $is_virtual = $product->is_virtual() || $product->is_downloadable();
+
+            if ($is_subscription) {
+                $has_subscription = true;
+            }
+
+            // Товар повинен бути або підпискою, або віртуальним/завантажуваним
+            if (!$is_subscription && !$is_virtual) {
+                $all_virtual_or_subscription = false;
             }
         }
 
+        bna_log('Order completion check', array(
+            'order_id' => $order->get_id(),
+            'has_subscription' => $has_subscription,
+            'all_virtual_or_subscription' => $all_virtual_or_subscription,
+            'should_complete' => $has_subscription || $all_virtual_or_subscription
+        ));
+
+        return $has_subscription || $all_virtual_or_subscription;
+    }
+
+    /**
+     * Стандартна WooCommerce перевірка віртуальних товарів
+     */
+    private static function wc_order_has_only_virtual_products($order) {
+        foreach ($order->get_items() as $item) {
+            $product = $item->get_product();
+            if ($product && !$product->is_virtual() && !$product->is_downloadable()) {
+                return false;
+            }
+        }
         return true;
+    }
+
+    /**
+     * Check if order contains only subscription products - ЗАСТАРІЛИЙ метод (залишено для сумісності)
+     */
+    private static function order_has_only_subscription_products($order) {
+        return self::order_should_be_completed($order);
     }
 
     private static function handle_subscription_event($event, $data) {
@@ -566,45 +679,53 @@ class BNA_Webhooks {
     }
 
     /**
-     * ВИПРАВЛЕННЯ: Handle subscription processed event
+     * ВИПРАВЛЕНИЙ Handle subscription processed event
      */
     private static function handle_subscription_processed($order, $data) {
         $subscription_id = $data['id'];
+        $order_id = $order->get_id();
+
+        // Перевіряємо чи вже оброблено цю подію
+        $last_processed_event = $order->get_meta('_bna_last_subscription_processed');
+        if ($last_processed_event === $subscription_id) {
+            bna_log('Subscription processed event already handled, skipping', array(
+                'order_id' => $order_id,
+                'subscription_id' => $subscription_id
+            ));
+            return array('status' => 'already_processed', 'order_id' => $order_id);
+        }
+
+        // Позначаємо що обробили цю подію
+        $order->update_meta_data('_bna_last_subscription_processed', $subscription_id);
 
         // ВИПРАВЛЕННЯ: Правильно визначаємо чи це перший платіж
         $is_first_payment = self::is_first_subscription_payment($order, $subscription_id);
 
         if ($is_first_payment) {
             bna_log('First subscription payment processing - completing original order', array(
-                'order_id' => $order->get_id(),
+                'order_id' => $order_id,
                 'subscription_id' => $subscription_id,
-                'status' => $order->get_status()
+                'current_status' => $order->get_status()
             ));
 
             $transaction_id = $data['transactionId'] ?? $data['id'];
 
-            // Завершити оригінальне замовлення
-            $order->payment_complete($transaction_id);
-
-            // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
-            if (self::order_has_only_subscription_products($order)) {
-                $order->update_status('completed', __('First subscription payment completed (virtual products).', 'bna-smart-payment'));
-                bna_log('Order completed automatically (subscription products)', array(
-                    'order_id' => $order->get_id(),
-                    'final_status' => 'completed'
-                ));
-            }
+            // Використовуємо нашу виправлену функцію
+            self::complete_order_properly(
+                $order,
+                $transaction_id,
+                __('First subscription payment completed.', 'bna-smart-payment')
+            );
 
             $order->update_meta_data('_bna_subscription_status', 'active');
             $order->update_meta_data('_bna_subscription_last_event', 'processed');
             $order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
-            $order->add_order_note(__('First subscription payment processed successfully.', 'bna-smart-payment'));
             $order->save();
 
             return array(
                 'status' => 'processed',
                 'event' => 'subscription.processed',
-                'order_id' => $order->get_id(),
+                'order_id' => $order_id,
                 'is_first_payment' => true,
                 'subscription_id' => $data['id']
             );
@@ -612,7 +733,7 @@ class BNA_Webhooks {
 
         // ТІЛЬКИ ЯКЩО ЦЕ RENEWAL - створювати нове замовлення
         bna_log('Renewal payment processing - creating renewal order', array(
-            'order_id' => $order->get_id(),
+            'order_id' => $order_id,
             'status' => $order->get_status()
         ));
 
@@ -621,26 +742,15 @@ class BNA_Webhooks {
         if ($renewal_order) {
             $transaction_id = $data['transactionId'] ?? $data['id'];
 
-            $renewal_order->payment_complete($transaction_id);
-
-            // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
-            if (self::order_has_only_subscription_products($renewal_order)) {
-                $renewal_order->update_status('completed', __('Subscription renewal completed (virtual products).', 'bna-smart-payment'));
-                bna_log('Renewal order completed automatically (subscription products)', array(
-                    'renewal_order_id' => $renewal_order->get_id(),
-                    'final_status' => 'completed'
-                ));
-            } else {
-                bna_log('Renewal order marked as processing (physical products)', array(
-                    'renewal_order_id' => $renewal_order->get_id(),
-                    'final_status' => $renewal_order->get_status()
-                ));
-            }
-
-            $renewal_order->add_order_note(__('Subscription renewal payment processed via BNA webhook.', 'bna-smart-payment'));
+            // Використовуємо нашу виправлену функцію
+            self::complete_order_properly(
+                $renewal_order,
+                $transaction_id,
+                __('Subscription renewal payment completed.', 'bna-smart-payment')
+            );
 
             bna_log('Subscription renewal order created and completed', array(
-                'original_order_id' => $order->get_id(),
+                'original_order_id' => $order_id,
                 'renewal_order_id' => $renewal_order->get_id(),
                 'subscription_id' => $data['id']
             ));
@@ -649,13 +759,12 @@ class BNA_Webhooks {
         $order->update_meta_data('_bna_subscription_status', 'active');
         $order->update_meta_data('_bna_subscription_last_event', 'processed');
         $order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
-        $order->add_order_note(__('Subscription renewal payment processed successfully.', 'bna-smart-payment'));
         $order->save();
 
         return array(
             'status' => 'processed',
             'event' => 'subscription.processed',
-            'order_id' => $order->get_id(),
+            'order_id' => $order_id,
             'renewal_order_id' => $renewal_order ? $renewal_order->get_id() : null,
             'subscription_id' => $data['id']
         );
@@ -926,14 +1035,12 @@ class BNA_Webhooks {
             $renewal_order = self::create_subscription_renewal_order($original_order, $data);
 
             if ($renewal_order) {
-                $renewal_order->payment_complete($transaction_id);
-
-                // ВИПРАВЛЕННЯ: Примусово встановлюємо статус "completed" для підписочних товарів
-                if (self::order_has_only_subscription_products($renewal_order)) {
-                    $renewal_order->update_status('completed', __('Subscription renewal completed (virtual products).', 'bna-smart-payment'));
-                }
-
-                $renewal_order->add_order_note(__('Subscription renewal payment completed.', 'bna-smart-payment'));
+                // Використовуємо нашу виправлену функцію
+                self::complete_order_properly(
+                    $renewal_order,
+                    $transaction_id,
+                    __('Subscription renewal payment completed.', 'bna-smart-payment')
+                );
 
                 $original_order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
                 $original_order->save();
