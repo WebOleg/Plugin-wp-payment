@@ -251,7 +251,7 @@ class BNA_API {
     }
 
     // ==========================================
-    // SUBSCRIPTION MANAGEMENT METHODS (v1.9.0)
+    // SUBSCRIPTION MANAGEMENT METHODS (v1.9.0) - FIXED ENDPOINTS
     // ==========================================
 
     /**
@@ -399,7 +399,7 @@ class BNA_API {
     }
 
     /**
-     * Suspend subscription
+     * Suspend subscription - FIXED: Using correct endpoint
      * @param string $subscription_id BNA Subscription ID
      * @return array|WP_Error
      */
@@ -410,7 +410,8 @@ class BNA_API {
 
         bna_log('Suspending subscription', array('subscription_id' => $subscription_id));
 
-        $response = $this->make_request('v1/subscription/' . $subscription_id, 'PATCH', array(
+        // FIXED: Added /suspend to endpoint per BNA API documentation
+        $response = $this->make_request('v1/subscription/' . $subscription_id . '/suspend', 'PATCH', array(
             'suspend' => true
         ));
 
@@ -428,7 +429,7 @@ class BNA_API {
     }
 
     /**
-     * Resume suspended subscription
+     * Resume suspended subscription - FIXED: Using correct endpoint
      * @param string $subscription_id BNA Subscription ID
      * @return array|WP_Error
      */
@@ -439,7 +440,8 @@ class BNA_API {
 
         bna_log('Resuming subscription', array('subscription_id' => $subscription_id));
 
-        $response = $this->make_request('v1/subscription/' . $subscription_id, 'PATCH', array(
+        // FIXED: Using /suspend endpoint with suspend=false per BNA API documentation
+        $response = $this->make_request('v1/subscription/' . $subscription_id . '/suspend', 'PATCH', array(
             'suspend' => false
         ));
 

@@ -317,328 +317,471 @@ class BNA_My_Account {
     }
 
     // ==========================================
-    // SUBSCRIPTION MANAGEMENT AJAX HANDLERS
+    // SUBSCRIPTION MANAGEMENT AJAX HANDLERS (FIXED)
     // ==========================================
 
     public function handle_suspend_subscription() {
-        $this->verify_subscription_ajax_request();
+        try {
+            $this->verify_subscription_ajax_request();
 
-        $order_id = intval($_POST['order_id'] ?? 0);
-        $order = wc_get_order($order_id);
+            $order_id = intval($_POST['order_id'] ?? 0);
+            if (!$order_id) {
+                wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
+            }
 
-        if (!$order || $order->get_customer_id() !== get_current_user_id()) {
-            wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
-        }
+            $order = wc_get_order($order_id);
+            if (!$order || $order->get_customer_id() !== get_current_user_id()) {
+                wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
+            }
 
-        $subscription_id = $order->get_meta('_bna_subscription_id');
-        if (empty($subscription_id)) {
-            wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
-        }
+            $subscription_id = $order->get_meta('_bna_subscription_id');
+            if (empty($subscription_id)) {
+                wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
+            }
 
-        bna_log('Suspending subscription via My Account', array(
-            'user_id' => get_current_user_id(),
-            'order_id' => $order_id,
-            'subscription_id' => $subscription_id
-        ));
-
-        $result = $this->api->suspend_subscription($subscription_id);
-
-        if (is_wp_error($result)) {
-            bna_error('Failed to suspend subscription', array(
-                'subscription_id' => $subscription_id,
-                'error' => $result->get_error_message()
+            bna_log('Suspending subscription via My Account', array(
+                'user_id' => get_current_user_id(),
+                'order_id' => $order_id,
+                'subscription_id' => $subscription_id
             ));
-            wp_send_json_error($result->get_error_message());
+
+            $result = $this->api->suspend_subscription($subscription_id);
+
+            if (is_wp_error($result)) {
+                bna_error('Failed to suspend subscription', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $result->get_error_message()
+                ));
+                wp_send_json_error($result->get_error_message());
+            }
+
+            $order->update_meta_data('_bna_subscription_status', 'suspended');
+            $order->update_meta_data('_bna_subscription_last_action', 'suspended_by_customer');
+            $order->update_status('on-hold', __('Subscription suspended by customer.', 'bna-smart-payment'));
+            $order->save();
+
+            wp_send_json_success(array(
+                'message' => __('Subscription paused successfully.', 'bna-smart-payment'),
+                'new_status' => 'suspended'
+            ));
+
+        } catch (Exception $e) {
+            bna_error('Exception in handle_suspend_subscription', array(
+                'order_id' => $_POST['order_id'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('An error occurred while pausing the subscription. Please try again.', 'bna-smart-payment'));
         }
-
-        $order->update_meta_data('_bna_subscription_status', 'suspended');
-        $order->update_meta_data('_bna_subscription_last_action', 'suspended_by_customer');
-        $order->update_status('on-hold', __('Subscription suspended by customer.', 'bna-smart-payment'));
-        $order->save();
-
-        wp_send_json_success(array(
-            'message' => __('Subscription paused successfully.', 'bna-smart-payment'),
-            'new_status' => 'suspended'
-        ));
     }
 
     public function handle_resume_subscription() {
-        $this->verify_subscription_ajax_request();
+        try {
+            $this->verify_subscription_ajax_request();
 
-        $order_id = intval($_POST['order_id'] ?? 0);
-        $order = wc_get_order($order_id);
+            $order_id = intval($_POST['order_id'] ?? 0);
+            if (!$order_id) {
+                wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
+            }
 
-        if (!$order || $order->get_customer_id() !== get_current_user_id()) {
-            wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
-        }
+            $order = wc_get_order($order_id);
+            if (!$order || $order->get_customer_id() !== get_current_user_id()) {
+                wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
+            }
 
-        $subscription_id = $order->get_meta('_bna_subscription_id');
-        if (empty($subscription_id)) {
-            wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
-        }
+            $subscription_id = $order->get_meta('_bna_subscription_id');
+            if (empty($subscription_id)) {
+                wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
+            }
 
-        bna_log('Resuming subscription via My Account', array(
-            'user_id' => get_current_user_id(),
-            'order_id' => $order_id,
-            'subscription_id' => $subscription_id
-        ));
-
-        $result = $this->api->resume_subscription($subscription_id);
-
-        if (is_wp_error($result)) {
-            bna_error('Failed to resume subscription', array(
-                'subscription_id' => $subscription_id,
-                'error' => $result->get_error_message()
+            bna_log('Resuming subscription via My Account', array(
+                'user_id' => get_current_user_id(),
+                'order_id' => $order_id,
+                'subscription_id' => $subscription_id
             ));
-            wp_send_json_error($result->get_error_message());
+
+            $result = $this->api->resume_subscription($subscription_id);
+
+            if (is_wp_error($result)) {
+                bna_error('Failed to resume subscription', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $result->get_error_message()
+                ));
+                wp_send_json_error($result->get_error_message());
+            }
+
+            $order->update_meta_data('_bna_subscription_status', 'active');
+            $order->update_meta_data('_bna_subscription_last_action', 'resumed_by_customer');
+            $order->update_status('processing', __('Subscription resumed by customer.', 'bna-smart-payment'));
+            $order->save();
+
+            wp_send_json_success(array(
+                'message' => __('Subscription resumed successfully.', 'bna-smart-payment'),
+                'new_status' => 'active'
+            ));
+
+        } catch (Exception $e) {
+            bna_error('Exception in handle_resume_subscription', array(
+                'order_id' => $_POST['order_id'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('An error occurred while resuming the subscription. Please try again.', 'bna-smart-payment'));
         }
-
-        $order->update_meta_data('_bna_subscription_status', 'active');
-        $order->update_meta_data('_bna_subscription_last_action', 'resumed_by_customer');
-        $order->update_status('processing', __('Subscription resumed by customer.', 'bna-smart-payment'));
-        $order->save();
-
-        wp_send_json_success(array(
-            'message' => __('Subscription resumed successfully.', 'bna-smart-payment'),
-            'new_status' => 'active'
-        ));
     }
 
     public function handle_cancel_subscription() {
-        $this->verify_subscription_ajax_request();
+        try {
+            $this->verify_subscription_ajax_request();
 
-        $order_id = intval($_POST['order_id'] ?? 0);
-        $order = wc_get_order($order_id);
+            $order_id = intval($_POST['order_id'] ?? 0);
+            if (!$order_id) {
+                wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
+            }
 
-        if (!$order || $order->get_customer_id() !== get_current_user_id()) {
-            wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
-        }
+            $order = wc_get_order($order_id);
+            if (!$order || $order->get_customer_id() !== get_current_user_id()) {
+                wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
+            }
 
-        $subscription_id = $order->get_meta('_bna_subscription_id');
-        if (empty($subscription_id)) {
-            wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
-        }
+            $subscription_id = $order->get_meta('_bna_subscription_id');
+            if (empty($subscription_id)) {
+                wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
+            }
 
-        bna_log('Cancelling subscription via My Account', array(
-            'user_id' => get_current_user_id(),
-            'order_id' => $order_id,
-            'subscription_id' => $subscription_id
-        ));
-
-        $result = $this->api->suspend_subscription($subscription_id);
-
-        if (is_wp_error($result)) {
-            bna_error('Failed to cancel subscription', array(
-                'subscription_id' => $subscription_id,
-                'error' => $result->get_error_message()
+            bna_log('Cancelling subscription via My Account', array(
+                'user_id' => get_current_user_id(),
+                'order_id' => $order_id,
+                'subscription_id' => $subscription_id
             ));
-            wp_send_json_error($result->get_error_message());
+
+            $result = $this->api->suspend_subscription($subscription_id);
+
+            if (is_wp_error($result)) {
+                bna_error('Failed to cancel subscription', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $result->get_error_message()
+                ));
+                wp_send_json_error($result->get_error_message());
+            }
+
+            $order->update_meta_data('_bna_subscription_status', 'cancelled');
+            $order->update_meta_data('_bna_subscription_last_action', 'cancelled_by_customer');
+            $order->update_status('cancelled', __('Subscription cancelled by customer.', 'bna-smart-payment'));
+            $order->save();
+
+            wp_send_json_success(array(
+                'message' => __('Subscription cancelled successfully.', 'bna-smart-payment'),
+                'new_status' => 'cancelled'
+            ));
+
+        } catch (Exception $e) {
+            bna_error('Exception in handle_cancel_subscription', array(
+                'order_id' => $_POST['order_id'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('An error occurred while cancelling the subscription. Please try again.', 'bna-smart-payment'));
         }
-
-        $order->update_meta_data('_bna_subscription_status', 'cancelled');
-        $order->update_meta_data('_bna_subscription_last_action', 'cancelled_by_customer');
-        $order->update_status('cancelled', __('Subscription cancelled by customer.', 'bna-smart-payment'));
-        $order->save();
-
-        wp_send_json_success(array(
-            'message' => __('Subscription cancelled successfully.', 'bna-smart-payment'),
-            'new_status' => 'cancelled'
-        ));
     }
 
     public function handle_delete_subscription() {
-        $this->verify_subscription_ajax_request();
+        try {
+            $this->verify_subscription_ajax_request();
 
-        $order_id = intval($_POST['order_id'] ?? 0);
-        $subscription_id = sanitize_text_field($_POST['subscription_id'] ?? '');
+            $order_id = intval($_POST['order_id'] ?? 0);
+            $subscription_id = sanitize_text_field($_POST['subscription_id'] ?? '');
 
-        $order = wc_get_order($order_id);
-
-        if (!$order || $order->get_customer_id() !== get_current_user_id()) {
-            wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
-        }
-
-        if (empty($subscription_id)) {
-            $subscription_id = $order->get_meta('_bna_subscription_id');
-            if (empty($subscription_id)) {
-                wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
+            if (!$order_id) {
+                wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
             }
-        }
 
-        $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
-        if ($current_status !== 'cancelled') {
-            wp_send_json_error(__('Only cancelled subscriptions can be deleted permanently.', 'bna-smart-payment'));
-        }
+            $order = wc_get_order($order_id);
+            if (!$order || $order->get_customer_id() !== get_current_user_id()) {
+                wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
+            }
 
-        bna_log('Deleting subscription permanently via My Account', array(
-            'user_id' => get_current_user_id(),
-            'order_id' => $order_id,
-            'subscription_id' => $subscription_id
-        ));
+            if (empty($subscription_id)) {
+                $subscription_id = $order->get_meta('_bna_subscription_id');
+                if (empty($subscription_id)) {
+                    wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
+                }
+            }
 
-        $result = $this->api->delete_subscription($subscription_id);
+            $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
+            if ($current_status !== 'cancelled') {
+                wp_send_json_error(__('Only cancelled subscriptions can be deleted permanently.', 'bna-smart-payment'));
+            }
 
-        if (is_wp_error($result)) {
-            bna_error('Failed to delete subscription permanently', array(
-                'subscription_id' => $subscription_id,
-                'error' => $result->get_error_message()
+            bna_log('Deleting subscription permanently via My Account', array(
+                'user_id' => get_current_user_id(),
+                'order_id' => $order_id,
+                'subscription_id' => $subscription_id
             ));
-            wp_send_json_error($result->get_error_message());
+
+            $result = $this->api->delete_subscription($subscription_id);
+
+            if (is_wp_error($result)) {
+                bna_error('Failed to delete subscription permanently', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $result->get_error_message()
+                ));
+                wp_send_json_error($result->get_error_message());
+            }
+
+            $order->update_meta_data('_bna_subscription_status', 'deleted');
+            $order->update_meta_data('_bna_subscription_last_action', 'deleted_by_customer');
+            $order->add_order_note(__('Subscription deleted permanently by customer.', 'bna-smart-payment'));
+            $order->save();
+
+            wp_send_json_success(array(
+                'message' => __('Subscription deleted permanently.', 'bna-smart-payment'),
+                'new_status' => 'deleted'
+            ));
+
+        } catch (Exception $e) {
+            bna_error('Exception in handle_delete_subscription', array(
+                'order_id' => $_POST['order_id'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('An error occurred while deleting the subscription. Please try again.', 'bna-smart-payment'));
         }
-
-        $order->update_meta_data('_bna_subscription_status', 'deleted');
-        $order->update_meta_data('_bna_subscription_last_action', 'deleted_by_customer');
-        $order->add_order_note(__('Subscription deleted permanently by customer.', 'bna-smart-payment'));
-        $order->save();
-
-        wp_send_json_success(array(
-            'message' => __('Subscription deleted permanently.', 'bna-smart-payment'),
-            'new_status' => 'deleted'
-        ));
     }
 
     public function handle_resend_notification() {
-        $this->verify_subscription_ajax_request();
+        try {
+            $this->verify_subscription_ajax_request();
 
-        $order_id = intval($_POST['order_id'] ?? 0);
-        $subscription_id = sanitize_text_field($_POST['subscription_id'] ?? '');
+            $order_id = intval($_POST['order_id'] ?? 0);
+            $subscription_id = sanitize_text_field($_POST['subscription_id'] ?? '');
 
-        $order = wc_get_order($order_id);
-
-        if (!$order || $order->get_customer_id() !== get_current_user_id()) {
-            wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
-        }
-
-        if (empty($subscription_id)) {
-            $subscription_id = $order->get_meta('_bna_subscription_id');
-            if (empty($subscription_id)) {
-                wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
+            if (!$order_id) {
+                wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
             }
-        }
 
-        $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
-        if ($current_status === 'deleted') {
-            wp_send_json_error(__('Cannot send notifications for deleted subscriptions.', 'bna-smart-payment'));
-        }
+            $order = wc_get_order($order_id);
+            if (!$order || $order->get_customer_id() !== get_current_user_id()) {
+                wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
+            }
 
-        bna_log('Resending subscription notification via My Account', array(
-            'user_id' => get_current_user_id(),
-            'order_id' => $order_id,
-            'subscription_id' => $subscription_id
-        ));
+            if (empty($subscription_id)) {
+                $subscription_id = $order->get_meta('_bna_subscription_id');
+                if (empty($subscription_id)) {
+                    wp_send_json_error(__('Subscription ID not found.', 'bna-smart-payment'));
+                }
+            }
 
-        $result = $this->api->resend_subscription_notification($subscription_id);
+            $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
+            if ($current_status === 'deleted') {
+                wp_send_json_error(__('Cannot send notifications for deleted subscriptions.', 'bna-smart-payment'));
+            }
 
-        if (is_wp_error($result)) {
-            bna_error('Failed to resend subscription notification', array(
-                'subscription_id' => $subscription_id,
-                'error' => $result->get_error_message()
+            bna_log('Resending subscription notification via My Account', array(
+                'user_id' => get_current_user_id(),
+                'order_id' => $order_id,
+                'subscription_id' => $subscription_id
             ));
-            wp_send_json_error($result->get_error_message());
+
+            $result = $this->api->resend_subscription_notification($subscription_id);
+
+            if (is_wp_error($result)) {
+                bna_error('Failed to resend subscription notification', array(
+                    'subscription_id' => $subscription_id,
+                    'error' => $result->get_error_message()
+                ));
+                wp_send_json_error($result->get_error_message());
+            }
+
+            $order->update_meta_data('_bna_subscription_last_notification', current_time('mysql'));
+            $order->add_order_note(__('Subscription notification resent by customer.', 'bna-smart-payment'));
+            $order->save();
+
+            wp_send_json_success(array(
+                'message' => __('Notification sent successfully.', 'bna-smart-payment')
+            ));
+
+        } catch (Exception $e) {
+            bna_error('Exception in handle_resend_notification', array(
+                'order_id' => $_POST['order_id'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('An error occurred while resending notification. Please try again.', 'bna-smart-payment'));
         }
-
-        $order->update_meta_data('_bna_subscription_last_notification', current_time('mysql'));
-        $order->add_order_note(__('Subscription notification resent by customer.', 'bna-smart-payment'));
-        $order->save();
-
-        wp_send_json_success(array(
-            'message' => __('Notification sent successfully.', 'bna-smart-payment')
-        ));
     }
 
     public function handle_get_subscription_details() {
-        $this->verify_subscription_ajax_request();
+        try {
+            $this->verify_subscription_ajax_request();
 
-        $order_id = intval($_POST['order_id'] ?? 0);
-        $order = wc_get_order($order_id);
-
-        if (!$order || $order->get_customer_id() !== get_current_user_id()) {
-            wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
-        }
-
-        $subscription_id = $order->get_meta('_bna_subscription_id');
-        $subscription_status = $order->get_meta('_bna_subscription_status') ?: 'new';
-
-        $bna_details = null;
-        if (!empty($subscription_id) && $this->api->has_credentials()) {
-            $api_result = $this->api->get_subscription($subscription_id);
-            if (!is_wp_error($api_result)) {
-                $bna_details = $api_result;
+            $order_id = intval($_POST['order_id'] ?? 0);
+            if (!$order_id) {
+                wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
             }
-        }
 
-        $details = array(
-            'order_id' => $order_id,
-            'subscription_id' => $subscription_id,
-            'status' => $subscription_status,
-            'total' => $order->get_formatted_order_total(),
-            'created_date' => $order->get_date_created()->format('Y-m-d H:i:s'),
-            'items' => array(),
-            'bna_details' => $bna_details
-        );
-
-        foreach ($order->get_items() as $item) {
-            $product = $item->get_product();
-            if ($product && BNA_Subscriptions::is_subscription_product($product)) {
-                $subscription_data = BNA_Subscriptions::get_subscription_data($product);
-                $details['items'][] = array(
-                    'name' => $item->get_name(),
-                    'quantity' => $item->get_quantity(),
-                    'total' => $item->get_formatted_total(),
-                    'frequency' => $subscription_data['frequency'] ?? 'monthly',
-                    'trial_days' => $subscription_data['trial_days'] ?? 0,
-                    'signup_fee' => $subscription_data['signup_fee'] ?? 0
-                );
+            $order = wc_get_order($order_id);
+            if (!$order || $order->get_customer_id() !== get_current_user_id()) {
+                wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
             }
-        }
 
-        wp_send_json_success($details);
+            $subscription_id = $order->get_meta('_bna_subscription_id');
+            $subscription_status = $order->get_meta('_bna_subscription_status') ?: 'new';
+
+            $bna_details = null;
+            if (!empty($subscription_id) && $this->api->has_credentials()) {
+                try {
+                    $api_result = $this->api->get_subscription($subscription_id);
+                    if (!is_wp_error($api_result)) {
+                        $bna_details = $api_result;
+                    }
+                } catch (Exception $api_e) {
+                    bna_error('Failed to get BNA subscription details', array(
+                        'subscription_id' => $subscription_id,
+                        'error' => $api_e->getMessage()
+                    ));
+                    // Continue without BNA details
+                }
+            }
+
+            $details = array(
+                'order_id' => $order_id,
+                'subscription_id' => $subscription_id,
+                'status' => $subscription_status,
+                'total' => $order->get_formatted_order_total(),
+                'created_date' => $order->get_date_created() ? $order->get_date_created()->format('Y-m-d H:i:s') : '',
+                'items' => array(),
+                'bna_details' => $bna_details
+            );
+
+            // Safely process order items
+            try {
+                foreach ($order->get_items() as $item) {
+                    $product = null;
+
+                    try {
+                        $product = $item->get_product();
+                    } catch (Exception $product_e) {
+                        bna_debug('Failed to get product for item', array(
+                            'item_id' => $item->get_id(),
+                            'error' => $product_e->getMessage()
+                        ));
+                        // Continue with null product
+                    }
+
+                    if ($product && BNA_Subscriptions::is_subscription_product($product)) {
+                        try {
+                            $subscription_data = BNA_Subscriptions::get_subscription_data($product);
+                            $details['items'][] = array(
+                                'name' => $item->get_name(),
+                                'quantity' => $item->get_quantity(),
+                                'total' => $item->get_formatted_total(),
+                                'frequency' => $subscription_data['frequency'] ?? 'monthly',
+                                'trial_days' => $subscription_data['trial_days'] ?? 0,
+                                'signup_fee' => $subscription_data['signup_fee'] ?? 0
+                            );
+                        } catch (Exception $sub_e) {
+                            bna_error('Failed to get subscription data', array(
+                                'product_id' => $product->get_id(),
+                                'error' => $sub_e->getMessage()
+                            ));
+                            // Add item without subscription data
+                            $details['items'][] = array(
+                                'name' => $item->get_name(),
+                                'quantity' => $item->get_quantity(),
+                                'total' => $item->get_formatted_total(),
+                                'frequency' => 'monthly',
+                                'trial_days' => 0,
+                                'signup_fee' => 0
+                            );
+                        }
+                    }
+                }
+            } catch (Exception $items_e) {
+                bna_error('Failed to process order items', array(
+                    'order_id' => $order_id,
+                    'error' => $items_e->getMessage()
+                ));
+                // Continue with empty items
+            }
+
+            wp_send_json_success($details);
+
+        } catch (Exception $e) {
+            bna_error('Exception in handle_get_subscription_details', array(
+                'order_id' => $_POST['order_id'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('An error occurred while loading subscription details. Please try again.', 'bna-smart-payment'));
+        }
     }
 
     public function handle_reactivate_subscription() {
-        $this->verify_subscription_ajax_request();
+        try {
+            $this->verify_subscription_ajax_request();
 
-        $order_id = intval($_POST['order_id'] ?? 0);
-        $order = wc_get_order($order_id);
+            $order_id = intval($_POST['order_id'] ?? 0);
+            if (!$order_id) {
+                wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
+            }
 
-        if (!$order || $order->get_customer_id() !== get_current_user_id()) {
-            wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
+            $order = wc_get_order($order_id);
+            if (!$order || $order->get_customer_id() !== get_current_user_id()) {
+                wp_send_json_error(__('Invalid subscription.', 'bna-smart-payment'));
+            }
+
+            $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
+
+            if (!in_array($current_status, array('failed', 'expired'))) {
+                wp_send_json_error(__('This subscription cannot be reactivated.', 'bna-smart-payment'));
+            }
+
+            bna_log('Reactivating subscription via My Account', array(
+                'user_id' => get_current_user_id(),
+                'order_id' => $order_id,
+                'current_status' => $current_status
+            ));
+
+            $order->update_meta_data('_bna_subscription_status', 'active');
+            $order->update_meta_data('_bna_subscription_last_action', 'reactivated_by_customer');
+            $order->update_status('processing', __('Subscription reactivated by customer - pending payment setup.', 'bna-smart-payment'));
+            $order->save();
+
+            wp_send_json_success(array(
+                'message' => __('Subscription reactivation initiated. You may need to update your payment method.', 'bna-smart-payment'),
+                'new_status' => 'active'
+            ));
+
+        } catch (Exception $e) {
+            bna_error('Exception in handle_reactivate_subscription', array(
+                'order_id' => $_POST['order_id'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('An error occurred while reactivating the subscription. Please try again.', 'bna-smart-payment'));
         }
-
-        $current_status = $order->get_meta('_bna_subscription_status') ?: 'new';
-
-        if (!in_array($current_status, array('failed', 'expired'))) {
-            wp_send_json_error(__('This subscription cannot be reactivated.', 'bna-smart-payment'));
-        }
-
-        bna_log('Reactivating subscription via My Account', array(
-            'user_id' => get_current_user_id(),
-            'order_id' => $order_id,
-            'current_status' => $current_status
-        ));
-
-        $order->update_meta_data('_bna_subscription_status', 'active');
-        $order->update_meta_data('_bna_subscription_last_action', 'reactivated_by_customer');
-        $order->update_status('processing', __('Subscription reactivated by customer - pending payment setup.', 'bna-smart-payment'));
-        $order->save();
-
-        wp_send_json_success(array(
-            'message' => __('Subscription reactivation initiated. You may need to update your payment method.', 'bna-smart-payment'),
-            'new_status' => 'active'
-        ));
     }
 
     private function verify_subscription_ajax_request() {
-        if (!check_ajax_referer('bna_manage_subscription', 'nonce', false)) {
-            wp_send_json_error(__('Security check failed.', 'bna-smart-payment'));
-        }
+        try {
+            if (!check_ajax_referer('bna_manage_subscription', 'nonce', false)) {
+                wp_send_json_error(__('Security check failed.', 'bna-smart-payment'));
+            }
 
-        if (!is_user_logged_in()) {
-            wp_send_json_error(__('You must be logged in.', 'bna-smart-payment'));
-        }
+            if (!is_user_logged_in()) {
+                wp_send_json_error(__('You must be logged in.', 'bna-smart-payment'));
+            }
 
-        if (!BNA_Subscriptions::is_enabled()) {
-            wp_send_json_error(__('Subscriptions are not enabled.', 'bna-smart-payment'));
+            if (!BNA_Subscriptions::is_enabled()) {
+                wp_send_json_error(__('Subscriptions are not enabled.', 'bna-smart-payment'));
+            }
+        } catch (Exception $e) {
+            bna_error('Exception in verify_subscription_ajax_request', array(
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('Security verification failed.', 'bna-smart-payment'));
         }
     }
 
@@ -647,64 +790,75 @@ class BNA_My_Account {
     // ==========================================
 
     public function handle_delete_payment_method() {
-        check_ajax_referer('bna_delete_payment_method', 'nonce');
+        try {
+            check_ajax_referer('bna_delete_payment_method', 'nonce');
 
-        if (!is_user_logged_in()) {
-            wp_send_json_error('Not logged in');
-        }
+            if (!is_user_logged_in()) {
+                wp_send_json_error('Not logged in');
+            }
 
-        $payment_method_id = sanitize_text_field($_POST['payment_method_id'] ?? '');
-        if (empty($payment_method_id)) {
-            wp_send_json_error('Invalid payment method ID');
-        }
+            $payment_method_id = sanitize_text_field($_POST['payment_method_id'] ?? '');
+            if (empty($payment_method_id)) {
+                wp_send_json_error('Invalid payment method ID');
+            }
 
-        $user_id = get_current_user_id();
+            $user_id = get_current_user_id();
 
-        bna_log('Processing payment method deletion request', array(
-            'user_id' => $user_id,
-            'payment_method_id' => $payment_method_id
-        ));
-
-        $result = $this->payment_methods->delete_payment_method($user_id, $payment_method_id);
-
-        if (is_wp_error($result)) {
-            bna_error('Payment method deletion failed', array(
+            bna_log('Processing payment method deletion request', array(
                 'user_id' => $user_id,
-                'payment_method_id' => $payment_method_id,
-                'error' => $result->get_error_message()
+                'payment_method_id' => $payment_method_id
             ));
 
-            wp_send_json_error($result->get_error_message());
-        }
+            $result = $this->payment_methods->delete_payment_method($user_id, $payment_method_id);
 
-        if (is_array($result)) {
-            $status = $result['status'] ?? 'unknown';
-            $message = $result['message'] ?? 'Unknown status';
-
-            if ($status === 'success') {
-                bna_log('Payment method deleted successfully via My Account', array(
-                    'user_id' => $user_id,
-                    'payment_method_id' => $payment_method_id
-                ));
-
-                wp_send_json_success($message);
-            } else {
-                bna_error('Payment method deletion not completed', array(
+            if (is_wp_error($result)) {
+                bna_error('Payment method deletion failed', array(
                     'user_id' => $user_id,
                     'payment_method_id' => $payment_method_id,
-                    'status' => $status,
-                    'message' => $message
+                    'error' => $result->get_error_message()
                 ));
 
-                wp_send_json_error($message);
+                wp_send_json_error($result->get_error_message());
             }
-        }
 
-        wp_send_json_error('Unexpected response format');
+            if (is_array($result)) {
+                $status = $result['status'] ?? 'unknown';
+                $message = $result['message'] ?? 'Unknown status';
+
+                if ($status === 'success') {
+                    bna_log('Payment method deleted successfully via My Account', array(
+                        'user_id' => $user_id,
+                        'payment_method_id' => $payment_method_id
+                    ));
+
+                    wp_send_json_success($message);
+                } else {
+                    bna_error('Payment method deletion not completed', array(
+                        'user_id' => $user_id,
+                        'payment_method_id' => $payment_method_id,
+                        'status' => $status,
+                        'message' => $message
+                    ));
+
+                    wp_send_json_error($message);
+                }
+            }
+
+            wp_send_json_error('Unexpected response format');
+
+        } catch (Exception $e) {
+            bna_error('Exception in handle_delete_payment_method', array(
+                'user_id' => get_current_user_id(),
+                'payment_method_id' => $_POST['payment_method_id'] ?? 'unknown',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+            wp_send_json_error(__('An error occurred while deleting the payment method. Please try again.', 'bna-smart-payment'));
+        }
     }
 
     // ==========================================
-    // HELPER METHODS
+    // HELPER METHODS (unchanged)
     // ==========================================
 
     public function get_payment_method_display_name($method) {
