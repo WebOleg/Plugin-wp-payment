@@ -33,17 +33,21 @@ jQuery(document).ready(function($) {
     }
 
     function showMessage(message, type = 'success') {
+        $('.woocommerce-message, .woocommerce-error').remove();
+
         var messageClass = type === 'error' ? 'woocommerce-error' : 'woocommerce-message';
         var $notice = $('<div class="' + messageClass + '"><p>' + message + '</p></div>');
         $('.bna-my-account-subscriptions').prepend($notice);
         $('html, body').animate({ scrollTop: 0 }, 300);
+
         setTimeout(function() {
             $notice.fadeOut(300, function() { $(this).remove(); });
-        }, 5000);
+        }, 7000);
     }
 
     function updateSubscriptionStatus($subscriptionItem, newStatus) {
         var $statusBadge = $subscriptionItem.find('.status-badge');
+
         var statusColors = {
             'new': '#6c757d',
             'active': '#28a745',
@@ -57,7 +61,7 @@ jQuery(document).ready(function($) {
         var statusLabels = {
             'new': 'New',
             'active': 'Active',
-            'suspended': 'Cancelled',
+            'suspended': 'Paused',
             'cancelled': 'Cancelled',
             'expired': 'Expired',
             'failed': 'Failed',
@@ -79,10 +83,10 @@ jQuery(document).ready(function($) {
                 $actions.find('[data-action="suspend"], [data-action="cancel"]').show();
                 break;
             case 'suspended':
-                $actions.find('[data-action="resume"], [data-action="delete"]').show();
+                $actions.find('[data-action="resume"], [data-action="cancel"]').show();
                 break;
             case 'new':
-                $actions.find('[data-action="cancel"]').show();
+                $actions.find('[data-action="suspend"], [data-action="cancel"]').show();
                 break;
             case 'cancelled':
                 $actions.find('[data-action="delete"]').show();
@@ -95,7 +99,7 @@ jQuery(document).ready(function($) {
                 break;
         }
 
-        var allowedNotificationStatuses = ['active', 'new', 'suspended', 'failed'];
+        var allowedNotificationStatuses = ['active', 'new', 'suspended', 'failed', 'expired'];
         if (allowedNotificationStatuses.includes(status)) {
             $actions.find('[data-action="resend_notification"]').show();
         }
@@ -107,6 +111,13 @@ jQuery(document).ready(function($) {
         }
 
         var $subscriptionItem = $('[data-order-id="' + orderId + '"]').closest('.subscription-item');
+
+        if ($subscriptionItem.length === 0) {
+            console.error('Subscription item not found for order ID:', orderId);
+            showMessage('Error: Subscription not found on page.', 'error');
+            return;
+        }
+
         setLoadingState($subscriptionItem, true);
 
         var data = {
@@ -115,18 +126,16 @@ jQuery(document).ready(function($) {
             order_id: orderId
         };
 
-        if (subscriptionId) {
+        if (subscriptionId && subscriptionId !== orderId) {
             data.subscription_id = subscriptionId;
         }
 
-        console.log('BNA AJAX Request Debug:', {
+        console.log('BNA AJAX Request:', {
             action: action,
-            full_action: 'bna_' + action + '_subscription',
+            full_action: data.action,
             order_id: orderId,
             subscription_id: subscriptionId,
-            nonce: nonce,
-            ajax_url: ajaxUrl,
-            data: data
+            url: ajaxUrl
         });
 
         $.ajax({
@@ -138,57 +147,73 @@ jQuery(document).ready(function($) {
             success: function(response) {
                 setLoadingState($subscriptionItem, false);
 
-                console.log('BNA AJAX Success Response:', response);
+                console.log('BNA AJAX Success:', response);
 
-                if (response.success) {
-                    showMessage(response.data.message || messages['success_' + action] || 'Action completed successfully.');
+                if (response && response.success) {
+                    var successMessage = response.data && response.data.message ?
+                        response.data.message :
+                        messages['success_' + action] ||
+                        'Action completed successfully.';
 
-                    if (action === 'delete' && response.data.new_status === 'deleted') {
-                        $subscriptionItem.fadeOut(300, function() {
+                    showMessage(successMessage);
+
+                    if (action === 'delete' && response.data && response.data.new_status === 'deleted') {
+                        $subscriptionItem.fadeOut(500, function() {
                             $(this).remove();
                             if ($('.subscription-item').length === 0) {
-                                location.reload();
+                                setTimeout(function() {
+                                    location.reload();
+                                }, 1000);
                             }
                         });
                         return;
                     }
 
-                    if (response.data.new_status) {
+                    if (response.data && response.data.new_status) {
                         updateSubscriptionStatus($subscriptionItem, response.data.new_status);
                     }
                 } else {
-                    showMessage(response.data || messages.error || 'An error occurred.', 'error');
+                    var errorMessage = 'An error occurred.';
+                    if (response && response.data) {
+                        if (typeof response.data === 'string') {
+                            errorMessage = response.data;
+                        } else if (response.data.message) {
+                            errorMessage = response.data.message;
+                        }
+                    }
+                    showMessage(errorMessage, 'error');
                 }
             },
             error: function(xhr, status, error) {
                 setLoadingState($subscriptionItem, false);
 
-                console.error('BNA AJAX Error Details:', {
-                    action: action,
-                    full_action: 'bna_' + action + '_subscription',
-                    xhr_status: xhr.status,
-                    xhr_status_text: xhr.statusText,
-                    xhr_response_text: xhr.responseText,
-                    xhr_ready_state: xhr.readyState,
-                    status: status,
-                    error: error,
-                    ajax_url: ajaxUrl,
-                    data_sent: data,
-                    xhr_headers: xhr.getAllResponseHeaders()
+                console.error('BNA AJAX Error:', {
+                    action: data.action,
+                    status: xhr.status,
+                    statusText: xhr.statusText,
+                    responseText: xhr.responseText,
+                    error: error
                 });
 
-                var errorMessage = 'An error occurred. Please try again.';
+                var errorMessage = messages.error || 'An error occurred. Please try again.';
 
-                if (xhr.status === 400) {
-                    errorMessage = 'Bad request - check console for details';
-                } else if (xhr.status === 403) {
-                    errorMessage = 'Permission denied - please refresh and try again';
-                } else if (xhr.status === 404) {
-                    errorMessage = 'Handler not found - ' + data.action;
-                } else if (xhr.status === 500) {
-                    errorMessage = 'Server error - check server logs';
-                } else if (xhr.status === 0) {
-                    errorMessage = 'Network error - check connection';
+                try {
+                    var errorResponse = JSON.parse(xhr.responseText);
+                    if (errorResponse && errorResponse.data) {
+                        errorMessage = errorResponse.data;
+                    }
+                } catch (e) {
+                    if (xhr.status === 400) {
+                        errorMessage = 'Invalid request. Please refresh the page and try again.';
+                    } else if (xhr.status === 403) {
+                        errorMessage = 'Permission denied. Please refresh the page and try again.';
+                    } else if (xhr.status === 404) {
+                        errorMessage = 'Action not found. Please contact support.';
+                    } else if (xhr.status === 500) {
+                        errorMessage = 'Server error. Please try again or contact support.';
+                    } else if (xhr.status === 0) {
+                        errorMessage = 'Network error. Please check your connection.';
+                    }
                 }
 
                 showMessage(errorMessage, 'error');
@@ -198,43 +223,61 @@ jQuery(document).ready(function($) {
 
     $(document).on('click', '.bna-subscription-action', function(e) {
         e.preventDefault();
+
         var $button = $(this);
         var action = $button.data('action');
         var orderId = $button.data('order-id');
         var subscriptionId = $button.data('subscription-id');
-        var confirmMessage = '';
 
-        console.log('BNA Button clicked:', {
-            action: action,
-            orderId: orderId,
-            subscriptionId: subscriptionId,
-            button_data: $button.data()
-        });
+        if (!action || !orderId) {
+            console.error('BNA: Missing action or order ID', {
+                action: action,
+                orderId: orderId
+            });
+            showMessage('Error: Missing subscription information.', 'error');
+            return;
+        }
+
+        var confirmMessage = '';
 
         switch (action) {
             case 'suspend':
-                confirmMessage = messages.confirm_suspend || 'Are you sure you want to pause this subscription?';
+                confirmMessage = messages.confirm_suspend ||
+                    'Are you sure you want to pause this subscription? You can resume it later.';
                 break;
             case 'resume':
-                confirmMessage = messages.confirm_resume || 'Are you sure you want to resume this subscription?';
+                confirmMessage = messages.confirm_resume ||
+                    'Are you sure you want to resume this subscription?';
                 break;
             case 'cancel':
-                confirmMessage = messages.confirm_cancel || 'Are you sure you want to cancel this subscription? This action cannot be undone.';
+                confirmMessage = messages.confirm_cancel ||
+                    'Are you sure you want to cancel this subscription permanently? This will stop all future payments and cannot be undone.';
                 break;
             case 'delete':
-                confirmMessage = messages.confirm_delete || 'Are you sure you want to permanently delete this subscription? This action cannot be undone.';
+                confirmMessage = messages.confirm_delete ||
+                    'Are you sure you want to permanently delete this subscription record? This action cannot be undone.';
                 break;
             case 'reactivate':
-                confirmMessage = messages.confirm_reactivate || 'Are you sure you want to reactivate this subscription?';
+                confirmMessage = messages.confirm_reactivate ||
+                    'Are you sure you want to reactivate this subscription?';
                 break;
             case 'resend_notification':
-                confirmMessage = messages.confirm_resend_notification || 'Resend notification for this subscription?';
+                confirmMessage = messages.confirm_resend_notification ||
+                    'Resend notification for this subscription?';
                 break;
+            default:
+                console.error('BNA: Unknown action:', action);
+                showMessage('Error: Unknown action.', 'error');
+                return;
         }
 
-        if (action) {
-            handleSubscriptionAction(action, orderId, subscriptionId, confirmMessage);
-        }
+        console.log('BNA: Processing action', {
+            action: action,
+            orderId: orderId,
+            subscriptionId: subscriptionId
+        });
+
+        handleSubscriptionAction(action, orderId, subscriptionId, confirmMessage);
     });
 
     if (!$('#bna-subscription-loading-styles').length) {
