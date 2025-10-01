@@ -157,6 +157,9 @@ class BNA_My_Account {
         }
     }
 
+    /**
+     * ВИПРАВЛЕНИЙ subscriptions_content метод з синхронізацією BNA API
+     */
     public function subscriptions_content() {
         if (!is_user_logged_in()) {
             bna_error('Unauthorized access to subscriptions page');
@@ -172,12 +175,19 @@ class BNA_My_Account {
         }
 
         $user_id = get_current_user_id();
+        $bna_customer_id = get_user_meta($user_id, '_bna_customer_id', true);
+
+        // ВИПРАВЛЕННЯ: Синхронізація з BNA API перед показом
+        if (!empty($bna_customer_id) && $this->api->has_credentials()) {
+            $this->sync_user_subscriptions_with_api($user_id, $bna_customer_id);
+        }
+
         $subscriptions = $this->get_user_subscriptions_with_api_sync($user_id);
 
         bna_log('Loading subscriptions page', array(
             'user_id' => $user_id,
             'subscriptions_count' => count($subscriptions),
-            'bna_customer_id' => get_user_meta($user_id, '_bna_customer_id', true)
+            'bna_customer_id' => $bna_customer_id
         ));
 
         $template_file = BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/my-account-subscriptions.php';
@@ -196,6 +206,88 @@ class BNA_My_Account {
         }
     }
 
+    /**
+     * НОВИЙ метод для синхронізації статусів підписок з BNA API
+     */
+    private function sync_user_subscriptions_with_api($user_id, $bna_customer_id) {
+        try {
+            $bna_subscriptions = $this->api->get_customer_subscriptions($bna_customer_id);
+            if (is_wp_error($bna_subscriptions) || !is_array($bna_subscriptions)) {
+                bna_debug('Could not sync subscriptions - API error', array(
+                    'user_id' => $user_id,
+                    'error' => is_wp_error($bna_subscriptions) ? $bna_subscriptions->get_error_message() : 'Invalid response'
+                ));
+                return;
+            }
+
+            $synced_count = 0;
+
+            foreach ($bna_subscriptions as $bna_sub) {
+                $bna_subscription_id = $bna_sub['id'] ?? '';
+                $bna_status = strtolower($bna_sub['status'] ?? '');
+
+                if (empty($bna_subscription_id) || empty($bna_status)) {
+                    continue;
+                }
+
+                // Знаходимо локальне замовлення з цією підпискою
+                $orders = wc_get_orders(array(
+                    'customer_id' => $user_id,
+                    'meta_key' => '_bna_subscription_id',
+                    'meta_value' => $bna_subscription_id,
+                    'limit' => 1,
+                    'status' => 'any'
+                ));
+
+                if (!empty($orders)) {
+                    $order = $orders[0];
+                    $current_local_status = $order->get_meta('_bna_subscription_status') ?: 'new';
+
+                    // Синхронізуємо тільки якщо статуси відрізняються
+                    if ($current_local_status !== $bna_status) {
+                        $order->update_meta_data('_bna_subscription_status', $bna_status);
+                        $order->update_meta_data('_bna_last_api_sync', current_time('mysql'));
+                        $order->add_order_note(sprintf(
+                            __('Subscription status synced from BNA API: %s → %s', 'bna-smart-payment'),
+                            $current_local_status,
+                            $bna_status
+                        ));
+                        $order->save();
+                        $synced_count++;
+
+                        bna_log('Synced subscription status from API', array(
+                            'order_id' => $order->get_id(),
+                            'subscription_id' => $bna_subscription_id,
+                            'old_status' => $current_local_status,
+                            'new_status' => $bna_status,
+                            'user_id' => $user_id
+                        ));
+                    }
+                }
+            }
+
+            if ($synced_count > 0) {
+                bna_log('Subscription sync completed', array(
+                    'user_id' => $user_id,
+                    'bna_customer_id' => $bna_customer_id,
+                    'synced_count' => $synced_count,
+                    'total_bna_subscriptions' => count($bna_subscriptions)
+                ));
+            }
+
+        } catch (Exception $e) {
+            bna_error('Failed to sync subscriptions with API', array(
+                'user_id' => $user_id,
+                'bna_customer_id' => $bna_customer_id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ));
+        }
+    }
+
+    /**
+     * ВИПРАВЛЕНИЙ метод отримання підписок з API синхронізацією
+     */
     private function get_user_subscriptions_with_api_sync($user_id) {
         $local_subscriptions = $this->subscriptions->get_user_subscriptions($user_id);
 
@@ -206,7 +298,7 @@ class BNA_My_Account {
                 $bna_subscriptions = $this->api->get_customer_subscriptions($bna_customer_id);
 
                 if (!is_wp_error($bna_subscriptions) && is_array($bna_subscriptions)) {
-                    $local_subscriptions = $this->merge_subscription_data($local_subscriptions, $bna_subscriptions);
+                    $local_subscriptions = $this->merge_subscription_data($local_subscriptions, $bna_subscriptions, $user_id);
 
                     bna_debug('Subscriptions synced with BNA API', array(
                         'user_id' => $user_id,
@@ -222,25 +314,55 @@ class BNA_My_Account {
             }
         }
 
+        // Фільтруємо видалені підписки
         $local_subscriptions = array_filter($local_subscriptions, function($subscription) {
             $order = wc_get_order($subscription['order_id']);
-            $status = $order->get_meta('_bna_subscription_status') ?: 'new';
+            $status = $order ? ($order->get_meta('_bna_subscription_status') ?: 'new') : 'deleted';
             return $status !== 'deleted';
         });
 
         return $local_subscriptions;
     }
 
-    private function merge_subscription_data($local_subscriptions, $bna_subscriptions) {
+    /**
+     * ВИПРАВЛЕНИЙ метод об'єднання даних підписок з оновленням локального статусу
+     */
+    private function merge_subscription_data($local_subscriptions, $bna_subscriptions, $user_id) {
         $merged = $local_subscriptions;
 
         foreach ($merged as $key => $local_sub) {
-            $bna_subscription_id = get_post_meta($local_sub['order_id'], '_bna_subscription_id', true);
+            $order = wc_get_order($local_sub['order_id']);
+            if (!$order) {
+                continue;
+            }
+
+            $bna_subscription_id = $order->get_meta('_bna_subscription_id');
 
             if (!empty($bna_subscription_id)) {
                 foreach ($bna_subscriptions as $bna_sub) {
                     if ($bna_sub['id'] === $bna_subscription_id) {
-                        $merged[$key]['bna_status'] = strtolower($bna_sub['status'] ?? '');
+                        $api_status = strtolower($bna_sub['status'] ?? '');
+                        $local_status = $order->get_meta('_bna_subscription_status') ?: 'new';
+
+                        // ВИПРАВЛЕННЯ: Оновлюємо локальний статус якщо він відрізняється від API
+                        if ($local_status !== $api_status && !empty($api_status)) {
+                            $order->update_meta_data('_bna_subscription_status', $api_status);
+                            $order->update_meta_data('_bna_last_api_sync', current_time('mysql'));
+                            $order->save();
+
+                            bna_log('Updated local subscription status from API merge', array(
+                                'order_id' => $order->get_id(),
+                                'subscription_id' => $bna_subscription_id,
+                                'old_status' => $local_status,
+                                'new_status' => $api_status,
+                                'user_id' => $user_id
+                            ));
+
+                            // Оновлюємо статус в merged array
+                            $merged[$key]['status'] = $api_status;
+                        }
+
+                        $merged[$key]['bna_status'] = $api_status;
                         $merged[$key]['bna_next_payment'] = $bna_sub['nextPayment'] ?? null;
                         $merged[$key]['bna_last_payment'] = $bna_sub['lastPayment'] ?? null;
                         $merged[$key]['bna_subscription_id'] = $bna_sub['id'];

@@ -660,14 +660,18 @@ class BNA_Webhooks {
     }
 
     private static function handle_subscription_created($order, $data) {
-        $order->update_meta_data('_bna_subscription_status', 'active');
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'active');
+
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
         $order->update_meta_data('_bna_subscription_last_event', 'created');
         $order->add_order_note(__('BNA subscription created successfully.', 'bna-smart-payment'));
         $order->save();
 
         bna_log('Subscription created', array(
             'order_id' => $order->get_id(),
-            'subscription_id' => $data['id']
+            'subscription_id' => $data['id'],
+            'webhook_status' => $webhook_status
         ));
 
         return array(
@@ -698,6 +702,17 @@ class BNA_Webhooks {
         // Позначаємо що обробили цю подію
         $order->update_meta_data('_bna_last_subscription_processed', $subscription_id);
 
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'active');
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
+
+        bna_log('Updated subscription status from webhook', array(
+            'order_id' => $order_id,
+            'subscription_id' => $subscription_id,
+            'new_status' => $webhook_status,
+            'webhook_status' => $data['status'] ?? 'unknown'
+        ));
+
         // ВИПРАВЛЕННЯ: Правильно визначаємо чи це перший платіж
         $is_first_payment = self::is_first_subscription_payment($order, $subscription_id);
 
@@ -717,7 +732,6 @@ class BNA_Webhooks {
                 __('First subscription payment completed.', 'bna-smart-payment')
             );
 
-            $order->update_meta_data('_bna_subscription_status', 'active');
             $order->update_meta_data('_bna_subscription_last_event', 'processed');
             $order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
             $order->save();
@@ -756,7 +770,6 @@ class BNA_Webhooks {
             ));
         }
 
-        $order->update_meta_data('_bna_subscription_status', 'active');
         $order->update_meta_data('_bna_subscription_last_event', 'processed');
         $order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
         $order->save();
@@ -816,14 +829,18 @@ class BNA_Webhooks {
     }
 
     private static function handle_subscription_suspended($order, $data) {
-        $order->update_meta_data('_bna_subscription_status', 'suspended');
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'suspended');
+
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
         $order->update_meta_data('_bna_subscription_last_event', 'suspended');
         $order->update_status('on-hold', __('Subscription suspended via BNA webhook.', 'bna-smart-payment'));
         $order->save();
 
         bna_log('Subscription suspended', array(
             'order_id' => $order->get_id(),
-            'subscription_id' => $data['id']
+            'subscription_id' => $data['id'],
+            'webhook_status' => $webhook_status
         ));
 
         return array(
@@ -835,14 +852,18 @@ class BNA_Webhooks {
     }
 
     private static function handle_subscription_resumed($order, $data) {
-        $order->update_meta_data('_bna_subscription_status', 'active');
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'active');
+
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
         $order->update_meta_data('_bna_subscription_last_event', 'resumed');
         $order->update_status('processing', __('Subscription resumed via BNA webhook.', 'bna-smart-payment'));
         $order->save();
 
         bna_log('Subscription resumed', array(
             'order_id' => $order->get_id(),
-            'subscription_id' => $data['id']
+            'subscription_id' => $data['id'],
+            'webhook_status' => $webhook_status
         ));
 
         return array(
@@ -854,14 +875,18 @@ class BNA_Webhooks {
     }
 
     private static function handle_subscription_cancelled($order, $data) {
-        $order->update_meta_data('_bna_subscription_status', 'cancelled');
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'cancelled');
+
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
         $order->update_meta_data('_bna_subscription_last_event', 'cancelled');
         $order->update_status('cancelled', __('Subscription cancelled via BNA webhook.', 'bna-smart-payment'));
         $order->save();
 
         bna_log('Subscription cancelled', array(
             'order_id' => $order->get_id(),
-            'subscription_id' => $data['id']
+            'subscription_id' => $data['id'],
+            'webhook_status' => $webhook_status
         ));
 
         return array(
@@ -873,14 +898,18 @@ class BNA_Webhooks {
     }
 
     private static function handle_subscription_expired($order, $data) {
-        $order->update_meta_data('_bna_subscription_status', 'expired');
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'expired');
+
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
         $order->update_meta_data('_bna_subscription_last_event', 'expired');
         $order->update_status('completed', __('Subscription expired via BNA webhook.', 'bna-smart-payment'));
         $order->save();
 
         bna_log('Subscription expired', array(
             'order_id' => $order->get_id(),
-            'subscription_id' => $data['id']
+            'subscription_id' => $data['id'],
+            'webhook_status' => $webhook_status
         ));
 
         return array(
@@ -892,14 +921,18 @@ class BNA_Webhooks {
     }
 
     private static function handle_subscription_failed($order, $data) {
-        $order->update_meta_data('_bna_subscription_status', 'failed');
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'failed');
+
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
         $order->update_meta_data('_bna_subscription_last_event', 'failed');
         $order->add_order_note(__('Subscription payment failed via BNA webhook.', 'bna-smart-payment'));
         $order->save();
 
         bna_log('Subscription payment failed', array(
             'order_id' => $order->get_id(),
-            'subscription_id' => $data['id']
+            'subscription_id' => $data['id'],
+            'webhook_status' => $webhook_status
         ));
 
         return array(
@@ -911,14 +944,18 @@ class BNA_Webhooks {
     }
 
     private static function handle_subscription_deleted($order, $data) {
-        $order->update_meta_data('_bna_subscription_status', 'deleted');
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'deleted');
+
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
         $order->update_meta_data('_bna_subscription_last_event', 'deleted');
         $order->update_status('cancelled', __('Subscription deleted via BNA webhook.', 'bna-smart-payment'));
         $order->save();
 
         bna_log('Subscription deleted', array(
             'order_id' => $order->get_id(),
-            'subscription_id' => $data['id']
+            'subscription_id' => $data['id'],
+            'webhook_status' => $webhook_status
         ));
 
         return array(
@@ -951,13 +988,18 @@ class BNA_Webhooks {
     }
 
     private static function handle_subscription_updated($order, $data) {
+        // ВИПРАВЛЕННЯ: Оновлюємо статус з webhook data
+        $webhook_status = strtolower($data['status'] ?? 'new');
+
+        $order->update_meta_data('_bna_subscription_status', $webhook_status);
         $order->update_meta_data('_bna_subscription_last_event', 'updated');
         $order->add_order_note(__('Subscription updated via BNA webhook.', 'bna-smart-payment'));
         $order->save();
 
         bna_log('Subscription updated', array(
             'order_id' => $order->get_id(),
-            'subscription_id' => $data['id']
+            'subscription_id' => $data['id'],
+            'webhook_status' => $webhook_status
         ));
 
         return array(
