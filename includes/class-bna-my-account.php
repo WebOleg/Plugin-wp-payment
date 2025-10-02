@@ -1,9 +1,7 @@
 <?php
-
 if (!defined('ABSPATH')) exit;
 
 class BNA_My_Account {
-
     private static $instance = null;
     private $payment_methods;
     private $subscriptions;
@@ -42,8 +40,8 @@ class BNA_My_Account {
         add_action('woocommerce_account_subscriptions_endpoint', array($this, 'subscriptions_content'));
 
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
-        add_action('wp_ajax_bna_delete_payment_method', array($this, 'handle_delete_payment_method'));
 
+        add_action('wp_ajax_bna_delete_payment_method', array($this, 'handle_delete_payment_method'));
         add_action('wp_ajax_bna_suspend_subscription', array($this, 'handle_suspend_subscription'));
         add_action('wp_ajax_bna_resume_subscription', array($this, 'handle_resume_subscription'));
         add_action('wp_ajax_bna_cancel_subscription', array($this, 'handle_cancel_subscription'));
@@ -73,7 +71,6 @@ class BNA_My_Account {
 
         foreach ($items as $key => $item) {
             $new_items[$key] = $item;
-
             if ($key === 'edit-address') {
                 $new_items['payment-methods'] = __('Payment Methods', 'bna-smart-payment');
             }
@@ -99,7 +96,6 @@ class BNA_My_Account {
 
         foreach ($items as $key => $item) {
             $new_items[$key] = $item;
-
             if ($key === 'payment-methods') {
                 $new_items['subscriptions'] = __('My Subscriptions', 'bna-smart-payment');
             }
@@ -157,9 +153,6 @@ class BNA_My_Account {
         }
     }
 
-    /**
-     * ВИПРАВЛЕНИЙ subscriptions_content метод з синхронізацією BNA API
-     */
     public function subscriptions_content() {
         if (!is_user_logged_in()) {
             bna_error('Unauthorized access to subscriptions page');
@@ -177,7 +170,6 @@ class BNA_My_Account {
         $user_id = get_current_user_id();
         $bna_customer_id = get_user_meta($user_id, '_bna_customer_id', true);
 
-        // ВИПРАВЛЕННЯ: Синхронізація з BNA API перед показом
         if (!empty($bna_customer_id) && $this->api->has_credentials()) {
             $this->sync_user_subscriptions_with_api($user_id, $bna_customer_id);
         }
@@ -206,12 +198,10 @@ class BNA_My_Account {
         }
     }
 
-    /**
-     * НОВИЙ метод для синхронізації статусів підписок з BNA API
-     */
     private function sync_user_subscriptions_with_api($user_id, $bna_customer_id) {
         try {
             $bna_subscriptions = $this->api->get_customer_subscriptions($bna_customer_id);
+
             if (is_wp_error($bna_subscriptions) || !is_array($bna_subscriptions)) {
                 bna_debug('Could not sync subscriptions - API error', array(
                     'user_id' => $user_id,
@@ -230,7 +220,6 @@ class BNA_My_Account {
                     continue;
                 }
 
-                // Знаходимо локальне замовлення з цією підпискою
                 $orders = wc_get_orders(array(
                     'customer_id' => $user_id,
                     'meta_key' => '_bna_subscription_id',
@@ -243,7 +232,6 @@ class BNA_My_Account {
                     $order = $orders[0];
                     $current_local_status = $order->get_meta('_bna_subscription_status') ?: 'new';
 
-                    // Синхронізуємо тільки якщо статуси відрізняються
                     if ($current_local_status !== $bna_status) {
                         $order->update_meta_data('_bna_subscription_status', $bna_status);
                         $order->update_meta_data('_bna_last_api_sync', current_time('mysql'));
@@ -285,12 +273,8 @@ class BNA_My_Account {
         }
     }
 
-    /**
-     * ВИПРАВЛЕНИЙ метод отримання підписок з API синхронізацією
-     */
     private function get_user_subscriptions_with_api_sync($user_id) {
         $local_subscriptions = $this->subscriptions->get_user_subscriptions($user_id);
-
         $bna_customer_id = get_user_meta($user_id, '_bna_customer_id', true);
 
         if (!empty($bna_customer_id) && $this->api->has_credentials()) {
@@ -314,7 +298,6 @@ class BNA_My_Account {
             }
         }
 
-        // Фільтруємо видалені підписки
         $local_subscriptions = array_filter($local_subscriptions, function($subscription) {
             $order = wc_get_order($subscription['order_id']);
             $status = $order ? ($order->get_meta('_bna_subscription_status') ?: 'new') : 'deleted';
@@ -324,9 +307,6 @@ class BNA_My_Account {
         return $local_subscriptions;
     }
 
-    /**
-     * ВИПРАВЛЕНИЙ метод об'єднання даних підписок з оновленням локального статусу
-     */
     private function merge_subscription_data($local_subscriptions, $bna_subscriptions, $user_id) {
         $merged = $local_subscriptions;
 
@@ -344,7 +324,6 @@ class BNA_My_Account {
                         $api_status = strtolower($bna_sub['status'] ?? '');
                         $local_status = $order->get_meta('_bna_subscription_status') ?: 'new';
 
-                        // ВИПРАВЛЕННЯ: Оновлюємо локальний статус якщо він відрізняється від API
                         if ($local_status !== $api_status && !empty($api_status)) {
                             $order->update_meta_data('_bna_subscription_status', $api_status);
                             $order->update_meta_data('_bna_last_api_sync', current_time('mysql'));
@@ -358,7 +337,6 @@ class BNA_My_Account {
                                 'user_id' => $user_id
                             ));
 
-                            // Оновлюємо статус в merged array
                             $merged[$key]['status'] = $api_status;
                         }
 
@@ -470,7 +448,8 @@ class BNA_My_Account {
                 'current_status' => $current_status
             ));
 
-            $result = $this->api->update_subscription_status($subscription_id, 'suspended');
+            // ✅ ВИПРАВЛЕНО: використовуємо suspend_subscription()
+            $result = $this->api->suspend_subscription($subscription_id);
 
             if (is_wp_error($result)) {
                 bna_error('Failed to suspend subscription', array(
@@ -538,7 +517,8 @@ class BNA_My_Account {
                 'current_status' => $current_status
             ));
 
-            $result = $this->api->update_subscription_status($subscription_id, 'active');
+            // ✅ ВИПРАВЛЕНО: використовуємо resume_subscription()
+            $result = $this->api->resume_subscription($subscription_id);
 
             if (is_wp_error($result)) {
                 bna_error('Failed to resume subscription', array(
@@ -767,6 +747,7 @@ class BNA_My_Account {
                 ));
 
                 $error_message = $result->get_error_message();
+
                 if (strpos($error_message, '500') !== false) {
                     $error_message = 'Unable to send notification. The subscription may no longer be active in the payment system.';
                 } elseif (strpos($error_message, '404') !== false) {
@@ -1020,7 +1001,6 @@ class BNA_My_Account {
                     'payment_method_id' => $payment_method_id,
                     'error' => $result->get_error_message()
                 ));
-
                 wp_send_json_error($result->get_error_message());
             }
 
@@ -1033,7 +1013,6 @@ class BNA_My_Account {
                         'user_id' => $user_id,
                         'payment_method_id' => $payment_method_id
                     ));
-
                     wp_send_json_success($message);
                 } else {
                     bna_error('Payment method deletion not completed', array(
@@ -1042,7 +1021,6 @@ class BNA_My_Account {
                         'status' => $status,
                         'message' => $message
                     ));
-
                     wp_send_json_error($message);
                 }
             }
@@ -1068,16 +1046,12 @@ class BNA_My_Account {
         switch ($type) {
             case 'credit':
                 return sprintf('%s Credit Card **** %s', $brand, $last4);
-
             case 'debit':
                 return sprintf('%s Debit Card **** %s', $brand, $last4);
-
             case 'eft':
                 return sprintf('Bank Transfer **** %s', $last4);
-
             case 'e_transfer':
                 return __('E-Transfer', 'bna-smart-payment');
-
             default:
                 if ($brand !== 'Unknown') {
                     return sprintf('%s **** %s', $brand, $last4);
@@ -1127,6 +1101,7 @@ class BNA_My_Account {
             'failed' => '#fd7e14',
             'deleted' => '#343a40'
         );
+
         return isset($colors[$status]) ? $colors[$status] : '#6c757d';
     }
 
@@ -1140,6 +1115,7 @@ class BNA_My_Account {
             'failed' => __('Failed', 'bna-smart-payment'),
             'deleted' => __('Deleted', 'bna-smart-payment')
         );
+
         return isset($labels[$status]) ? $labels[$status] : ucfirst($status);
     }
 
