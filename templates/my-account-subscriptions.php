@@ -129,49 +129,42 @@ $subscription_count = count($subscriptions);
                     <?php endif; ?>
 
                     <div class="subscription-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <!-- ВИПРАВЛЕНО: Кнопка Pause для активних підписок -->
-                        <?php if ($status === 'active' && BNA_My_Account::is_subscription_action_allowed($status, 'suspend')) : ?>
+                        <?php if (in_array($status, array('active', 'new')) && BNA_My_Account::is_subscription_action_allowed($status, 'suspend')) : ?>
                             <button type="button" class="button bna-subscription-action" data-action="suspend" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #ffc107; color: #212529; border-color: #ffc107;">
                                 <?php _e('Pause', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
-                        <!-- ВИПРАВЛЕНО: Кнопка Resume для призупинених підписок -->
                         <?php if ($status === 'suspended' && BNA_My_Account::is_subscription_action_allowed($status, 'resume')) : ?>
-                            <button type="button" class="button button-primary bna-subscription-action" data-action="resume" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #28a745; border-color: #28a745;">
+                            <button type="button" class="button bna-subscription-action" data-action="resume" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #28a745; color: white; border-color: #28a745;">
                                 <?php _e('Resume', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
-                        <!-- ВИПРАВЛЕНО: Кнопка Cancel для active, suspended, new - це остаточне скасування -->
                         <?php if (in_array($status, array('active', 'suspended', 'new')) && BNA_My_Account::is_subscription_action_allowed($status, 'cancel')) : ?>
                             <button type="button" class="button bna-subscription-action" data-action="cancel" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #dc3545; color: white; border-color: #dc3545;">
                                 <?php _e('Cancel', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
-                        <!-- ВИПРАВЛЕНО: Кнопка Delete тільки для cancelled підписок - повне видалення -->
                         <?php if ($status === 'cancelled') : ?>
                             <button type="button" class="button bna-subscription-action" data-action="delete" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #6c757d; color: white; border-color: #6c757d;">
                                 <?php _e('Delete Permanently', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
-                        <!-- Кнопка Reactivate для failed/expired -->
                         <?php if (in_array($status, array('failed', 'expired')) && BNA_My_Account::is_subscription_action_allowed($status, 'reactivate')) : ?>
                             <button type="button" class="button bna-subscription-action" data-action="reactivate" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #17a2b8; color: white; border-color: #17a2b8;">
                                 <?php _e('Reactivate', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
-                        <!-- Кнопка Resend Notification (не показувати для deleted) -->
                         <?php if ($status !== 'deleted') : ?>
                             <button type="button" class="button bna-subscription-action" data-action="resend_notification" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #28a745; color: white; border-color: #28a745;">
                                 <?php _e('Resend Notification', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
 
-                        <!-- Кнопка View Details -->
                         <button type="button" class="button bna-view-subscription-details" data-order-id="<?php echo esc_attr($order_id); ?>">
                             <?php _e('View Details', 'bna-smart-payment'); ?>
                         </button>
@@ -180,7 +173,6 @@ $subscription_count = count($subscriptions);
             <?php endforeach; ?>
         </div>
 
-        <!-- Легенда статусів -->
         <div class="subscription-legend" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6;">
             <h4><?php _e('Status Legend:', 'bna-smart-payment'); ?></h4>
             <div style="display: flex; flex-wrap: wrap; gap: 15px;">
