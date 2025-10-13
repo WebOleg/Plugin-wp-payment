@@ -448,7 +448,6 @@ class BNA_My_Account {
                 'current_status' => $current_status
             ));
 
-            // ✅ ВИПРАВЛЕНО: використовуємо suspend_subscription()
             $result = $this->api->suspend_subscription($subscription_id);
 
             if (is_wp_error($result)) {
@@ -517,7 +516,6 @@ class BNA_My_Account {
                 'current_status' => $current_status
             ));
 
-            // ✅ ВИПРАВЛЕНО: використовуємо resume_subscription()
             $result = $this->api->resume_subscription($subscription_id);
 
             if (is_wp_error($result)) {
@@ -559,6 +557,8 @@ class BNA_My_Account {
             $this->verify_subscription_ajax_request();
 
             $order_id = intval($_POST['order_id'] ?? 0);
+            $cancel_reason = sanitize_text_field($_POST['reason'] ?? '');
+
             if (!$order_id) {
                 wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
             }
@@ -583,7 +583,8 @@ class BNA_My_Account {
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
                 'subscription_id' => $subscription_id,
-                'current_status' => $current_status
+                'current_status' => $current_status,
+                'cancel_reason' => $cancel_reason
             ));
 
             $result = $this->api->delete_subscription($subscription_id);
@@ -613,16 +614,26 @@ class BNA_My_Account {
                 ));
             }
 
+            if (!empty($cancel_reason)) {
+                $order->update_meta_data('_bna_subscription_cancel_reason', $cancel_reason);
+            }
+
             $order->update_meta_data('_bna_subscription_status', 'cancelled');
             $order->update_meta_data('_bna_subscription_last_action', 'cancelled_by_customer');
             $order->update_meta_data('_bna_subscription_cancelled_date', current_time('mysql'));
-            $order->update_status('cancelled', __('Subscription cancelled by customer.', 'bna-smart-payment'));
+            
+            $note_text = __('Subscription cancelled by customer.', 'bna-smart-payment');
+            if (!empty($cancel_reason)) {
+                $note_text .= ' ' . sprintf(__('Reason: %s', 'bna-smart-payment'), $cancel_reason);
+            }
+            $order->update_status('cancelled', $note_text);
             $order->save();
 
             bna_log('Subscription status updated locally', array(
                 'order_id' => $order_id,
                 'old_status' => $current_status,
-                'new_status' => 'cancelled'
+                'new_status' => 'cancelled',
+                'reason' => $cancel_reason
             ));
 
             wp_send_json_success(array(
@@ -646,6 +657,7 @@ class BNA_My_Account {
 
             $order_id = intval($_POST['order_id'] ?? 0);
             $subscription_id = sanitize_text_field($_POST['subscription_id'] ?? '');
+            $delete_reason = sanitize_text_field($_POST['reason'] ?? '');
 
             if (!$order_id) {
                 wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
@@ -670,18 +682,29 @@ class BNA_My_Account {
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
                 'subscription_id' => $subscription_id,
-                'current_status' => $current_status
+                'current_status' => $current_status,
+                'delete_reason' => $delete_reason
             ));
+
+            if (!empty($delete_reason)) {
+                $order->update_meta_data('_bna_subscription_delete_reason', $delete_reason);
+            }
 
             $order->update_meta_data('_bna_subscription_status', 'deleted');
             $order->update_meta_data('_bna_subscription_last_action', 'deleted_by_customer');
             $order->update_meta_data('_bna_subscription_deleted_date', current_time('mysql'));
-            $order->add_order_note(__('Subscription record deleted permanently by customer.', 'bna-smart-payment'));
+            
+            $note_text = __('Subscription record deleted permanently by customer.', 'bna-smart-payment');
+            if (!empty($delete_reason)) {
+                $note_text .= ' ' . sprintf(__('Reason: %s', 'bna-smart-payment'), $delete_reason);
+            }
+            $order->add_order_note($note_text);
             $order->save();
 
             bna_log('Subscription marked as deleted locally', array(
                 'order_id' => $order_id,
-                'user_id' => get_current_user_id()
+                'user_id' => get_current_user_id(),
+                'reason' => $delete_reason
             ));
 
             wp_send_json_success(array(
