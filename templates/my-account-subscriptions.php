@@ -189,6 +189,72 @@ $subscription_count = count($subscriptions);
     <?php endif; ?>
 </div>
 
+<!-- Pause Subscription Modal -->
+<div id="bna-pause-subscription-modal" class="bna-modal" style="display: none;">
+    <div class="bna-modal-overlay"></div>
+    <div class="bna-modal-content">
+        <div class="bna-modal-header">
+            <h3><?php _e('Pause reason', 'bna-smart-payment'); ?></h3>
+            <button type="button" class="bna-pause-modal-close" aria-label="<?php esc_attr_e('Close', 'bna-smart-payment'); ?>">×</button>
+        </div>
+        <div class="bna-modal-body">
+            <form id="bna-pause-subscription-form">
+                <div class="bna-pause-reasons">
+                    <label class="bna-pause-reason-option">
+                        <input type="radio" name="pause_reason" value="pause_temporarily" checked>
+                        <span><?php _e('I want to pause temporarily.', 'bna-smart-payment'); ?></span>
+                    </label>
+
+                    <label class="bna-pause-reason-option">
+                        <input type="radio" name="pause_reason" value="review_budget">
+                        <span><?php _e('I need to review my budget.', 'bna-smart-payment'); ?></span>
+                    </label>
+
+                    <label class="bna-pause-reason-option">
+                        <input type="radio" name="pause_reason" value="service_quality">
+                        <span><?php _e('Service quality issues.', 'bna-smart-payment'); ?></span>
+                    </label>
+
+                    <label class="bna-pause-reason-option">
+                        <input type="radio" name="pause_reason" value="not_using">
+                        <span><?php _e('I\'m not using it right now.', 'bna-smart-payment'); ?></span>
+                    </label>
+
+                    <label class="bna-pause-reason-option">
+                        <input type="radio" name="pause_reason" value="technical_problems">
+                        <span><?php _e('Technical problems.', 'bna-smart-payment'); ?></span>
+                    </label>
+
+                    <label class="bna-pause-reason-option">
+                        <input type="radio" name="pause_reason" value="other">
+                        <span><?php _e('Other (Fill in the reason in the message box below).', 'bna-smart-payment'); ?></span>
+                    </label>
+                </div>
+
+                <div class="bna-pause-reason-other" style="display: none; margin-top: 15px;">
+                    <label for="bna-pause-reason-text" style="display: block; margin-bottom: 5px; font-weight: 600; color: #6c757d;">
+                        <?php _e('Reason', 'bna-smart-payment'); ?>
+                    </label>
+                    <textarea 
+                        id="bna-pause-reason-text" 
+                        rows="4" 
+                        placeholder="<?php esc_attr_e('Please enter your reason for pausing this recurring payment', 'bna-smart-payment'); ?>"
+                        style="width: 100%; padding: 10px; border: 1px solid #dee2e6; border-radius: 4px; font-family: inherit; resize: vertical;"
+                    ></textarea>
+                </div>
+            </form>
+        </div>
+        <div class="bna-modal-footer">
+            <button type="button" id="bna-pause-modal-cancel" class="button">
+                <?php _e('Cancel', 'bna-smart-payment'); ?>
+            </button>
+            <button type="button" id="bna-pause-modal-submit" class="button button-primary">
+                <?php _e('Submit', 'bna-smart-payment'); ?>
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Delete Subscription Modal -->
 <div id="bna-delete-subscription-modal" class="bna-modal" style="display: none;">
     <div class="bna-modal-overlay"></div>
@@ -270,7 +336,7 @@ $subscription_count = count($subscriptions);
         }
     }
 
-    /* Delete Modal Styles */
+    /* Modal Styles (shared for both Pause and Delete modals) */
     .bna-modal {
         position: fixed;
         top: 0;
@@ -320,7 +386,8 @@ $subscription_count = count($subscriptions);
         color: #212529;
     }
 
-    .bna-delete-modal-close {
+    .bna-delete-modal-close,
+    .bna-pause-modal-close {
         background: none;
         border: none;
         font-size: 32px;
@@ -337,7 +404,8 @@ $subscription_count = count($subscriptions);
         transition: all 0.2s;
     }
 
-    .bna-delete-modal-close:hover {
+    .bna-delete-modal-close:hover,
+    .bna-pause-modal-close:hover {
         background: #f8f9fa;
         color: #212529;
     }
@@ -346,13 +414,15 @@ $subscription_count = count($subscriptions);
         padding: 24px;
     }
 
-    .bna-delete-reasons {
+    .bna-delete-reasons,
+    .bna-pause-reasons {
         display: flex;
         flex-direction: column;
         gap: 12px;
     }
 
-    .bna-delete-reason-option {
+    .bna-delete-reason-option,
+    .bna-pause-reason-option {
         display: flex;
         align-items: flex-start;
         gap: 12px;
@@ -364,12 +434,14 @@ $subscription_count = count($subscriptions);
         margin: 0;
     }
 
-    .bna-delete-reason-option:hover {
+    .bna-delete-reason-option:hover,
+    .bna-pause-reason-option:hover {
         background: #f8f9fa;
         border-color: #0073aa;
     }
 
-    .bna-delete-reason-option input[type="radio"] {
+    .bna-delete-reason-option input[type="radio"],
+    .bna-pause-reason-option input[type="radio"] {
         margin: 2px 0 0 0;
         cursor: pointer;
         width: 18px;
@@ -377,11 +449,13 @@ $subscription_count = count($subscriptions);
         flex-shrink: 0;
     }
 
-    .bna-delete-reason-option input[type="radio"]:checked {
+    .bna-delete-reason-option input[type="radio"]:checked,
+    .bna-pause-reason-option input[type="radio"]:checked {
         accent-color: #0073aa;
     }
 
-    .bna-delete-reason-option span {
+    .bna-delete-reason-option span,
+    .bna-pause-reason-option span {
         flex: 1;
         line-height: 1.5;
         color: #212529;
@@ -408,24 +482,28 @@ $subscription_count = count($subscriptions);
         transition: all 0.2s;
     }
 
-    #bna-delete-modal-cancel {
+    #bna-delete-modal-cancel,
+    #bna-pause-modal-cancel {
         background: white;
         color: #6c757d;
         border: 1px solid #dee2e6;
     }
 
-    #bna-delete-modal-cancel:hover {
+    #bna-delete-modal-cancel:hover,
+    #bna-pause-modal-cancel:hover {
         background: #f8f9fa;
         border-color: #6c757d;
     }
 
-    #bna-delete-modal-submit {
+    #bna-delete-modal-submit,
+    #bna-pause-modal-submit {
         background: #0073aa;
         color: white;
         border: 1px solid #0073aa;
     }
 
-    #bna-delete-modal-submit:hover {
+    #bna-delete-modal-submit:hover,
+    #bna-pause-modal-submit:hover {
         background: #005a87;
         border-color: #005a87;
     }

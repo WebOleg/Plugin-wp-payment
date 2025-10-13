@@ -421,6 +421,8 @@ class BNA_My_Account {
             $this->verify_subscription_ajax_request();
 
             $order_id = intval($_POST['order_id'] ?? 0);
+            $pause_reason = sanitize_text_field($_POST['reason'] ?? '');
+
             if (!$order_id) {
                 wp_send_json_error(__('Invalid order ID.', 'bna-smart-payment'));
             }
@@ -445,7 +447,8 @@ class BNA_My_Account {
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
                 'subscription_id' => $subscription_id,
-                'current_status' => $current_status
+                'current_status' => $current_status,
+                'pause_reason' => $pause_reason
             ));
 
             $result = $this->api->suspend_subscription($subscription_id);
@@ -458,15 +461,25 @@ class BNA_My_Account {
                 wp_send_json_error($result->get_error_message());
             }
 
+            if (!empty($pause_reason)) {
+                $order->update_meta_data('_bna_subscription_pause_reason', $pause_reason);
+            }
+
             $order->update_meta_data('_bna_subscription_status', 'suspended');
             $order->update_meta_data('_bna_subscription_last_action', 'suspended_by_customer');
             $order->update_meta_data('_bna_subscription_suspended_date', current_time('mysql'));
-            $order->update_status('on-hold', __('Subscription paused by customer.', 'bna-smart-payment'));
+            
+            $note_text = __('Subscription paused by customer.', 'bna-smart-payment');
+            if (!empty($pause_reason)) {
+                $note_text .= ' ' . sprintf(__('Reason: %s', 'bna-smart-payment'), $pause_reason);
+            }
+            $order->update_status('on-hold', $note_text);
             $order->save();
 
             bna_log('Subscription suspended successfully', array(
                 'subscription_id' => $subscription_id,
-                'new_status' => 'suspended'
+                'new_status' => 'suspended',
+                'reason' => $pause_reason
             ));
 
             wp_send_json_success(array(

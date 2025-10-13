@@ -28,6 +28,12 @@ jQuery(document).ready(function($) {
         subscriptionId: null
     };
 
+    var currentPauseAction = {
+        action: null,
+        orderId: null,
+        subscriptionId: null
+    };
+
     function setLoadingState($subscriptionItem, isLoading) {
         if (isLoading) {
             $subscriptionItem.addClass('subscription-loading');
@@ -111,6 +117,32 @@ jQuery(document).ready(function($) {
         }
     }
 
+    function openPauseModal(action, orderId, subscriptionId) {
+        currentPauseAction.action = action;
+        currentPauseAction.orderId = orderId;
+        currentPauseAction.subscriptionId = subscriptionId;
+
+        var $modal = $('#bna-pause-subscription-modal');
+        
+        if ($modal.length === 0) {
+            console.error('BNA: Pause modal not found in DOM');
+            showMessage('Error: Modal not found. Please refresh the page.', 'error');
+            return;
+        }
+
+        $modal.find('input[name="pause_reason"]').prop('checked', false);
+        $modal.find('input[name="pause_reason"][value="pause_temporarily"]').prop('checked', true);
+        $modal.find('#bna-pause-reason-text').val('').closest('.bna-pause-reason-other').hide();
+
+        $modal.fadeIn(200);
+        $('body').css('overflow', 'hidden');
+    }
+
+    function closePauseModal() {
+        $('#bna-pause-subscription-modal').fadeOut(200);
+        $('body').css('overflow', '');
+    }
+
     function openDeleteModal(action, orderId, subscriptionId) {
         currentDeleteAction.action = action;
         currentDeleteAction.orderId = orderId;
@@ -140,7 +172,7 @@ jQuery(document).ready(function($) {
         $('body').css('overflow', '');
     }
 
-    function handleSubscriptionAction(action, orderId, subscriptionId, deleteReason) {
+    function handleSubscriptionAction(action, orderId, subscriptionId, reason) {
         var $subscriptionItem = $('[data-order-id="' + orderId + '"]').closest('.subscription-item');
 
         if ($subscriptionItem.length === 0) {
@@ -161,8 +193,8 @@ jQuery(document).ready(function($) {
             data.subscription_id = subscriptionId;
         }
 
-        if ((action === 'cancel' || action === 'delete') && deleteReason) {
-            data.reason = deleteReason;
+        if ((action === 'cancel' || action === 'delete' || action === 'suspend') && reason) {
+            data.reason = reason;
         }
 
         $.ajax({
@@ -175,6 +207,12 @@ jQuery(document).ready(function($) {
                 setLoadingState($subscriptionItem, false);
 
                 currentDeleteAction = {
+                    action: null,
+                    orderId: null,
+                    subscriptionId: null
+                };
+
+                currentPauseAction = {
                     action: null,
                     orderId: null,
                     subscriptionId: null
@@ -224,6 +262,12 @@ jQuery(document).ready(function($) {
                     subscriptionId: null
                 };
 
+                currentPauseAction = {
+                    action: null,
+                    orderId: null,
+                    subscriptionId: null
+                };
+
                 console.error('BNA AJAX Error:', {
                     action: data.action,
                     status: xhr.status,
@@ -255,6 +299,82 @@ jQuery(document).ready(function($) {
             }
         });
     }
+
+    $(document).on('click', '#bna-pause-modal-submit', function(e) {
+        e.preventDefault();
+
+        var selectedReason = $('#bna-pause-subscription-modal input[name="pause_reason"]:checked').val();
+        var reasonText = '';
+
+        if (!selectedReason) {
+            showMessage('Please select a reason for pausing this subscription.', 'error');
+            return;
+        }
+
+        var reasonMap = {
+            'pause_temporarily': 'I want to pause temporarily',
+            'review_budget': 'I need to review my budget',
+            'service_quality': 'Service quality issues',
+            'not_using': 'I\'m not using it right now',
+            'technical_problems': 'Technical problems',
+            'other': $('#bna-pause-reason-text').val().trim() || 'Other reason'
+        };
+
+        reasonText = reasonMap[selectedReason] || selectedReason;
+
+        if (selectedReason === 'other' && !$('#bna-pause-reason-text').val().trim()) {
+            showMessage('Please provide a reason in the text box.', 'error');
+            $('#bna-pause-reason-text').focus();
+            return;
+        }
+
+        var actionData = {
+            action: currentPauseAction.action,
+            orderId: currentPauseAction.orderId,
+            subscriptionId: currentPauseAction.subscriptionId
+        };
+
+        closePauseModal();
+
+        handleSubscriptionAction(
+            actionData.action,
+            actionData.orderId,
+            actionData.subscriptionId,
+            reasonText
+        );
+    });
+
+    $(document).on('click', '#bna-pause-modal-cancel, .bna-pause-modal-close', function(e) {
+        e.preventDefault();
+        closePauseModal();
+        currentPauseAction = {
+            action: null,
+            orderId: null,
+            subscriptionId: null
+        };
+    });
+
+    $(document).on('change', '#bna-pause-subscription-modal input[name="pause_reason"]', function() {
+        var $otherTextarea = $('#bna-pause-subscription-modal .bna-pause-reason-other');
+        
+        if ($(this).val() === 'other') {
+            $otherTextarea.slideDown(200);
+            $('#bna-pause-reason-text').focus();
+        } else {
+            $otherTextarea.slideUp(200);
+        }
+    });
+
+    $(document).on('click', '#bna-pause-subscription-modal', function(e) {
+        if ($(e.target).is('#bna-pause-subscription-modal')) {
+            closePauseModal();
+            currentPauseAction = {
+                action: null,
+                orderId: null,
+                subscriptionId: null
+            };
+        }
+    });
 
     $(document).on('click', '#bna-delete-modal-submit', function(e) {
         e.preventDefault();
@@ -333,13 +453,23 @@ jQuery(document).ready(function($) {
     });
 
     $(document).on('keydown', function(e) {
-        if (e.key === 'Escape' && $('#bna-delete-subscription-modal').is(':visible')) {
-            closeDeleteModal();
-            currentDeleteAction = {
-                action: null,
-                orderId: null,
-                subscriptionId: null
-            };
+        if (e.key === 'Escape') {
+            if ($('#bna-pause-subscription-modal').is(':visible')) {
+                closePauseModal();
+                currentPauseAction = {
+                    action: null,
+                    orderId: null,
+                    subscriptionId: null
+                };
+            }
+            if ($('#bna-delete-subscription-modal').is(':visible')) {
+                closeDeleteModal();
+                currentDeleteAction = {
+                    action: null,
+                    orderId: null,
+                    subscriptionId: null
+                };
+            }
         }
     });
 
@@ -354,6 +484,11 @@ jQuery(document).ready(function($) {
         if (!action || !orderId) {
             console.error('BNA: Missing action or order ID');
             showMessage('Error: Missing subscription information.', 'error');
+            return;
+        }
+
+        if (action === 'suspend') {
+            openPauseModal(action, orderId, subscriptionId);
             return;
         }
 
