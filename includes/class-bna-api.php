@@ -360,11 +360,6 @@ class BNA_API {
         return $subscriptions;
     }
 
-    /**
-     * Suspend (pause) a subscription
-     * Згідно з документацією API: PATCH /v1/subscription/:subscriptionId/suspend
-     * Body: {"suspend": true}
-     */
     public function suspend_subscription($subscription_id) {
         if (empty($subscription_id)) {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
@@ -389,12 +384,6 @@ class BNA_API {
         return $response;
     }
 
-    /**
-     * Resume (activate) a suspended subscription
-     * TODO: Перевірити документацію API для правильного endpoint
-     * Ймовірно: PATCH /v1/subscription/:subscriptionId/suspend з {"suspend": false}
-     * Або окремий endpoint /resume
-     */
     public function resume_subscription($subscription_id) {
         if (empty($subscription_id)) {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
@@ -402,7 +391,6 @@ class BNA_API {
 
         bna_log('Resuming subscription', array('subscription_id' => $subscription_id));
 
-        // Спробуємо відправити suspend: false на той самий endpoint
         $data = array('suspend' => false);
 
         $response = $this->make_request('v1/subscription/' . $subscription_id . '/suspend', 'PATCH', $data);
@@ -420,10 +408,6 @@ class BNA_API {
         return $response;
     }
 
-    /**
-     * Cancel (permanently delete) a subscription
-     * Згідно з документацією API: DELETE /v1/subscription/:subscriptionId
-     */
     public function cancel_subscription($subscription_id) {
         if (empty($subscription_id)) {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
@@ -446,9 +430,6 @@ class BNA_API {
         return $response;
     }
 
-    /**
-     * Alias для cancel_subscription (для зворотної сумісності)
-     */
     public function delete_subscription($subscription_id) {
         if (empty($subscription_id)) {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
@@ -471,10 +452,6 @@ class BNA_API {
         return $response;
     }
 
-    /**
-     * Resend subscription notification
-     * Згідно з документацією API: POST /v1/subscription/:subscriptionId/notify
-     */
     public function resend_subscription_notification($subscription_id) {
         if (empty($subscription_id)) {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
@@ -911,6 +888,15 @@ class BNA_API {
             'subtotal' => (float) $order->get_total(),
             'items' => $this->get_order_items($order)
         );
+
+        $apply_fees = get_option('bna_smart_payment_apply_fees', 'no') === 'yes';
+        $payload['applyFee'] = $apply_fees;
+
+        bna_log('Checkout payload with applyFee', array(
+            'order_id' => $order->get_id(),
+            'subtotal' => $payload['subtotal'],
+            'applyFee' => $apply_fees
+        ));
 
         $subscription_data = $this->get_order_subscription_data($order);
         if ($subscription_data && bna_subscriptions_enabled()) {

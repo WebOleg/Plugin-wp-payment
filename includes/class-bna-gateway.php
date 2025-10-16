@@ -42,10 +42,11 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->enable_birthdate = $this->get_option('enable_birthdate');
         $this->enable_shipping_address = $this->get_option('enable_shipping_address');
 
-        // Load subscription settings (v1.9.0) - Simplified
         $this->enable_subscriptions = $this->get_option('enable_subscriptions');
         $this->allow_subscription_trials = $this->get_option('allow_subscription_trials');
         $this->allow_signup_fees = $this->get_option('allow_signup_fees');
+
+        $this->apply_fees = $this->get_option('apply_fees');
     }
 
     private function init_hooks() {
@@ -69,7 +70,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             add_filter('woocommerce_checkout_get_value', array($this, 'populate_checkout_shipping_fields'), 10, 2);
         }
 
-        // Add subscription validation hooks (v1.9.0)
         if ($this->get_option('enable_subscriptions') === 'yes') {
             add_action('woocommerce_checkout_process', array($this, 'validate_subscription_checkout'));
         }
@@ -186,6 +186,18 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'default' => 'yes',
                 'description' => 'Collect and sync shipping address with BNA Portal.',
             ),
+            'fees_settings' => array(
+                'title' => 'Payment Processing Fees',
+                'type' => 'title',
+                'description' => 'Configure whether to apply BNA payment processing fees to transactions.',
+            ),
+            'apply_fees' => array(
+                'title' => 'Apply Payment Fees',
+                'type' => 'checkbox',
+                'label' => 'Apply BNA payment processing fees',
+                'default' => 'no',
+                'description' => 'When enabled, BNA will automatically add processing fees in the payment form based on the payment method selected by the customer. Fees are configured in your BNA Merchant Portal.',
+            ),
             'subscription_settings' => array(
                 'title' => 'Subscription Settings',
                 'type' => 'title',
@@ -227,17 +239,14 @@ class BNA_Gateway extends WC_Payment_Gateway {
         );
     }
 
-    /**
-     * Process admin options and sync with global options (v1.9.0)
-     */
     public function process_admin_options() {
         $saved = parent::process_admin_options();
 
-        // Sync subscription settings to global options for easy access
         $subscription_options = array(
             'bna_smart_payment_enable_subscriptions' => $this->get_option('enable_subscriptions', 'no'),
             'bna_smart_payment_allow_subscription_trials' => $this->get_option('allow_subscription_trials', 'yes'),
-            'bna_smart_payment_allow_signup_fees' => $this->get_option('allow_signup_fees', 'yes')
+            'bna_smart_payment_allow_signup_fees' => $this->get_option('allow_signup_fees', 'yes'),
+            'bna_smart_payment_apply_fees' => $this->get_option('apply_fees', 'no')
         );
 
         foreach ($subscription_options as $option_name => $option_value) {
@@ -247,16 +256,14 @@ class BNA_Gateway extends WC_Payment_Gateway {
         if ($saved) {
             bna_log('Gateway settings saved', array(
                 'subscriptions_enabled' => $this->get_option('enable_subscriptions', 'no'),
-                'subscription_system' => 'meta_fields'
+                'subscription_system' => 'meta_fields',
+                'apply_fees' => $this->get_option('apply_fees', 'no')
             ));
         }
 
         return $saved;
     }
 
-    /**
-     * Validate subscription checkout - Updated for meta fields system (v1.9.0) + DEBUG
-     */
     public function validate_subscription_checkout() {
         bna_debug('=== SUBSCRIPTION CHECKOUT VALIDATION START ===', array(
             'payment_method' => $_POST['payment_method'] ?? 'not_set',
@@ -271,7 +278,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             return;
         }
 
-        // Перевіряйте subscription products в cart БЕЗПОСЕРЕДНЬО через meta поля
         $has_subscription = false;
         $subscription_products = array();
 
@@ -302,7 +308,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             return;
         }
 
-        // Валідація для підписок
         $validation_errors = array();
 
         if (empty($_POST['billing_email'])) {
@@ -310,7 +315,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             wc_add_notice(__('Email address is required for subscription orders.', 'bna-smart-payment'), 'error');
         }
 
-        // Перевірка чи може користувач створювати підписки
         if (!is_user_logged_in() && !WC()->checkout()->is_registration_enabled()) {
             $validation_errors[] = 'registration_required';
             wc_add_notice(__('You must create an account to purchase subscription products.', 'bna-smart-payment'), 'error');
@@ -351,9 +355,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         return $value;
     }
 
-    /**
-     * Validate birthdate - WITH DETAILED DEBUG
-     */
     public function validate_birthdate() {
         bna_debug('=== BIRTHDATE VALIDATION START ===', array(
             'payment_method' => $_POST['payment_method'] ?? 'not_set',
@@ -362,7 +363,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'birthdate_enabled' => $this->get_option('enable_birthdate')
         ));
 
-        // Перевіряємо чи це наш payment method
         if (empty($_POST['payment_method']) || $_POST['payment_method'] !== $this->id) {
             bna_debug('BIRTHDATE VALIDATION SKIPPED - not our payment method');
             return;
@@ -495,9 +495,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         bna_debug('Shipping address assets loaded');
     }
 
-    /**
-     * Validate shipping address - WITH DETAILED DEBUG
-     */
     public function validate_shipping_address() {
         bna_debug('=== SHIPPING VALIDATION START ===', array(
             'payment_method' => $_POST['payment_method'] ?? 'not_set',
@@ -768,18 +765,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
         ));
     }
 
-    /**
-     * Process payment - WITH DETAILED DEBUG
-     */
     public function process_payment($order_id) {
-        // === ДЕТАЛЬНИЙ ДЕБАГ ===
         bna_debug('=== PAYMENT PROCESS START ===', array(
             'order_id' => $order_id,
             'payment_method' => $_POST['payment_method'] ?? 'not_set',
             'timestamp' => current_time('c')
         ));
 
-        // Дебаг налаштувань subscription
         bna_debug('=== SUBSCRIPTION SETTINGS ===', array(
             'gateway_subscriptions_enabled' => $this->get_option('enable_subscriptions'),
             'global_subscriptions_enabled' => get_option('bna_smart_payment_enable_subscriptions'),
@@ -787,7 +779,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'shipping_enabled' => $this->get_option('enable_shipping_address')
         ));
 
-        // Дебаг cart contents
         $cart_debug = array();
         if (WC()->cart) {
             foreach (WC()->cart->get_cart() as $cart_item_key => $cart_item) {
@@ -804,7 +795,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
         bna_debug('=== CART CONTENTS ===', $cart_debug);
 
-        // Дебаг POST данних (тільки безпечні поля)
         $post_debug = array(
             'billing_email' => $_POST['billing_email'] ?? 'not_set',
             'billing_first_name' => $_POST['billing_first_name'] ?? 'not_set',
@@ -887,9 +877,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
     }
 
-    /**
-     * Validate order for payment - WITH DEBUG
-     */
     private function validate_order_for_payment($order) {
         $errors = array();
 
@@ -905,17 +892,14 @@ class BNA_Gateway extends WC_Payment_Gateway {
             $errors[] = __('Billing name is required.', 'bna-smart-payment');
         }
 
-        // Additional validation for subscription orders
         if (BNA_Subscriptions::order_has_subscription($order)) {
             bna_debug('Validating subscription order', array('order_id' => $order->get_id()));
 
-            // Add any subscription-specific validation here
             if (!BNA_Subscriptions::is_enabled()) {
                 $errors[] = __('Subscription payments are currently disabled.', 'bna-smart-payment');
             }
         }
 
-        // DEBUG: Add validation result
         bna_debug('=== ORDER VALIDATION RESULT ===', array(
             'is_valid' => empty($errors),
             'errors_count' => count($errors),
@@ -937,7 +921,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $order->update_status('pending', __('Awaiting BNA payment.', 'bna-smart-payment'));
         $order->add_meta_data('_bna_payment_initiated', current_time('mysql'));
 
-        // Add subscription flag if order contains subscriptions
         if (BNA_Subscriptions::order_has_subscription($order)) {
             $order->add_meta_data('_bna_order_type', 'subscription');
         }
