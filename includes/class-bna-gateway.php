@@ -45,8 +45,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->enable_subscriptions = $this->get_option('enable_subscriptions');
         $this->allow_subscription_trials = $this->get_option('allow_subscription_trials');
         $this->allow_signup_fees = $this->get_option('allow_signup_fees');
-
-        $this->apply_fees = $this->get_option('apply_fees');
     }
 
     private function init_hooks() {
@@ -186,18 +184,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'default' => 'yes',
                 'description' => 'Collect and sync shipping address with BNA Portal.',
             ),
-            'fees_settings' => array(
-                'title' => 'Payment Processing Fees',
-                'type' => 'title',
-                'description' => 'Configure whether to apply BNA payment processing fees to transactions.',
-            ),
-            'apply_fees' => array(
-                'title' => 'Apply Payment Fees',
-                'type' => 'checkbox',
-                'label' => 'Apply BNA payment processing fees',
-                'default' => 'no',
-                'description' => 'When enabled, BNA will automatically add processing fees in the payment form based on the payment method selected by the customer. Fees are configured in your BNA Merchant Portal.',
-            ),
             'subscription_settings' => array(
                 'title' => 'Subscription Settings',
                 'type' => 'title',
@@ -245,8 +231,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $subscription_options = array(
             'bna_smart_payment_enable_subscriptions' => $this->get_option('enable_subscriptions', 'no'),
             'bna_smart_payment_allow_subscription_trials' => $this->get_option('allow_subscription_trials', 'yes'),
-            'bna_smart_payment_allow_signup_fees' => $this->get_option('allow_signup_fees', 'yes'),
-            'bna_smart_payment_apply_fees' => $this->get_option('apply_fees', 'no')
+            'bna_smart_payment_allow_signup_fees' => $this->get_option('allow_signup_fees', 'yes')
         );
 
         foreach ($subscription_options as $option_name => $option_value) {
@@ -256,8 +241,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         if ($saved) {
             bna_log('Gateway settings saved', array(
                 'subscriptions_enabled' => $this->get_option('enable_subscriptions', 'no'),
-                'subscription_system' => 'meta_fields',
-                'apply_fees' => $this->get_option('apply_fees', 'no')
+                'subscription_system' => 'meta_fields'
             ));
         }
 

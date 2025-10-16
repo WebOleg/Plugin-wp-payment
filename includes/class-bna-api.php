@@ -889,15 +889,6 @@ class BNA_API {
             'items' => $this->get_order_items($order)
         );
 
-        $apply_fees = get_option('bna_smart_payment_apply_fees', 'no') === 'yes';
-        $payload['applyFee'] = $apply_fees;
-
-        bna_log('Checkout payload with applyFee', array(
-            'order_id' => $order->get_id(),
-            'subtotal' => $payload['subtotal'],
-            'applyFee' => $apply_fees
-        ));
-
         $subscription_data = $this->get_order_subscription_data($order);
         if ($subscription_data && bna_subscriptions_enabled()) {
             $bna_frequency = $this->convert_frequency_to_bna($subscription_data['frequency']);
