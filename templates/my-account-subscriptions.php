@@ -164,27 +164,9 @@ $subscription_count = count($subscriptions);
                                 <?php _e('Resend Notification', 'bna-smart-payment'); ?>
                             </button>
                         <?php endif; ?>
-
-                        <button type="button" class="button bna-view-subscription-details" data-order-id="<?php echo esc_attr($order_id); ?>">
-                            <?php _e('View Details', 'bna-smart-payment'); ?>
-                        </button>
                     </div>
                 </div>
             <?php endforeach; ?>
-        </div>
-
-        <div class="subscription-legend" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #dee2e6;">
-            <h4><?php _e('Status Legend:', 'bna-smart-payment'); ?></h4>
-            <div style="display: flex; flex-wrap: wrap; gap: 15px;">
-                <?php foreach (BNA_Subscriptions::get_statuses() as $status_key => $status_name) : ?>
-                    <div style="display: flex; align-items: center; gap: 5px;">
-                        <span class="status-badge" style="background: <?php echo esc_attr(BNA_My_Account::get_subscription_status_color($status_key)); ?>; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px;">
-                            <?php echo esc_html(BNA_My_Account::get_subscription_status_label($status_key)); ?>
-                        </span>
-                        <small><?php echo esc_html($status_name); ?></small>
-                    </div>
-                <?php endforeach; ?>
-            </div>
         </div>
     <?php endif; ?>
 </div>

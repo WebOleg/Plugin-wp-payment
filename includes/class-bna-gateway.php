@@ -44,7 +44,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         $this->enable_subscriptions = $this->get_option('enable_subscriptions');
         $this->allow_subscription_trials = $this->get_option('allow_subscription_trials');
-        $this->allow_signup_fees = $this->get_option('allow_signup_fees');
+        $this->allow_customer_pause = $this->get_option('allow_customer_pause');
+        $this->allow_customer_cancel = $this->get_option('allow_customer_cancel');
     }
 
     private function init_hooks() {
@@ -215,12 +216,19 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'default' => 'yes',
                 'description' => 'Enable free trial periods for subscription products.',
             ),
-            'allow_signup_fees' => array(
-                'title' => 'Allow Sign-up Fees',
+            'allow_customer_pause' => array(
+                'title' => 'Allow Customer Pause',
                 'type' => 'checkbox',
-                'label' => 'Allow products to charge one-time sign-up fees',
+                'label' => 'Allow customers to pause their subscriptions',
                 'default' => 'yes',
-                'description' => 'Enable one-time sign-up fees for subscription products.',
+                'description' => 'When enabled, customers can temporarily pause active subscriptions from their account.',
+            ),
+            'allow_customer_cancel' => array(
+                'title' => 'Allow Customer Cancellation',
+                'type' => 'checkbox',
+                'label' => 'Allow customers to cancel their subscriptions',
+                'default' => 'yes',
+                'description' => 'When enabled, customers can permanently cancel subscriptions from their account.',
             ),
         );
     }
@@ -231,7 +239,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $subscription_options = array(
             'bna_smart_payment_enable_subscriptions' => $this->get_option('enable_subscriptions', 'no'),
             'bna_smart_payment_allow_subscription_trials' => $this->get_option('allow_subscription_trials', 'yes'),
-            'bna_smart_payment_allow_signup_fees' => $this->get_option('allow_signup_fees', 'yes')
+            'bna_smart_payment_allow_customer_pause' => $this->get_option('allow_customer_pause', 'yes'),
+            'bna_smart_payment_allow_customer_cancel' => $this->get_option('allow_customer_cancel', 'yes')
         );
 
         foreach ($subscription_options as $option_name => $option_value) {
@@ -241,7 +250,9 @@ class BNA_Gateway extends WC_Payment_Gateway {
         if ($saved) {
             bna_log('Gateway settings saved', array(
                 'subscriptions_enabled' => $this->get_option('enable_subscriptions', 'no'),
-                'subscription_system' => 'meta_fields'
+                'subscription_system' => 'meta_fields',
+                'allow_customer_pause' => $this->get_option('allow_customer_pause', 'yes'),
+                'allow_customer_cancel' => $this->get_option('allow_customer_cancel', 'yes')
             ));
         }
 

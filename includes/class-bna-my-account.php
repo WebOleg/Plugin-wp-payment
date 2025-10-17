@@ -1120,16 +1120,35 @@ class BNA_My_Account {
     }
 
     public static function is_subscription_action_allowed($status, $action) {
+        // Базові правила які завжди діють
         $allowed_actions = array(
-            'active' => array('suspend', 'cancel', 'view'),
-            'suspended' => array('resume', 'cancel', 'view'),
-            'new' => array('suspend', 'cancel', 'view'),
+            'active' => array('view'),
+            'suspended' => array('resume', 'view'),
+            'new' => array('view'),
             'cancelled' => array('view', 'delete'),
             'expired' => array('view', 'reactivate'),
             'failed' => array('view', 'reactivate'),
             'deleted' => array('view')
         );
-
+        
+        // Отримуємо налаштування з адмінки
+        $allow_pause = get_option('bna_smart_payment_allow_customer_pause', 'yes') === 'yes';
+        $allow_cancel = get_option('bna_smart_payment_allow_customer_cancel', 'yes') === 'yes';
+        
+        // Додаємо pause якщо дозволено
+        if ($allow_pause) {
+            if (in_array($status, array('active', 'new'))) {
+                $allowed_actions[$status][] = 'suspend';
+            }
+        }
+        
+        // Додаємо cancel якщо дозволено
+        if ($allow_cancel) {
+            if (in_array($status, array('active', 'suspended', 'new'))) {
+                $allowed_actions[$status][] = 'cancel';
+            }
+        }
+        
         return isset($allowed_actions[$status]) && in_array($action, $allowed_actions[$status]);
     }
 

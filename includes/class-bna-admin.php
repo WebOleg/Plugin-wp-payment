@@ -361,6 +361,7 @@ class BNA_Admin {
     private static function render_subscription_actions($order_id, $status) {
         $actions = array();
 
+        // Використовуємо ту саму логіку що і на фронті - вона вже перевіряє налаштування
         if (BNA_My_Account::is_subscription_action_allowed($status, 'suspend')) {
             $actions[] = '<button type="button" class="button-small bna-subscription-action" data-action="suspend" data-order-id="' . $order_id . '">Pause</button>';
         }
