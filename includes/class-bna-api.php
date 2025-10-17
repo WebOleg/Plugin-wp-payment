@@ -258,8 +258,20 @@ class BNA_API {
                 'action' => 'SALE'
             );
 
+            if (isset($additional_data['num_payments']) && $additional_data['num_payments'] > 0) {
+                $subscription_data['remainingPayments'] = (int) $additional_data['num_payments'];
+                bna_log('Added remainingPayments to subscription', array(
+                    'num_payments' => $additional_data['num_payments']
+                ));
+            }
+
             if (!empty($additional_data)) {
-                $subscription_data = array_merge($subscription_data, $additional_data);
+                $allowed_fields = array('startPaymentDate', 'signupFee', 'trialDays', 'items', 'invoiceInfo', 'contractInfo', 'metadata');
+                foreach ($allowed_fields as $field) {
+                    if (isset($additional_data[$field])) {
+                        $subscription_data[$field] = $additional_data[$field];
+                    }
+                }
             }
 
             bna_log('Creating BNA subscription', array(
@@ -267,7 +279,9 @@ class BNA_API {
                 'frequency' => $frequency,
                 'bna_frequency' => $bna_frequency,
                 'amount' => $amount,
-                'currency' => $currency
+                'currency' => $currency,
+                'has_payment_limit' => isset($subscription_data['remainingPayments']),
+                'remaining_payments' => $subscription_data['remainingPayments'] ?? 'unlimited'
             ));
 
             $response = $this->make_request('v1/subscription', 'POST', $subscription_data);
@@ -288,7 +302,8 @@ class BNA_API {
                 'subscription_id' => $response['id'],
                 'customer_id' => $customer_id,
                 'frequency' => $bna_frequency,
-                'amount' => $amount
+                'amount' => $amount,
+                'remaining_payments' => $subscription_data['remainingPayments'] ?? 'unlimited'
             ));
 
             return $response;
@@ -496,7 +511,7 @@ class BNA_API {
         foreach ($order->get_items() as $item) {
             $product = $item->get_product();
             if ($product && BNA_Subscriptions::is_subscription_product($product)) {
-                return BNA_Subscriptions::get_subscription_data($product);
+                return BNA_Product_Subscription_Fields::get_subscription_data($product->get_id());
             }
         }
         return false;
@@ -895,10 +910,17 @@ class BNA_API {
             if ($bna_frequency) {
                 $payload['recurrence'] = $bna_frequency;
 
+                if ($subscription_data['length_type'] === 'limited' && $subscription_data['num_payments'] > 0) {
+                    $payload['remainingPayments'] = (int) $subscription_data['num_payments'];
+                }
+
                 bna_log('Added subscription data to checkout payload', array(
                     'order_id' => $order->get_id(),
                     'frequency' => $subscription_data['frequency'],
                     'bna_frequency' => $bna_frequency,
+                    'length_type' => $subscription_data['length_type'],
+                    'num_payments' => $subscription_data['num_payments'],
+                    'has_payment_limit' => isset($payload['remainingPayments']),
                     'trial_days' => $subscription_data['trial_days'],
                     'signup_fee' => $subscription_data['signup_fee']
                 ));
