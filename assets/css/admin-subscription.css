@@ -1,16 +1,9 @@
-/**
- * Admin Subscription Styles
- * Styles for subscription fields in WooCommerce product admin
- */
-
-/* Subscription options container */
 .bna_subscription_options {
     border-left: 4px solid #007cba;
     padding-left: 15px;
     margin: 15px 0;
 }
 
-/* Subscription fields container */
 .bna_subscription_fields {
     background: #f9f9f9;
     padding: 15px;
@@ -22,7 +15,6 @@
     margin-bottom: 15px;
 }
 
-/* Subscription checkbox styling */
 #_bna_is_subscription + label {
     font-weight: bold;
     color: #007cba;
@@ -32,37 +24,31 @@
     color: #00a32a;
 }
 
-/* Subscription frequency field */
-#_bna_subscription_frequency {
+#_bna_subscription_frequency,
+#_bna_subscription_length_type {
     min-width: 200px;
 }
 
-/* Trial days and signup fee fields */
-#_bna_subscription_trial_days,
-#_bna_subscription_signup_fee {
+#_bna_subscription_num_payments {
     max-width: 150px;
 }
 
-/* Help text styling */
 .bna_subscription_fields .description {
     font-style: italic;
     color: #666;
     margin-top: 5px;
 }
 
-/* Validation error styling */
 .bna-validation-error {
     border-color: #dc3232 !important;
     box-shadow: 0 0 3px rgba(220, 50, 50, 0.3);
 }
 
-/* Success state */
 .bna-validation-success {
     border-color: #00a32a !important;
     box-shadow: 0 0 3px rgba(0, 163, 42, 0.3);
 }
 
-/* Subscription indicator in product list */
 .subscription-indicator {
     display: inline-block;
     background: #007cba;
@@ -74,7 +60,6 @@
     margin-left: 5px;
 }
 
-/* Frequency badge */
 .frequency-badge {
     display: inline-block;
     background: #f0f0f1;
@@ -91,9 +76,8 @@
 .frequency-badge.quarterly { background: #96ceb4; color: white; }
 .frequency-badge.annual { background: #feca57; color: white; }
 
-/* Trial period indicator */
-.trial-indicator {
-    background: #00d4aa;
+.duration-indicator {
+    background: #9b59b6;
     color: white;
     padding: 2px 6px;
     border-radius: 3px;
@@ -101,31 +85,19 @@
     margin-left: 5px;
 }
 
-/* Signup fee indicator */
-.signup-fee-indicator {
-    background: #ff9ff3;
-    color: white;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-size: 11px;
-    margin-left: 5px;
-}
-
-/* Responsive adjustments */
 @media (max-width: 782px) {
     .bna_subscription_fields {
         padding: 10px;
     }
-    
+
     #_bna_subscription_frequency,
-    #_bna_subscription_trial_days,
-    #_bna_subscription_signup_fee {
+    #_bna_subscription_length_type,
+    #_bna_subscription_num_payments {
         width: 100%;
         max-width: none;
     }
 }
 
-/* Loading state */
 .bna-loading {
     opacity: 0.6;
     pointer-events: none;
@@ -151,7 +123,6 @@
     100% { transform: rotate(360deg); }
 }
 
-/* Tooltips */
 .bna-tooltip {
     position: relative;
     cursor: help;
@@ -179,7 +150,6 @@
     opacity: 1;
 }
 
-/* Print styles */
 @media print {
     .bna_subscription_options,
     .bna_subscription_fields {

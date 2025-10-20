@@ -43,7 +43,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->enable_shipping_address = $this->get_option('enable_shipping_address');
 
         $this->enable_subscriptions = $this->get_option('enable_subscriptions');
-        $this->allow_subscription_trials = $this->get_option('allow_subscription_trials');
         $this->allow_customer_pause = $this->get_option('allow_customer_pause');
         $this->allow_customer_cancel = $this->get_option('allow_customer_cancel');
     }
@@ -194,7 +193,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
                         <p style="margin-bottom: 10px;">Enable recurring payments and subscription products. This allows you to:</p>
                         <ul style="margin-left: 20px; margin-bottom: 10px;">
                             <li>Add subscription options to any WooCommerce product</li>
-                            <li>Offer free trials and sign-up fees</li>
+                            <li>Support various billing frequencies (daily to annual)</li>
+                            <li>Set limited or unlimited subscription durations</li>
                             <li>Let customers manage subscriptions in My Account</li>
                             <li>Automatic recurring billing through BNA API</li>
                         </ul>
@@ -208,13 +208,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'label' => 'Enable subscription options for products',
                 'default' => 'no',
                 'description' => 'Allow products to have subscription billing options.',
-            ),
-            'allow_subscription_trials' => array(
-                'title' => 'Allow Free Trials',
-                'type' => 'checkbox',
-                'label' => 'Allow products to offer free trial periods',
-                'default' => 'yes',
-                'description' => 'Enable free trial periods for subscription products.',
             ),
             'allow_customer_pause' => array(
                 'title' => 'Allow Customer Pause',
@@ -238,7 +231,6 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         $subscription_options = array(
             'bna_smart_payment_enable_subscriptions' => $this->get_option('enable_subscriptions', 'no'),
-            'bna_smart_payment_allow_subscription_trials' => $this->get_option('allow_subscription_trials', 'yes'),
             'bna_smart_payment_allow_customer_pause' => $this->get_option('allow_customer_pause', 'yes'),
             'bna_smart_payment_allow_customer_cancel' => $this->get_option('allow_customer_cancel', 'yes')
         );

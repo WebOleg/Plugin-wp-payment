@@ -1,13 +1,6 @@
-/**
- * Admin Subscription Fields JavaScript
- * Handles show/hide logic for subscription fields in product edit page
- */
 jQuery(document).ready(function($) {
-    
-    // Show/hide subscription fields based on checkbox
     function toggleSubscriptionFields() {
         var isChecked = $('#_bna_is_subscription').is(':checked');
-        
         if (isChecked) {
             $('.bna_subscription_fields').slideDown();
         } else {
@@ -15,29 +8,35 @@ jQuery(document).ready(function($) {
         }
     }
 
-    // Handle checkbox change
+    function toggleNumPaymentsField() {
+        var lengthType = $('#_bna_subscription_length_type').val();
+        if (lengthType === 'limited') {
+            $('._bna_subscription_num_payments_field').slideDown();
+        } else {
+            $('._bna_subscription_num_payments_field').slideUp();
+        }
+    }
+
     $(document).on('change', '#_bna_is_subscription', function() {
         toggleSubscriptionFields();
     });
 
-    // Validate numeric fields
-    $(document).on('blur', '#_bna_subscription_trial_days, #_bna_subscription_signup_fee', function() {
+    $(document).on('change', '#_bna_subscription_length_type', function() {
+        toggleNumPaymentsField();
+    });
+
+    $(document).on('blur', '#_bna_subscription_num_payments', function() {
         var value = $(this).val();
-        var field = $(this);
-        
-        if (value && value < 0) {
-            field.val('');
-            alert('Value cannot be negative');
-        }
-        
-        // Ensure signup fee has proper decimal format
-        if (field.attr('id') === '_bna_subscription_signup_fee' && value) {
-            var numValue = parseFloat(value);
-            if (!isNaN(numValue)) {
-                field.val(numValue.toFixed(2));
-            }
+        var numValue = parseInt(value);
+
+        if (value && (numValue < 1 || isNaN(numValue))) {
+            $(this).val('12');
+            alert('Number of payments must be at least 1');
         }
     });
+
+    toggleSubscriptionFields();
+    toggleNumPaymentsField();
 
     console.log('BNA Subscription Fields JavaScript loaded');
 });

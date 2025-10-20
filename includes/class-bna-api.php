@@ -895,21 +895,18 @@ class BNA_API {
             if ($bna_frequency) {
                 $payload['recurrence'] = $bna_frequency;
 
+                if ($subscription_data['length_type'] === 'limited' && $subscription_data['num_payments'] > 0) {
+                    $payload['remainingPayments'] = (int) $subscription_data['num_payments'];
+                }
+
                 bna_log('Added subscription data to checkout payload', array(
                     'order_id' => $order->get_id(),
                     'frequency' => $subscription_data['frequency'],
                     'bna_frequency' => $bna_frequency,
-                    'trial_days' => $subscription_data['trial_days'],
-                    'signup_fee' => $subscription_data['signup_fee']
+                    'length_type' => $subscription_data['length_type'],
+                    'num_payments' => $subscription_data['num_payments'],
+                    'has_payment_limit' => isset($payload['remainingPayments'])
                 ));
-
-                if ($subscription_data['signup_fee'] > 0) {
-                    $payload['signupFee'] = (float) $subscription_data['signup_fee'];
-                }
-
-                if ($subscription_data['trial_days'] > 0) {
-                    $payload['trialDays'] = (int) $subscription_data['trial_days'];
-                }
             }
         }
 
