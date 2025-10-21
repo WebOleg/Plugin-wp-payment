@@ -77,7 +77,8 @@ class BNA_API {
         bna_debug('BNA API initialized', array(
             'environment' => $this->environment,
             'has_credentials' => $this->has_credentials(),
-            'subscriptions_supported' => true
+            'subscriptions_supported' => true,
+            'trial_period_supported' => true
         ));
     }
 
@@ -239,6 +240,7 @@ class BNA_API {
         return $decoded_response;
     }
 
+    // === UPDATED: CREATE SUBSCRIPTION WITH TRIAL PERIOD SUPPORT ===
     public function create_subscription($customer_id, $frequency, $amount, $currency = 'CAD', $additional_data = array()) {
         try {
             if (empty($customer_id) || empty($frequency) || !$amount) {
@@ -258,6 +260,18 @@ class BNA_API {
                 'action' => 'SALE'
             );
 
+            // === ADD START PAYMENT DATE FOR TRIAL PERIOD - NEW ===
+            if (!empty($additional_data['startPaymentDate'])) {
+                $subscription_data['startPaymentDate'] = $additional_data['startPaymentDate'];
+                
+                bna_log('Trial period detected - setting startPaymentDate', array(
+                    'startPaymentDate' => $additional_data['startPaymentDate'],
+                    'current_date' => date('Y-m-d H:i:s'),
+                    'trial_info' => isset($additional_data['trial_days']) ? $additional_data['trial_days'] . ' days' : 'unknown'
+                ));
+            }
+            // === END START PAYMENT DATE ===
+
             if (!empty($additional_data)) {
                 $subscription_data = array_merge($subscription_data, $additional_data);
             }
@@ -267,7 +281,9 @@ class BNA_API {
                 'frequency' => $frequency,
                 'bna_frequency' => $bna_frequency,
                 'amount' => $amount,
-                'currency' => $currency
+                'currency' => $currency,
+                'has_start_date' => isset($subscription_data['startPaymentDate']),
+                'start_date' => $subscription_data['startPaymentDate'] ?? 'immediate'
             ));
 
             $response = $this->make_request('v1/subscription', 'POST', $subscription_data);
@@ -288,7 +304,8 @@ class BNA_API {
                 'subscription_id' => $response['id'],
                 'customer_id' => $customer_id,
                 'frequency' => $bna_frequency,
-                'amount' => $amount
+                'amount' => $amount,
+                'start_payment_date' => $subscription_data['startPaymentDate'] ?? 'immediate'
             ));
 
             return $response;
@@ -302,6 +319,7 @@ class BNA_API {
             return new WP_Error('subscription_creation_exception', 'Subscription creation failed: ' . $e->getMessage());
         }
     }
+    // === END UPDATED CREATE SUBSCRIPTION ===
 
     public function get_subscription($subscription_id) {
         if (empty($subscription_id)) {
@@ -882,6 +900,7 @@ class BNA_API {
         }
     }
 
+    // === UPDATED: CREATE CHECKOUT PAYLOAD WITH TRIAL PERIOD - NEW ===
     private function create_checkout_payload($order, $customer_result) {
         $payload = array(
             'iframeId' => get_option('bna_smart_payment_iframe_id'),
@@ -899,13 +918,30 @@ class BNA_API {
                     $payload['remainingPayments'] = (int) $subscription_data['num_payments'];
                 }
 
+                // === ADD START PAYMENT DATE FOR TRIAL PERIOD - NEW ===
+                if (!empty($subscription_data['enable_trial']) && !empty($subscription_data['trial_length'])) {
+                    $start_payment_date = BNA_Subscriptions::calculate_start_payment_date($subscription_data);
+                    $payload['startPaymentDate'] = $start_payment_date;
+                    
+                    bna_log('Trial period added to checkout payload', array(
+                        'order_id' => $order->get_id(),
+                        'trial_enabled' => true,
+                        'trial_days' => $subscription_data['trial_length'],
+                        'startPaymentDate' => $start_payment_date,
+                        'current_date' => date('Y-m-d H:i:s')
+                    ));
+                }
+                // === END START PAYMENT DATE ===
+
                 bna_log('Added subscription data to checkout payload', array(
                     'order_id' => $order->get_id(),
                     'frequency' => $subscription_data['frequency'],
                     'bna_frequency' => $bna_frequency,
                     'length_type' => $subscription_data['length_type'],
                     'num_payments' => $subscription_data['num_payments'],
-                    'has_payment_limit' => isset($payload['remainingPayments'])
+                    'has_payment_limit' => isset($payload['remainingPayments']),
+                    'has_trial' => isset($payload['startPaymentDate']),
+                    'trial_days' => $subscription_data['trial_length'] ?? 0
                 ));
             }
         }
@@ -927,6 +963,7 @@ class BNA_API {
 
         return $payload;
     }
+    // === END UPDATED CREATE CHECKOUT PAYLOAD ===
 
     private function get_order_items($order) {
         $items = array();

@@ -49,7 +49,8 @@ class BNA_Subscriptions {
             'frequencies' => count(self::FREQUENCIES),
             'statuses' => count(self::STATUSES),
             'using_meta_fields' => true,
-            'validation_enabled' => true
+            'validation_enabled' => true,
+            'trial_period_support' => true
         ));
     }
 
@@ -151,11 +152,18 @@ class BNA_Subscriptions {
         $frequency = get_post_meta($product_id, '_bna_subscription_frequency', true) ?: 'monthly';
         $length_type = get_post_meta($product_id, '_bna_subscription_length_type', true) ?: 'unlimited';
         $num_payments = absint(get_post_meta($product_id, '_bna_subscription_num_payments', true));
+        
+        // === GET TRIAL PERIOD DATA - NEW ===
+        $enable_trial = get_post_meta($product_id, '_bna_enable_trial', true) === 'yes';
+        $trial_length = absint(get_post_meta($product_id, '_bna_trial_length', true));
+        // === END TRIAL PERIOD DATA ===
 
         $data = array(
             'frequency' => $frequency,
             'length_type' => $length_type,
-            'num_payments' => $num_payments
+            'num_payments' => $num_payments,
+            'enable_trial' => $enable_trial,
+            'trial_length' => $trial_length
         );
 
         bna_debug('=== SUBSCRIPTION DATA RESULT ===', array(
@@ -165,6 +173,44 @@ class BNA_Subscriptions {
 
         return $data;
     }
+
+    // === CALCULATE START PAYMENT DATE WITH TRIAL - NEW ===
+    /**
+     * Calculate the start payment date for subscription
+     * If trial period is enabled, the start date will be today + trial_length days
+     * Otherwise, the start date will be today
+     * 
+     * @param array $subscription_data Subscription data with trial info
+     * @return string Formatted date string (Y-m-d H:i:s)
+     */
+    public static function calculate_start_payment_date($subscription_data) {
+        $current_time = current_time('timestamp');
+        
+        // Check if trial period is enabled
+        if (!empty($subscription_data['enable_trial']) && !empty($subscription_data['trial_length'])) {
+            $trial_days = absint($subscription_data['trial_length']);
+            
+            // Add trial days to current date
+            $start_timestamp = strtotime("+{$trial_days} days", $current_time);
+            
+            bna_log('Start payment date calculated with trial period', array(
+                'current_date' => date('Y-m-d H:i:s', $current_time),
+                'trial_days' => $trial_days,
+                'start_payment_date' => date('Y-m-d H:i:s', $start_timestamp)
+            ));
+        } else {
+            // No trial - start immediately
+            $start_timestamp = $current_time;
+            
+            bna_debug('Start payment date - no trial period', array(
+                'start_payment_date' => date('Y-m-d H:i:s', $start_timestamp)
+            ));
+        }
+        
+        // Return formatted date for BNA API
+        return date('Y-m-d H:i:s', $start_timestamp);
+    }
+    // === END CALCULATE START PAYMENT DATE ===
 
     public function add_subscription_cart_item_data($cart_item_data, $product_id, $variation_id) {
         $product = wc_get_product($product_id);
@@ -192,6 +238,19 @@ class BNA_Subscriptions {
     public function display_subscription_cart_item_data($item_data, $cart_item) {
         if (isset($cart_item['bna_subscription'])) {
             $subscription = $cart_item['bna_subscription'];
+
+            // === DISPLAY TRIAL PERIOD IN CART - NEW ===
+            if (!empty($subscription['enable_trial']) && !empty($subscription['trial_length'])) {
+                $item_data[] = array(
+                    'name' => __('Trial Period', 'bna-smart-payment'),
+                    'value' => sprintf(
+                        _n('%d day free', '%d days free', $subscription['trial_length'], 'bna-smart-payment'),
+                        $subscription['trial_length']
+                    ),
+                    'display' => ''
+                );
+            }
+            // === END TRIAL PERIOD DISPLAY ===
 
             $frequency_label = self::FREQUENCIES[$subscription['frequency']] ?? $subscription['frequency'];
             $item_data[] = array(
@@ -274,7 +333,9 @@ class BNA_Subscriptions {
         bna_log('Subscription product validation passed', array(
             'product_id' => $product_id,
             'quantity' => $quantity,
-            'frequency' => $subscription_data['frequency'] ?? 'unknown'
+            'frequency' => $subscription_data['frequency'] ?? 'unknown',
+            'trial_enabled' => !empty($subscription_data['enable_trial']),
+            'trial_days' => $subscription_data['trial_length'] ?? 0
         ));
 
         return $passed;
@@ -504,13 +565,21 @@ class BNA_Subscriptions {
             $product = $item->get_product();
             if (self::is_subscription_product($product)) {
                 $subscription_data = self::get_subscription_data($product);
+                
+                // === CALCULATE START PAYMENT DATE WITH TRIAL - NEW ===
+                $start_payment_date = self::calculate_start_payment_date($subscription_data);
+                // === END CALCULATE START PAYMENT DATE ===
+                
                 $subscription_items[] = array(
                     'product_id' => $product->get_id(),
                     'product_name' => $product->get_name(),
                     'quantity' => $item->get_quantity(),
                     'total' => $item->get_total(),
                     'subscription_data' => $subscription_data,
-                    'bna_frequency' => self::convert_frequency_to_bna($subscription_data['frequency'])
+                    'bna_frequency' => self::convert_frequency_to_bna($subscription_data['frequency']),
+                    'start_payment_date' => $start_payment_date,
+                    'trial_enabled' => !empty($subscription_data['enable_trial']),
+                    'trial_days' => $subscription_data['trial_length'] ?? 0
                 );
             }
         }
@@ -525,8 +594,10 @@ class BNA_Subscriptions {
                 'order_id' => $order_id,
                 'status' => 'new',
                 'items_count' => count($subscription_items),
-                'note' => 'Using product meta fields',
-                'bna_frequencies' => array_column($subscription_items, 'bna_frequency')
+                'note' => 'Using product meta fields with trial period support',
+                'bna_frequencies' => array_column($subscription_items, 'bna_frequency'),
+                'start_payment_dates' => array_column($subscription_items, 'start_payment_date'),
+                'trial_enabled' => array_column($subscription_items, 'trial_enabled')
             ));
         }
     }
@@ -554,9 +625,12 @@ class BNA_Subscriptions {
             $product = $item->get_product();
             if (self::is_subscription_product($product)) {
                 $has_subscription = true;
+                $subscription_data = self::get_subscription_data($product);
                 $subscription_items[] = array(
                     'product_id' => $product->get_id(),
-                    'product_name' => $product->get_name()
+                    'product_name' => $product->get_name(),
+                    'trial_enabled' => !empty($subscription_data['enable_trial']),
+                    'trial_days' => $subscription_data['trial_length'] ?? 0
                 );
             }
         }
@@ -572,7 +646,8 @@ class BNA_Subscriptions {
             $order->save();
 
             bna_log('Subscription order detected', array(
-                'order_id' => $order_id
+                'order_id' => $order_id,
+                'trial_info' => $subscription_items
             ));
         }
     }
@@ -648,9 +723,27 @@ class BNA_Subscriptions {
         }
 
         $first_item = reset($subscription_items);
+        
+        // === USE START PAYMENT DATE IF AVAILABLE (TRIAL PERIOD) - NEW ===
+        if (!empty($first_item['start_payment_date'])) {
+            // If we have a start payment date (from trial), use that
+            $start_date = strtotime($first_item['start_payment_date']);
+            
+            // If start date is in the future, that's the next payment
+            if ($start_date > time()) {
+                return date('Y-m-d', $start_date);
+            }
+            
+            // Otherwise, calculate from the start date
+            $last_payment = new DateTime($first_item['start_payment_date']);
+        } else {
+            // No trial period, use order creation date
+            $last_payment = $order->get_date_created();
+        }
+        // === END START PAYMENT DATE CHECK ===
+        
         $frequency = $first_item['subscription_data']['frequency'] ?? 'monthly';
 
-        $last_payment = $order->get_date_created();
         if (!$last_payment) {
             return null;
         }

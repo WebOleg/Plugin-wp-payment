@@ -39,6 +39,69 @@
     margin-top: 5px;
 }
 
+/* === TRIAL PERIOD STYLES - MINIMAL === */
+.bna_trial_period_section {
+    margin-top: 20px;
+    padding-top: 15px;
+    border-top: 1px solid #ddd;
+}
+
+.bna_trial_period_section h4 {
+    margin: 0 0 15px 0;
+    padding: 0;
+    color: #333;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#_bna_enable_trial + label {
+    font-weight: 600;
+    color: #333;
+}
+
+.bna_trial_fields {
+    background: #fafafa;
+    padding: 15px;
+    border-radius: 4px;
+    margin-top: 10px;
+    border-left: 3px solid #ddd;
+}
+
+#_bna_trial_length {
+    max-width: 150px;
+}
+
+.bna_trial_fields .description {
+    background: #fff;
+    padding: 10px;
+    border-radius: 4px;
+    border-left: 3px solid #ddd;
+    margin-top: 10px;
+    font-size: 12px;
+    color: #666;
+}
+
+.trial-badge {
+    display: inline-block;
+    background: #f0f0f1;
+    color: #50575e;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 5px;
+}
+
+.trial-indicator {
+    background: #f0f0f1;
+    color: #50575e;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    margin-left: 5px;
+}
+/* === END TRIAL PERIOD STYLES === */
+
 .bna-validation-error {
     border-color: #dc3232 !important;
     box-shadow: 0 0 3px rgba(220, 50, 50, 0.3);
@@ -70,11 +133,30 @@
     margin-left: 5px;
 }
 
-.frequency-badge.daily { background: #ff6b6b; color: white; }
-.frequency-badge.weekly { background: #4ecdc4; color: white; }
-.frequency-badge.monthly { background: #45b7d1; color: white; }
-.frequency-badge.quarterly { background: #96ceb4; color: white; }
-.frequency-badge.annual { background: #feca57; color: white; }
+.frequency-badge.daily {
+    background: #ff6b6b;
+    color: white;
+}
+
+.frequency-badge.weekly {
+    background: #4ecdc4;
+    color: white;
+}
+
+.frequency-badge.monthly {
+    background: #45b7d1;
+    color: white;
+}
+
+.frequency-badge.quarterly {
+    background: #96ceb4;
+    color: white;
+}
+
+.frequency-badge.annual {
+    background: #feca57;
+    color: white;
+}
 
 .duration-indicator {
     background: #9b59b6;
@@ -89,12 +171,17 @@
     .bna_subscription_fields {
         padding: 10px;
     }
-
+    
     #_bna_subscription_frequency,
     #_bna_subscription_length_type,
-    #_bna_subscription_num_payments {
+    #_bna_subscription_num_payments,
+    #_bna_trial_length {
         width: 100%;
         max-width: none;
+    }
+    
+    .bna_trial_fields .description {
+        margin-left: 0;
     }
 }
 
