@@ -1,12 +1,68 @@
 /**
  * BNA Subscriptions Styles
- * 
+ *
  * CSS styles for subscription interface
  * Admin and frontend styling
- * 
+ *
  * @since 1.9.0
  * @package BNA_Smart_Payment
  */
+
+/* ==========================================================================
+   SUBSCRIPTION BADGE - Minimalist Style
+   ========================================================================== */
+
+.bna-subscription-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: #f0f7ff;
+    color: #0073aa;
+    border: 1px solid #0073aa;
+    border-radius: 3px;
+    margin: 0 0 8px 0;
+}
+
+/* Badge on Product Loop/Archive (Shop/Category pages) */
+.woocommerce ul.products li.product .bna-subscription-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 10;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Badge on Single Product Page */
+.single-product .bna-subscription-badge {
+    margin-bottom: 15px;
+}
+
+/* Badge in Cart */
+.woocommerce-cart .bna-subscription-badge,
+.woocommerce-checkout .bna-subscription-badge {
+    display: inline-block;
+    margin: 5px 0;
+    vertical-align: middle;
+}
+
+/* Badge in Cart Item Name */
+.woocommerce-cart-form .product-name .bna-subscription-badge {
+    margin-left: 8px;
+}
+
+/* Badge in Order Items */
+.woocommerce-order .bna-subscription-badge,
+.woocommerce-account .bna-subscription-badge {
+    margin-left: 8px;
+}
+
+/* Ensure product position is relative for absolute badge positioning */
+.woocommerce ul.products li.product {
+    position: relative;
+}
 
 /* ==========================================================================
    Admin Product Edit - Subscription Tab
@@ -482,44 +538,52 @@
         gap: 15px;
         text-align: center;
     }
-    
+
     .bna-subscriptions-header h2 {
         font-size: 20px;
     }
-    
+
     .subscription-header {
         flex-direction: column;
         gap: 15px;
         align-items: stretch;
     }
-    
+
     .subscription-details {
         grid-template-columns: 1fr !important;
         gap: 15px;
     }
-    
+
     .subscription-actions {
         flex-direction: column;
         align-items: stretch;
     }
-    
+
     .subscription-actions .button {
         width: 100%;
         text-align: center;
         justify-content: center;
     }
-    
+
     .bna-subscription-info-grid {
         grid-template-columns: 1fr;
         gap: 10px;
     }
-    
+
     .bna-no-subscriptions {
         padding: 40px 20px;
     }
-    
+
     .bna-no-subscriptions .empty-icon {
         font-size: 48px;
+    }
+
+    /* Badge responsive adjustments */
+    .woocommerce ul.products li.product .bna-subscription-badge {
+        font-size: 10px;
+        padding: 3px 8px;
+        top: 8px;
+        left: 8px;
     }
 }
 
@@ -527,19 +591,24 @@
     .subscription-item {
         padding: 20px 15px;
     }
-    
+
     .bna-subscription-info {
         padding: 15px;
         margin: 15px 0;
     }
-    
+
     .subscription-notice {
         padding: 15px;
     }
-    
+
     .status-badge {
         font-size: 11px;
         padding: 4px 10px;
+    }
+
+    .bna-subscription-badge {
+        font-size: 10px;
+        padding: 3px 7px;
     }
 }
 

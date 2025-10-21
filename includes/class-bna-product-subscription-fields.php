@@ -33,7 +33,48 @@ class BNA_Product_Subscription_Fields {
         add_action('woocommerce_process_product_meta', array($this, 'save_subscription_fields'));
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
         add_action('woocommerce_single_product_summary', array($this, 'display_subscription_info'), 25);
+
+        // === NEW: ADD BADGES ===
+        // Badge on product loop (shop/category pages)
+        add_action('woocommerce_before_shop_loop_item_title', array($this, 'display_subscription_badge_loop'), 15);
+        // Badge on single product page (before title)
+        add_action('woocommerce_single_product_summary', array($this, 'display_subscription_badge_single'), 5);
+        // === END NEW BADGES ===
     }
+
+    // === NEW: DISPLAY BADGE ON PRODUCT LOOP ===
+    public function display_subscription_badge_loop() {
+        global $product;
+
+        $subscriptions_enabled = get_option('bna_smart_payment_enable_subscriptions', 'no') === 'yes';
+        if (!$subscriptions_enabled) {
+            return;
+        }
+
+        if (!$this->is_subscription_product($product)) {
+            return;
+        }
+
+        echo '<span class="bna-subscription-badge">Subscription</span>';
+    }
+    // === END BADGE ON LOOP ===
+
+    // === NEW: DISPLAY BADGE ON SINGLE PRODUCT ===
+    public function display_subscription_badge_single() {
+        global $product;
+
+        $subscriptions_enabled = get_option('bna_smart_payment_enable_subscriptions', 'no') === 'yes';
+        if (!$subscriptions_enabled) {
+            return;
+        }
+
+        if (!$this->is_subscription_product($product)) {
+            return;
+        }
+
+        echo '<span class="bna-subscription-badge">Subscription</span>';
+    }
+    // === END BADGE ON SINGLE ===
 
     public function add_subscription_fields() {
         global $post;
@@ -262,7 +303,7 @@ class BNA_Product_Subscription_Fields {
         $frequency = get_post_meta($product->get_id(), '_bna_subscription_frequency', true);
         $length_type = get_post_meta($product->get_id(), '_bna_subscription_length_type', true);
         $num_payments = get_post_meta($product->get_id(), '_bna_subscription_num_payments', true);
-        
+
         // === TRIAL PERIOD DISPLAY ===
         $enable_trial = get_post_meta($product->get_id(), '_bna_enable_trial', true) === 'yes';
         $trial_length = absint(get_post_meta($product->get_id(), '_bna_trial_length', true));
@@ -278,7 +319,7 @@ class BNA_Product_Subscription_Fields {
         if ($enable_trial && $trial_length > 0) {
             echo '<p class="subscription-trial" style="color: #666; font-weight: 500;">';
             printf(
-                _n('%d day free trial', '%d days free trial', $trial_length, 'bna-smart-payment'), 
+                _n('%d day free trial', '%d days free trial', $trial_length, 'bna-smart-payment'),
                 $trial_length
             );
             echo '</p>';
@@ -357,7 +398,7 @@ class BNA_Product_Subscription_Fields {
 
         $length_type = get_post_meta($product_id, '_bna_subscription_length_type', true) ?: 'unlimited';
         $num_payments = absint(get_post_meta($product_id, '_bna_subscription_num_payments', true));
-        
+
         // === TRIAL PERIOD DATA ===
         $enable_trial = get_post_meta($product_id, '_bna_enable_trial', true) === 'yes';
         $trial_length = absint(get_post_meta($product_id, '_bna_trial_length', true));
