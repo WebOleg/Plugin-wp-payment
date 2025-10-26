@@ -88,6 +88,7 @@ class BNA_Smart_Payment {
         BNA_Subscriptions::get_instance();
 
         add_filter('woocommerce_payment_gateways', array($this, 'add_gateway_class'));
+        add_filter('woocommerce_email_classes', array($this, 'add_email_classes'));
         add_action('wp_enqueue_scripts', array($this, 'load_frontend_assets'));
         add_action('wp', array($this, 'handle_payment_request'));
 
@@ -103,11 +104,26 @@ class BNA_Smart_Payment {
 
     private function load_woocommerce_dependencies() {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-gateway.php';
+
     }
 
     public function add_gateway_class($gateways) {
         $gateways[] = 'BNA_Gateway';
         return $gateways;
+    }
+
+    /**
+     * Add BNA custom email classes to WooCommerce
+     *
+     * @param array $email_classes Existing email classes
+     * @return array Modified email classes
+     */
+    public function add_email_classes($email_classes) {
+        $email_classes['WC_BNA_Payment_Approved_Email'] = include BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/emails/class-wc-bna-payment-approved-email.php';
+
+        bna_debug('BNA custom email class registered');
+
+        return $email_classes;
     }
 
     public function load_frontend_assets() {

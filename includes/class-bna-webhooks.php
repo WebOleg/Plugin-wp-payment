@@ -491,6 +491,45 @@ class BNA_Webhooks {
     /**
      * ВИПРАВЛЕНА функція перевірки чи замовлення має бути completed
      */
+
+    /**
+     * Trigger custom email notification if enabled
+     *
+     * @param WC_Order $order
+     * @param string $transaction_id
+     */
+    private static function maybe_trigger_custom_email($order, $transaction_id) {
+        // Get gateway instance
+        $gateways = WC()->payment_gateways->get_available_payment_gateways();
+
+        if (!isset($gateways['bna_smart_payment'])) {
+            return;
+        }
+
+        $gateway = $gateways['bna_smart_payment'];
+
+        // Check if custom emails are enabled
+        if (!method_exists($gateway, 'is_custom_emails_enabled') || !$gateway->is_custom_emails_enabled()) {
+            bna_debug('Custom emails not enabled, skipping email notification');
+            return;
+        }
+
+        // Get transaction data from order meta
+        $transaction_data = array(
+            'id' => $transaction_id,
+            'status' => 'APPROVED',
+            'transactionTime' => current_time('mysql'),
+        );
+
+        // Trigger the email action
+        do_action('wc_bna_payment_approved_notification', $order->get_id(), $transaction_data);
+
+        bna_log('Custom payment email triggered', array(
+            'order_id' => $order->get_id(),
+            'transaction_id' => $transaction_id
+        ));
+    }
+
     private static function order_should_be_completed($order) {
         if (!function_exists('BNA_Subscriptions') || !class_exists('BNA_Subscriptions')) {
             // Fallback: перевіряємо стандартну логіку WooCommerce

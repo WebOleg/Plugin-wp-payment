@@ -45,6 +45,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->enable_subscriptions = $this->get_option('enable_subscriptions');
         $this->allow_customer_pause = $this->get_option('allow_customer_pause');
         $this->allow_customer_cancel = $this->get_option('allow_customer_cancel');
+        $this->enable_custom_emails = $this->get_option('enable_custom_emails');
     }
 
     private function init_hooks() {
@@ -222,6 +223,24 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'label' => 'Allow customers to cancel their subscriptions',
                 'default' => 'yes',
                 'description' => 'When enabled, customers can permanently cancel subscriptions from their account.',
+            ),
+            'email_settings' => array(
+                'title' => 'Email Notifications',
+                'type' => 'title',
+                'description' => '
+                    <div style="background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 10px 0;">
+                        <h4 style="margin-top: 0;">📧 Custom Email Notifications</h4>
+                        <p>Enable custom email notifications for successful BNA payments sent directly from WooCommerce.</p>
+                        <p style="margin-bottom: 0;"><strong>⚠️ Important:</strong> When enabled, disable email notifications in your BNA Merchant Portal to prevent duplicate emails.</p>
+                    </div>
+                '
+            ),
+            'enable_custom_emails' => array(
+                'title' => 'Enable Custom Payment Emails',
+                'type' => 'checkbox',
+                'label' => 'Send custom email notifications for approved payments',
+                'default' => 'no',
+                'description' => 'When enabled, WooCommerce will send payment confirmation emails instead of BNA Portal.',
             ),
         );
     }
@@ -947,5 +966,36 @@ class BNA_Gateway extends WC_Payment_Gateway {
         wc_add_notice($message, 'error');
         wp_safe_redirect(wc_get_checkout_url());
         exit;
+    }
+
+    /**
+     * Check if custom emails are enabled
+     *
+     * @return bool
+     */
+    public function is_custom_emails_enabled() {
+        return $this->get_option('enable_custom_emails') === 'yes';
+    }
+
+    /**
+     * Display admin notice when custom emails are enabled
+     */
+    public function display_custom_email_notice() {
+        // Only show on WooCommerce settings page
+        $screen = get_current_screen();
+        if (!$screen || $screen->id !== 'woocommerce_page_wc-settings') {
+            return;
+        }
+
+        // Only show if custom emails are enabled
+        if ($this->get_option('enable_custom_emails') !== 'yes') {
+            return;
+        }
+
+        echo '<div class="notice notice-warning">';
+        echo '<p><strong>⚠️ BNA Custom Emails Enabled</strong></p>';
+        echo '<p>You have enabled custom payment emails. Please ensure you <strong>disable email notifications</strong> in your BNA Merchant Portal ';
+        echo '(Merchant Profile → Settings → Email Notifications) to avoid sending duplicate emails to customers.</p>';
+        echo '</div>';
     }
 }
