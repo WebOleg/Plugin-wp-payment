@@ -143,6 +143,13 @@ class BNA_Smart_Payment {
                 BNA_SMART_PAYMENT_VERSION
             );
 
+//            wp_enqueue_style('bna-checkout-pay-css', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/checkout-pay.css', array('bna-payment-css'), BNA_SMART_PAYMENT_VERSION);
+
+            $request_uri = trim($_SERVER['REQUEST_URI'] ?? '', '/');
+            if (preg_match('/^bna-payment\/\d+\/[a-zA-Z0-9_-]+\/?$/', $request_uri)) {
+                wp_enqueue_style('bna-checkout-pay-css', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/checkout-pay.css', array('bna-payment-css'), BNA_SMART_PAYMENT_VERSION);
+            }
+
             wp_enqueue_script(
                 'bna-payment-js',
                 BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/js/payment.js',

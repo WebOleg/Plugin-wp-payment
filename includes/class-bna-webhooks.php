@@ -485,6 +485,9 @@ class BNA_Webhooks {
             ));
         }
 
+        // Trigger custom email notification if enabled
+        self::maybe_trigger_custom_email($order, $transaction_id);
+
         $order->save();
     }
 
