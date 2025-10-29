@@ -501,19 +501,45 @@ class BNA_Webhooks {
      * @param WC_Order $order
      * @param string $transaction_id
      */
+
     private static function maybe_trigger_custom_email($order, $transaction_id) {
+        bna_log('=== CHECKING IF SHOULD SEND CUSTOM EMAIL ===', array(
+            'order_id' => $order->get_id(),
+            'transaction_id' => $transaction_id
+        ));
+
         // Get gateway instance
         $gateways = WC()->payment_gateways->get_available_payment_gateways();
 
         if (!isset($gateways['bna_smart_payment'])) {
+            bna_log('BNA gateway not available', array(
+                'available_gateways' => array_keys($gateways)
+            ));
             return;
         }
 
         $gateway = $gateways['bna_smart_payment'];
 
+        bna_log('Gateway found, checking if custom emails enabled', array(
+            'has_method' => method_exists($gateway, 'is_custom_emails_enabled'),
+            'gateway_class' => get_class($gateway)
+        ));
+
         // Check if custom emails are enabled
-        if (!method_exists($gateway, 'is_custom_emails_enabled') || !$gateway->is_custom_emails_enabled()) {
-            bna_debug('Custom emails not enabled, skipping email notification');
+        if (!method_exists($gateway, 'is_custom_emails_enabled')) {
+            bna_log('Gateway missing is_custom_emails_enabled method');
+            return;
+        }
+
+        $emails_enabled = $gateway->is_custom_emails_enabled();
+
+        bna_log('Custom emails enabled check result', array(
+            'enabled' => $emails_enabled,
+            'gateway_option' => $gateway->get_option('enable_custom_emails', 'no')
+        ));
+
+        if (!$emails_enabled) {
+            bna_log('Custom emails not enabled, skipping email notification');
             return;
         }
 
@@ -524,10 +550,16 @@ class BNA_Webhooks {
             'transactionTime' => current_time('mysql'),
         );
 
+        bna_log('Triggering custom payment email action', array(
+            'action' => 'wc_bna_payment_approved_notification',
+            'order_id' => $order->get_id(),
+            'transaction_data' => $transaction_data
+        ));
+
         // Trigger the email action
         do_action('wc_bna_payment_approved_notification', $order->get_id(), $transaction_data);
 
-        bna_log('Custom payment email triggered', array(
+        bna_log('Custom payment email triggered successfully', array(
             'order_id' => $order->get_id(),
             'transaction_id' => $transaction_id
         ));

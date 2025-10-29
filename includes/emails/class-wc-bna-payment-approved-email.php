@@ -31,7 +31,12 @@ class WC_BNA_Payment_Approved_Email extends WC_Email {
     /**
      * Constructor
      */
+    /**
+     * Constructor
+     */
     public function __construct() {
+        error_log('========== BNA EMAIL CONSTRUCTOR CALLED ==========');
+
         $this->id             = 'bna_payment_approved';
         $this->customer_email = true;
         $this->title          = __( 'BNA Payment Approved', 'wc-bna-gateway' );
@@ -44,11 +49,17 @@ class WC_BNA_Payment_Approved_Email extends WC_Email {
             '{order_number}' => '',
         );
 
+        error_log('BNA Email: Registering action hook wc_bna_payment_approved_notification');
+
         // Triggers for this email
         add_action( 'wc_bna_payment_approved_notification', array( $this, 'trigger' ), 10, 2 );
 
+        error_log('BNA Email: Action registered, object hash: ' . spl_object_hash($this));
+
         // Call parent constructor
         parent::__construct();
+
+        error_log('BNA Email: Constructor complete, enabled=' . ($this->is_enabled() ? 'yes' : 'no'));
     }
 
     /**
@@ -75,7 +86,14 @@ class WC_BNA_Payment_Approved_Email extends WC_Email {
      * @param int   $order_id The order ID.
      * @param array $transaction_data Transaction data from BNA webhook.
      */
+
     public function trigger( $order_id, $transaction_data = array() ) {
+        bna_log('=== EMAIL TRIGGER CALLED ===', array(
+            'order_id' => $order_id,
+            'transaction_data' => $transaction_data,
+            'email_enabled' => $this->is_enabled()
+        ));
+
         $this->setup_locale();
 
         if ( $order_id && ! is_a( $order_id, 'WC_Order' ) ) {
@@ -85,31 +103,68 @@ class WC_BNA_Payment_Approved_Email extends WC_Email {
         }
 
         if ( ! is_a( $this->object, 'WC_Order' ) ) {
+            bna_log('EMAIL TRIGGER: Order not found', array('order_id' => $order_id));
             $this->restore_locale();
             return;
         }
 
-        // Set transaction data
         $this->transaction_data = $transaction_data;
 
-        // Set recipient
-        $this->recipient = $this->object->get_billing_email();
-
-        // Set placeholders
         $this->placeholders['{order_date}']   = wc_format_datetime( $this->object->get_date_created() );
         $this->placeholders['{order_number}'] = $this->object->get_order_number();
 
+        bna_log('EMAIL TRIGGER: Preparing to send', array(
+            'order_id' => $this->object->get_id(),
+            'recipient' => $this->get_recipient(),
+            'subject' => $this->get_subject(),
+            'enabled' => $this->is_enabled(),
+            'has_recipient' => !empty($this->get_recipient())
+        ));
+
         if ( $this->is_enabled() && $this->get_recipient() ) {
-            $this->send( 
-                $this->get_recipient(), 
-                $this->get_subject(), 
-                $this->get_content(), 
-                $this->get_headers(), 
-                $this->get_attachments() 
-            );
+            bna_log('EMAIL TRIGGER: Calling send()', array(
+                'recipient' => $this->get_recipient(),
+                'subject' => $this->get_subject()
+            ));
+
+            try {
+                $send_result = $this->send(
+                    $this->get_recipient(),
+                    $this->get_subject(),
+                    $this->get_content(),
+                    $this->get_headers(),
+                    $this->get_attachments()
+                );
+
+                bna_log('EMAIL TRIGGER: Send completed', array(
+                    'success' => $send_result,
+                    'recipient' => $this->get_recipient(),
+                    'order_id' => $this->object->get_id()
+                ));
+
+                if (!$send_result) {
+                    error_log('BNA Email: wp_mail returned FALSE for order ' . $this->object->get_id());
+                }
+
+            } catch (Exception $e) {
+                bna_log('EMAIL TRIGGER: Exception during send', array(
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ));
+                error_log('BNA Email Exception: ' . $e->getMessage());
+            }
+
+        } else {
+            bna_log('EMAIL TRIGGER: Email NOT sent - conditions not met', array(
+                'enabled' => $this->is_enabled(),
+                'has_recipient' => !empty($this->get_recipient()),
+                'recipient' => $this->get_recipient()
+            ));
         }
 
         $this->restore_locale();
+
+        bna_log('=== EMAIL TRIGGER FINISHED ===', array('order_id' => $this->object->get_id()));
     }
 
     /**
@@ -207,4 +262,4 @@ class WC_BNA_Payment_Approved_Email extends WC_Email {
 
 endif;
 
-return new WC_BNA_Payment_Approved_Email();
+
