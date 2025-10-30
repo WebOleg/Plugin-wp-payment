@@ -55,6 +55,7 @@ class BNA_Smart_Payment {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-webhooks.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-template.php';
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-my-account.php';
+        require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-order-display.php';
 
         // Load subscription classes (v1.9.0) - Updated to use product meta fields
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-subscriptions.php';
@@ -83,6 +84,7 @@ class BNA_Smart_Payment {
         BNA_Webhooks::init();
         BNA_Payment_Methods::get_instance();
         BNA_My_Account::get_instance();
+        BNA_Order_Display::init();
 
         // Initialize subscriptions (v1.9.0)
         BNA_Subscriptions::get_instance();
