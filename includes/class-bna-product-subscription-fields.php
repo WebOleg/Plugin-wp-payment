@@ -300,6 +300,38 @@ class BNA_Product_Subscription_Fields {
             return;
         }
 
+        // === NEW: CHECK IF USER ALREADY SUBSCRIBED ===
+        if (is_user_logged_in()) {
+            $user_id = get_current_user_id();
+            $subscriptions_instance = BNA_Subscriptions::get_instance();
+
+            if ($subscriptions_instance->user_has_active_subscription_for_product($user_id, $product->get_id())) {
+                // Show green notice that user is already subscribed
+                echo '<div class="bna-subscription-info bna-already-subscribed" style="background: #e8f5e9; border-left: 4px solid #4caf50; padding: 15px; margin-bottom: 20px; border-radius: 4px;">';
+                echo '<p style="margin: 0; color: #2e7d32; font-weight: 600; font-size: 16px;">';
+                echo '✓ ' . __('You are already subscribed to this product', 'bna-smart-payment');
+                echo '</p>';
+                echo '<p style="margin: 8px 0 0 0; font-size: 14px; color: #666;">';
+                echo __('Go to', 'bna-smart-payment') . ' ';
+                echo '<a href="' . esc_url(wc_get_account_endpoint_url('bna-subscriptions')) . '" style="color: #2e7d32; font-weight: 600; text-decoration: underline;">';
+                echo __('My Subscriptions', 'bna-smart-payment');
+                echo '</a> ';
+                echo __('to manage your existing subscription.', 'bna-smart-payment');
+                echo '</p>';
+                echo '</div>';
+
+                bna_debug('User already subscribed - showing notice on product page', array(
+                    'user_id' => $user_id,
+                    'product_id' => $product->get_id(),
+                    'product_name' => $product->get_name()
+                ));
+
+                // Don't show regular subscription info
+                return;
+            }
+        }
+        // === END ALREADY SUBSCRIBED CHECK ===
+
         $frequency = get_post_meta($product->get_id(), '_bna_subscription_frequency', true);
         $length_type = get_post_meta($product->get_id(), '_bna_subscription_length_type', true);
         $num_payments = get_post_meta($product->get_id(), '_bna_subscription_num_payments', true);
