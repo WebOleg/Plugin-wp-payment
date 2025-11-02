@@ -235,6 +235,74 @@ class BNA_Subscriptions {
     }
     // === END CALCULATE START PAYMENT DATE ===
 
+    // === NEW: CHECK FOR DUPLICATE SUBSCRIPTION ===
+    /**
+     * Check if user already has an active subscription for a specific product
+     *
+     * @param int $user_id User ID
+     * @param int $product_id Product ID to check
+     * @return bool True if user has active subscription, false otherwise
+     */
+    public function user_has_active_subscription_for_product($user_id, $product_id) {
+        if (!$user_id || !$product_id) {
+            bna_debug('user_has_active_subscription_for_product: missing parameters', array(
+                'user_id' => $user_id,
+                'product_id' => $product_id
+            ));
+            return false;
+        }
+
+        bna_debug('=== CHECKING FOR DUPLICATE SUBSCRIPTION ===', array(
+            'user_id' => $user_id,
+            'product_id' => $product_id
+        ));
+
+        // Get all orders with subscriptions for this user
+        $orders = wc_get_orders(array(
+            'customer_id' => $user_id,
+            'meta_key' => '_bna_subscription_created',
+            'meta_compare' => 'EXISTS',
+            'limit' => -1
+        ));
+
+        // Active statuses that should block new subscription purchase
+        $active_statuses = array('active', 'new', 'suspended');
+
+        foreach ($orders as $order) {
+            $subscription_status = $order->get_meta('_bna_subscription_status', true);
+            $subscription_items = $order->get_meta('_bna_subscription_items', true);
+
+            // Skip if no status or not in active statuses
+            if (!$subscription_status || !in_array($subscription_status, $active_statuses)) {
+                continue;
+            }
+
+            // Check if this order contains the product we're looking for
+            if (is_array($subscription_items)) {
+                foreach ($subscription_items as $item) {
+                    if (isset($item['product_id']) && absint($item['product_id']) === absint($product_id)) {
+                        bna_log('Found existing active subscription for product', array(
+                            'user_id' => $user_id,
+                            'product_id' => $product_id,
+                            'order_id' => $order->get_id(),
+                            'subscription_status' => $subscription_status
+                        ));
+                        return true;
+                    }
+                }
+            }
+        }
+
+        bna_debug('No active subscription found for product', array(
+            'user_id' => $user_id,
+            'product_id' => $product_id,
+            'checked_orders' => count($orders)
+        ));
+
+        return false;
+    }
+    // === END DUPLICATE SUBSCRIPTION CHECK ===
+
     public function add_subscription_cart_item_data($cart_item_data, $product_id, $variation_id) {
         $product = wc_get_product($product_id);
 
@@ -352,6 +420,26 @@ class BNA_Subscriptions {
             ));
             return false;
         }
+
+        // === NEW: CHECK FOR DUPLICATE SUBSCRIPTION ===
+        if (is_user_logged_in()) {
+            $user_id = get_current_user_id();
+
+            if ($this->user_has_active_subscription_for_product($user_id, $product_id)) {
+                wc_add_notice(
+                    __('You already have an active subscription for this product. Please go to "My Subscriptions" to manage your existing subscription.', 'bna-smart-payment'),
+                    'error'
+                );
+
+                bna_error('SUBSCRIPTION CART VALIDATION FAILED: duplicate subscription', array(
+                    'user_id' => $user_id,
+                    'product_id' => $product_id
+                ));
+
+                return false;
+            }
+        }
+        // === END DUPLICATE CHECK ===
 
         bna_log('Subscription product validation passed', array(
             'product_id' => $product_id,
