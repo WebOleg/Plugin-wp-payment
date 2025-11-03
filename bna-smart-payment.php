@@ -145,6 +145,14 @@ class BNA_Smart_Payment {
                 BNA_SMART_PAYMENT_VERSION
             );
 
+            // Load payment methods styles
+            wp_enqueue_style(
+                'bna-payment-methods-css',
+                BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/payment-methods.css',
+                array(),
+                BNA_SMART_PAYMENT_VERSION
+            );
+
 //            wp_enqueue_style('bna-checkout-pay-css', BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/css/checkout-pay.css', array('bna-payment-css'), BNA_SMART_PAYMENT_VERSION);
 
             $request_uri = trim($_SERVER['REQUEST_URI'] ?? '', '/');
@@ -488,7 +496,10 @@ class BNA_Smart_Payment {
             // Subscription options (v1.9.0)
             'bna_smart_payment_enable_subscriptions' => 'no',
             'bna_smart_payment_allow_subscription_trials' => 'yes',
-            'bna_smart_payment_allow_signup_fees' => 'yes'
+            'bna_smart_payment_allow_signup_fees' => 'yes',
+            'bna_smart_payment_allow_customer_pause' => 'yes',
+            'bna_smart_payment_allow_customer_cancel' => 'yes',
+            'bna_smart_payment_allow_resend_notification' => 'yes'
         );
 
         foreach ($defaults as $option_name => $option_value) {
@@ -578,7 +589,10 @@ class BNA_Smart_Payment {
         $subscription_defaults = array(
             'bna_smart_payment_enable_subscriptions' => 'no',
             'bna_smart_payment_allow_subscription_trials' => 'yes',
-            'bna_smart_payment_allow_signup_fees' => 'yes'
+            'bna_smart_payment_allow_signup_fees' => 'yes',
+            'bna_smart_payment_allow_customer_pause' => 'yes',
+            'bna_smart_payment_allow_customer_cancel' => 'yes',
+            'bna_smart_payment_allow_resend_notification' => 'yes'
         );
 
         foreach ($subscription_defaults as $option_name => $option_value) {
@@ -727,6 +741,27 @@ function bna_is_debug_mode() {
  */
 function bna_subscriptions_enabled() {
     return get_option('bna_smart_payment_enable_subscriptions', 'no') === 'yes';
+}
+
+/**
+ * Check if customer pause is allowed (NEW in v1.9.0)
+ */
+function bna_allow_customer_pause() {
+    return get_option('bna_smart_payment_allow_customer_pause', 'yes') === 'yes';
+}
+
+/**
+ * Check if customer cancellation is allowed (NEW in v1.9.0)
+ */
+function bna_allow_customer_cancel() {
+    return get_option('bna_smart_payment_allow_customer_cancel', 'yes') === 'yes';
+}
+
+/**
+ * Check if resend notification is allowed (NEW in v1.9.0)
+ */
+function bna_allow_resend_notification() {
+    return get_option('bna_smart_payment_allow_resend_notification', 'yes') === 'yes';
 }
 
 /**

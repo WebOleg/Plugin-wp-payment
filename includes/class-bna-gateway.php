@@ -45,6 +45,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $this->enable_subscriptions = $this->get_option('enable_subscriptions');
         $this->allow_customer_pause = $this->get_option('allow_customer_pause');
         $this->allow_customer_cancel = $this->get_option('allow_customer_cancel');
+        $this->allow_resend_notification = $this->get_option('allow_resend_notification');
         $this->enable_custom_emails = $this->get_option('enable_custom_emails');
     }
 
@@ -242,6 +243,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'default' => 'no',
                 'description' => 'When enabled, WooCommerce will send payment confirmation emails instead of BNA Portal.',
             ),
+            'allow_resend_notification' => array(
+                'title' => 'Allow Resend Notification',
+                'type' => 'checkbox',
+                'label' => 'Allow customers to resend subscription notification emails',
+                'default' => 'yes',
+                'description' => 'When enabled, customers can manually resend notification emails for their subscriptions from My Account page.',
+            ),
         );
     }
 
@@ -251,7 +259,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $subscription_options = array(
             'bna_smart_payment_enable_subscriptions' => $this->get_option('enable_subscriptions', 'no'),
             'bna_smart_payment_allow_customer_pause' => $this->get_option('allow_customer_pause', 'yes'),
-            'bna_smart_payment_allow_customer_cancel' => $this->get_option('allow_customer_cancel', 'yes')
+            'bna_smart_payment_allow_customer_cancel' => $this->get_option('allow_customer_cancel', 'yes'),
+            'bna_smart_payment_allow_resend_notification' => $this->get_option('allow_resend_notification', 'yes')
         );
 
         foreach ($subscription_options as $option_name => $option_value) {
@@ -263,7 +272,8 @@ class BNA_Gateway extends WC_Payment_Gateway {
                 'subscriptions_enabled' => $this->get_option('enable_subscriptions', 'no'),
                 'subscription_system' => 'meta_fields',
                 'allow_customer_pause' => $this->get_option('allow_customer_pause', 'yes'),
-                'allow_customer_cancel' => $this->get_option('allow_customer_cancel', 'yes')
+                'allow_customer_cancel' => $this->get_option('allow_customer_cancel', 'yes'),
+                'allow_resend_notification' => $this->get_option('allow_resend_notification', 'yes')
             ));
         }
 

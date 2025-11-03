@@ -159,7 +159,7 @@ $subscription_count = count($subscriptions);
                             </button>
                         <?php endif; ?>
 
-                        <?php if ($status !== 'deleted') : ?>
+                        <?php if ($status !== 'deleted' && bna_allow_resend_notification()) : ?>
                             <button type="button" class="button bna-subscription-action" data-action="resend_notification" data-order-id="<?php echo esc_attr($order_id); ?>" data-subscription-id="<?php echo esc_attr($subscription_id); ?>" style="background: #28a745; color: white; border-color: #28a745;">
                                 <?php _e('Resend Notification', 'bna-smart-payment'); ?>
                             </button>
