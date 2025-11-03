@@ -35,25 +35,8 @@ class BNA_Admin {
             array(__CLASS__, 'logs_page')
         );
 
-        if (BNA_Subscriptions::is_enabled()) {
-            add_submenu_page(
-                'woocommerce',
-                'BNA Subscriptions',
-                'BNA Subscriptions',
-                'manage_woocommerce',
-                'bna-subscriptions',
-                array(__CLASS__, 'subscriptions_page')
-            );
-        }
-
-        add_submenu_page(
-            'woocommerce',
-            'BNA Payment Settings',
-            'BNA Settings',
-            'manage_woocommerce',
-            'wc-settings&tab=checkout&section=bna_smart_payment',
-            null
-        );
+        // Removed BNA Subscriptions menu - not fully implemented
+        // Removed BNA Settings menu - redirects to WooCommerce settings (use WooCommerce > Settings > Payments > BNA Smart Payment instead)
     }
 
     public static function enqueue_admin_scripts($hook) {
