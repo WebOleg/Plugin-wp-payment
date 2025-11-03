@@ -655,11 +655,6 @@ class BNA_Admin {
             'logs' => BNA_Logger::get_logs(1000),
             'log_size' => BNA_Logger::get_log_size(),
             'webhook_url' => home_url('/wp-json/bna/v1/webhook'),
-            'plugin_version' => defined('BNA_SMART_PAYMENT_VERSION') ? BNA_SMART_PAYMENT_VERSION : 'Unknown',
-            'wp_version' => get_bloginfo('version'),
-            'wc_version' => class_exists('WooCommerce') ? WC()->version : 'Not installed',
-            'php_version' => PHP_VERSION,
-            'wp_debug' => defined('WP_DEBUG') && WP_DEBUG,
             'message' => isset($_GET['message']) ? sanitize_text_field($_GET['message']) : '',
             'clear_logs_url' => wp_nonce_url(admin_url('admin.php?page=bna-logs&bna_action=clear_logs'), 'bna_admin_action'),
             'download_logs_url' => wp_nonce_url(admin_url('admin.php?page=bna-logs&bna_action=download_logs'), 'bna_admin_action')
