@@ -14,11 +14,29 @@ class BNA_Order_Display {
         
         add_action('wp_head', array(__CLASS__, 'add_custom_styles'), 999);
         
-        // Load our custom templates
         add_filter('woocommerce_locate_template', array(__CLASS__, 'locate_bna_template'), 10, 3);
     }
 
     public static function locate_bna_template($template, $template_name, $template_path) {
+        $our_templates = array(
+            'checkout/payment-form.php',
+            'myaccount/subscriptions.php',
+            'single-product/bna-subscription-details.php'
+        );
+        
+        if (!in_array($template_name, $our_templates)) {
+            return $template;
+        }
+        
+        $theme_template = locate_template(array(
+            'woocommerce/' . $template_name,
+            $template_name
+        ));
+        
+        if ($theme_template) {
+            return $theme_template;
+        }
+        
         $plugin_template = BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/' . $template_name;
         
         if (file_exists($plugin_template)) {
@@ -32,7 +50,6 @@ class BNA_Order_Display {
         if (is_account_page() || is_checkout() || is_wc_endpoint_url('order-received')) {
             ?>
             <style>
-                /* Style for separator row */
                 .woocommerce-table--order-details tfoot tr.customer-separator th {
                     background-color: #f8f8f8 !important;
                     text-transform: uppercase;
