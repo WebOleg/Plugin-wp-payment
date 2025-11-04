@@ -240,7 +240,6 @@ class BNA_API {
         return $decoded_response;
     }
 
-    // === UPDATED: CREATE SUBSCRIPTION WITH TRIAL PERIOD SUPPORT ===
     public function create_subscription($customer_id, $frequency, $amount, $currency = 'CAD', $additional_data = array()) {
         try {
             if (empty($customer_id) || empty($frequency) || !$amount) {
@@ -260,17 +259,15 @@ class BNA_API {
                 'action' => 'SALE'
             );
 
-            // === ADD START PAYMENT DATE FOR TRIAL PERIOD - NEW ===
             if (!empty($additional_data['startPaymentDate'])) {
                 $subscription_data['startPaymentDate'] = $additional_data['startPaymentDate'];
-                
+
                 bna_log('Trial period detected - setting startPaymentDate', array(
                     'startPaymentDate' => $additional_data['startPaymentDate'],
                     'current_date' => date('Y-m-d H:i:s'),
                     'trial_info' => isset($additional_data['trial_days']) ? $additional_data['trial_days'] . ' days' : 'unknown'
                 ));
             }
-            // === END START PAYMENT DATE ===
 
             if (!empty($additional_data)) {
                 $subscription_data = array_merge($subscription_data, $additional_data);
@@ -319,7 +316,6 @@ class BNA_API {
             return new WP_Error('subscription_creation_exception', 'Subscription creation failed: ' . $e->getMessage());
         }
     }
-    // === END UPDATED CREATE SUBSCRIPTION ===
 
     public function get_subscription($subscription_id) {
         if (empty($subscription_id)) {
@@ -719,7 +715,33 @@ class BNA_API {
                 'order_id' => $order->get_id()
             ));
 
-            $stored_hash = $order->get_meta('_bna_customer_data_hash');
+            $stored_hash = '';
+
+            if (is_user_logged_in()) {
+                $wp_customer_id = $order->get_customer_id();
+                if ($wp_customer_id) {
+                    $stored_hash = get_user_meta($wp_customer_id, '_bna_customer_data_hash', true);
+
+                    if (!empty($stored_hash)) {
+                        bna_debug('Found hash in user meta', array(
+                            'wp_customer_id' => $wp_customer_id,
+                            'stored_hash' => $stored_hash
+                        ));
+                    }
+                }
+            }
+
+            if (empty($stored_hash)) {
+                $stored_hash = $order->get_meta('_bna_customer_data_hash');
+
+                if (!empty($stored_hash)) {
+                    bna_debug('Found hash in order meta (fallback)', array(
+                        'order_id' => $order->get_id(),
+                        'stored_hash' => $stored_hash
+                    ));
+                }
+            }
+
             $current_hash = $this->generate_customer_data_hash($current_data);
 
             bna_debug('Comparing customer data hashes', array(
@@ -803,6 +825,18 @@ class BNA_API {
             $customer_info = $this->build_customer_info($order);
             if ($customer_info) {
                 $current_hash = $this->generate_customer_data_hash($customer_info);
+
+                if (is_user_logged_in()) {
+                    $wp_customer_id = $order->get_customer_id();
+                    if ($wp_customer_id) {
+                        update_user_meta($wp_customer_id, '_bna_customer_data_hash', $current_hash);
+                        bna_log('Saved customer data hash to user meta after checkout', array(
+                            'wp_customer_id' => $wp_customer_id,
+                            'hash' => $current_hash
+                        ));
+                    }
+                }
+
                 $order->update_meta_data('_bna_customer_data_hash', $current_hash);
                 $order->save();
             }
@@ -900,7 +934,6 @@ class BNA_API {
         }
     }
 
-    // === UPDATED: CREATE CHECKOUT PAYLOAD WITH TRIAL PERIOD - NEW ===
     private function create_checkout_payload($order, $customer_result) {
         $payload = array(
             'iframeId' => get_option('bna_smart_payment_iframe_id'),
@@ -918,11 +951,10 @@ class BNA_API {
                     $payload['remainingPayments'] = (int) $subscription_data['num_payments'];
                 }
 
-                // === ADD START PAYMENT DATE FOR TRIAL PERIOD - NEW ===
                 if (!empty($subscription_data['enable_trial']) && !empty($subscription_data['trial_length'])) {
                     $start_payment_date = BNA_Subscriptions::calculate_start_payment_date($subscription_data);
                     $payload['startPaymentDate'] = $start_payment_date;
-                    
+
                     bna_log('Trial period added to checkout payload', array(
                         'order_id' => $order->get_id(),
                         'trial_enabled' => true,
@@ -931,7 +963,6 @@ class BNA_API {
                         'current_date' => date('Y-m-d H:i:s')
                     ));
                 }
-                // === END START PAYMENT DATE ===
 
                 bna_log('Added subscription data to checkout payload', array(
                     'order_id' => $order->get_id(),
@@ -963,7 +994,6 @@ class BNA_API {
 
         return $payload;
     }
-    // === END UPDATED CREATE CHECKOUT PAYLOAD ===
 
     private function get_order_items($order) {
         $items = array();
@@ -1031,19 +1061,21 @@ class BNA_API {
 
             if ($order) {
                 $data_hash = $this->generate_customer_data_hash($customer_data);
-                $order->update_meta_data('_bna_customer_data_hash', $data_hash);
 
                 if (is_user_logged_in()) {
                     $wp_customer_id = $order->get_customer_id();
                     if ($wp_customer_id) {
                         update_user_meta($wp_customer_id, '_bna_customer_id', $response['id']);
-                        bna_log('Saved BNA customer ID to user meta', array(
+                        update_user_meta($wp_customer_id, '_bna_customer_data_hash', $data_hash);
+                        bna_log('Saved BNA customer ID and hash to user meta', array(
                             'wp_customer_id' => $wp_customer_id,
-                            'bna_customer_id' => $response['id']
+                            'bna_customer_id' => $response['id'],
+                            'hash' => $data_hash
                         ));
                     }
                 }
 
+                $order->update_meta_data('_bna_customer_data_hash', $data_hash);
                 $order->save();
             }
 
@@ -1092,6 +1124,18 @@ class BNA_API {
             ));
 
             $data_hash = $this->generate_customer_data_hash($customer_data);
+
+            if (is_user_logged_in()) {
+                $wp_customer_id = $order->get_customer_id();
+                if ($wp_customer_id) {
+                    update_user_meta($wp_customer_id, '_bna_customer_data_hash', $data_hash);
+                    bna_log('Saved customer data hash to user meta', array(
+                        'wp_customer_id' => $wp_customer_id,
+                        'hash' => $data_hash
+                    ));
+                }
+            }
+
             $order->update_meta_data('_bna_customer_data_hash', $data_hash);
             $order->save();
 

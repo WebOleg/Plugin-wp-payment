@@ -1195,34 +1195,85 @@ class BNA_Webhooks {
     }
 
     private static function handle_customer_event($event, $data) {
-        bna_log('Handling customer event', array(
+        bna_log('Customer webhook event received', array(
             'event' => $event,
-            'customer_id' => $data['id'] ?? 'unknown'
+            'customer_id' => $data['id'] ?? 'unknown',
+            'customer_email' => $data['email'] ?? 'unknown'
         ));
 
-        if (isset($data['email']) && !empty($data['email'])) {
-            $user = get_user_by('email', $data['email']);
+        // WordPress is the source of truth for customer data
+        // We update BNA when needed, not the other way around
+        if ($event === 'customer.updated') {
+            bna_log('Ignoring customer.updated webhook - WordPress is source of truth', array(
+                'customer_id' => $data['id'] ?? 'unknown',
+                'reason' => 'WP manages customer data, BNA updates triggered by checkout only'
+            ));
 
-            if (!$user && $event === 'customer.created') {
-                $user_data = array(
-                    'user_login' => $data['email'],
-                    'user_email' => $data['email'],
-                    'first_name' => $data['firstName'] ?? '',
-                    'last_name' => $data['lastName'] ?? '',
-                    'role' => 'customer'
-                );
+            return array(
+                'status' => 'ignored',
+                'event' => $event,
+                'reason' => 'WordPress is source of truth for customer data'
+            );
+        }
 
-                $user_id = wp_insert_user($user_data);
-                if (!is_wp_error($user_id)) {
-                    if (isset($data['id'])) {
-                        update_user_meta($user_id, '_bna_customer_id', $data['id']);
+        // Only process customer.created if needed (rare case)
+        if ($event === 'customer.created') {
+            if (isset($data['email']) && !empty($data['email'])) {
+                $user = get_user_by('email', $data['email']);
+
+                if (!$user) {
+                    $user_data = array(
+                        'user_login' => $data['email'],
+                        'user_email' => $data['email'],
+                        'first_name' => $data['firstName'] ?? '',
+                        'last_name' => $data['lastName'] ?? '',
+                        'role' => 'customer'
+                    );
+
+                    $user_id = wp_insert_user($user_data);
+                    if (!is_wp_error($user_id)) {
+                        if (isset($data['id'])) {
+                            update_user_meta($user_id, '_bna_customer_id', $data['id']);
+                        }
+
+                        bna_log('Created WordPress user from BNA customer.created webhook', array(
+                            'wp_user_id' => $user_id,
+                            'bna_customer_id' => $data['id'],
+                            'email' => $data['email']
+                        ));
+
+                        return array(
+                            'status' => 'processed',
+                            'event' => $event,
+                            'wp_user_id' => $user_id
+                        );
                     }
+                } else {
+                    bna_log('User already exists for customer.created webhook', array(
+                        'wp_user_id' => $user->ID,
+                        'email' => $data['email']
+                    ));
                 }
             }
         }
 
+        // customer.deleted - just log it
+        if ($event === 'customer.deleted') {
+            bna_log('Customer deleted on BNA portal', array(
+                'customer_id' => $data['id'] ?? 'unknown',
+                'note' => 'WordPress user not affected'
+            ));
+
+            return array(
+                'status' => 'ignored',
+                'event' => $event,
+                'reason' => 'Customer deletion on BNA does not affect WordPress users'
+            );
+        }
+
         return array('status' => 'processed', 'event' => $event);
     }
+
 
     private static function handle_payment_method_event($event, $data) {
         if (!isset($data['customerId'])) {
