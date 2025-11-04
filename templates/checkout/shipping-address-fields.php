@@ -1,11 +1,23 @@
 <?php
+/**
+ * Checkout - Shipping Address Fields
+ *
+ * Additional shipping address fields for checkout
+ * 
+ * This template can be overridden by copying it to:
+ * yourtheme/woocommerce/checkout/shipping-address-fields.php
+ *
+ * @package BNA_Smart_Payment
+ * @version 1.9.0
+ */
+
 if (!defined('ABSPATH')) {
     exit;
 }
 ?>
 
 <div id="bna-shipping-address-section" class="bna-shipping-section" style="display: none;">
-    <h3><?php _e('Shipping Address', 'bna-smart-payment'); ?></h3>
+    <h3><?php esc_html_e('Shipping Address', 'bna-smart-payment'); ?></h3>
     
     <div class="bna-shipping-same-wrapper">
         <label class="bna-checkbox-label">
@@ -16,7 +28,7 @@ if (!defined('ABSPATH')) {
                 value="1" 
                 checked="checked"
             />
-            <span><?php _e('Same as billing address', 'bna-smart-payment'); ?></span>
+            <span><?php esc_html_e('Same as billing address', 'bna-smart-payment'); ?></span>
         </label>
     </div>
 
@@ -24,7 +36,7 @@ if (!defined('ABSPATH')) {
         
         <p class="form-row form-row-wide">
             <label for="bna_shipping_country">
-                <?php _e('Country', 'bna-smart-payment'); ?> 
+                <?php esc_html_e('Country', 'bna-smart-payment'); ?> 
                 <abbr class="required" title="required">*</abbr>
             </label>
             
@@ -43,7 +55,7 @@ if (!defined('ABSPATH')) {
 
         <p class="form-row form-row-wide">
             <label for="bna_shipping_address_1">
-                <?php _e('Street address', 'bna-smart-payment'); ?> 
+                <?php esc_html_e('Street address', 'bna-smart-payment'); ?> 
                 <abbr class="required" title="required">*</abbr>
             </label>
             <input 
@@ -57,8 +69,8 @@ if (!defined('ABSPATH')) {
 
         <p class="form-row form-row-wide">
             <label for="bna_shipping_address_2">
-                <?php _e('Apartment, suite, unit, etc.', 'bna-smart-payment'); ?> 
-                <span class="optional"><?php _e('(optional)', 'bna-smart-payment'); ?></span>
+                <?php esc_html_e('Apartment, suite, unit, etc.', 'bna-smart-payment'); ?> 
+                <span class="optional"><?php esc_html_e('(optional)', 'bna-smart-payment'); ?></span>
             </label>
             <input 
                 type="text" 
@@ -71,7 +83,7 @@ if (!defined('ABSPATH')) {
 
         <p class="form-row form-row-wide">
             <label for="bna_shipping_city">
-                <?php _e('City', 'bna-smart-payment'); ?> 
+                <?php esc_html_e('City', 'bna-smart-payment'); ?> 
                 <abbr class="required" title="required">*</abbr>
             </label>
             <input 
@@ -85,7 +97,7 @@ if (!defined('ABSPATH')) {
 
         <p class="form-row form-row-wide">
             <label for="bna_shipping_state">
-                <?php _e('Province', 'bna-smart-payment'); ?> 
+                <?php esc_html_e('Province', 'bna-smart-payment'); ?> 
                 <abbr class="required" title="required">*</abbr>
             </label>
             
@@ -104,7 +116,7 @@ if (!defined('ABSPATH')) {
 
         <p class="form-row form-row-wide">
             <label for="bna_shipping_postcode">
-                <?php _e('Postal code', 'bna-smart-payment'); ?> 
+                <?php esc_html_e('Postal code', 'bna-smart-payment'); ?> 
                 <abbr class="required" title="required">*</abbr>
             </label>
             <input 

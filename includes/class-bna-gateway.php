@@ -944,18 +944,26 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $order->save();
     }
 
-    private function get_or_create_iframe_url($order) {
+        private function get_or_create_iframe_url($order) {
         $stored_token = $order->get_meta('_bna_checkout_token');
         $token_created = $order->get_meta('_bna_token_created');
-
-        if ($stored_token && $token_created && (time() - strtotime($token_created)) < 1800) {
-            bna_debug('Using existing token', array(
+        
+        $token_age = $token_created ? (time() - intval($token_created)) : 9999;
+        
+        if ($stored_token && $token_created && $token_age > 0 && $token_age < 1800) {
+            bna_log('Using existing token', array(
                 'order_id' => $order->get_id(),
-                'token_age_seconds' => time() - strtotime($token_created)
+                'token_age_seconds' => $token_age,
+                'token_created_timestamp' => $token_created
             ));
             return $this->api->get_iframe_url($stored_token);
         }
-
+        
+        bna_log('Generating new checkout token', array(
+            'order_id' => $order->get_id(),
+            'reason' => !$stored_token ? 'no_token' : ($token_age >= 1800 ? 'expired' : 'invalid_age')
+        ));
+        
         $token_result = $this->api->generate_checkout_token($order);
         if (is_wp_error($token_result)) {
             bna_error('Token generation failed', array(
@@ -964,14 +972,18 @@ class BNA_Gateway extends WC_Payment_Gateway {
             ));
             return false;
         }
-
+        
         $order->update_meta_data('_bna_checkout_token', $token_result['token']);
-        $order->update_meta_data('_bna_token_created', current_time('mysql'));
+        $order->update_meta_data('_bna_token_created', time());
         $order->save();
-
+        
+        bna_log('New token saved', array(
+            'order_id' => $order->get_id(),
+            'token_length' => strlen($token_result['token'])
+        ));
+        
         return $this->api->get_iframe_url($token_result['token']);
     }
-
     private function redirect_with_error($order, $message) {
         wc_add_notice($message, 'error');
         wp_safe_redirect(wc_get_checkout_url());

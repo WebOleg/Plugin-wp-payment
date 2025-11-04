@@ -1,18 +1,35 @@
 <?php
-if (!defined('ABSPATH')) exit;
+/**
+ * My Account - Payment Methods
+ *
+ * Shows saved BNA payment methods
+ * 
+ * This template can be overridden by copying it to:
+ * yourtheme/woocommerce/myaccount/payment-methods.php
+ *
+ * @package BNA_Smart_Payment
+ * @version 1.9.0
+ * 
+ * @var array $payment_methods List of payment methods
+ * @var int $user_id Current user ID
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
 
 $my_account = BNA_My_Account::get_instance();
 ?>
 
 <div class="bna-payment-methods">
-    <h3><?php _e('Saved Payment Methods', 'bna-smart-payment'); ?></h3>
+    <h3><?php esc_html_e('Saved Payment Methods', 'bna-smart-payment'); ?></h3>
 
     <?php if (empty($payment_methods)): ?>
         <div class="bna-no-methods">
             <div class="bna-no-methods-icon">💳</div>
-            <h4><?php _e('No Payment Methods Saved', 'bna-smart-payment'); ?></h4>
-            <p><?php _e('You have no saved payment methods yet.', 'bna-smart-payment'); ?></p>
-            <p><small><?php _e('Payment methods will be automatically saved when you complete a purchase using BNA Smart Payment.', 'bna-smart-payment'); ?></small></p>
+            <h4><?php esc_html_e('No Payment Methods Saved', 'bna-smart-payment'); ?></h4>
+            <p><?php esc_html_e('You have no saved payment methods yet.', 'bna-smart-payment'); ?></p>
+            <p><small><?php esc_html_e('Payment methods will be automatically saved when you complete a purchase using BNA Smart Payment.', 'bna-smart-payment'); ?></small></p>
         </div>
     <?php else: ?>
         <div class="bna-methods-list">
@@ -46,12 +63,12 @@ $my_account = BNA_My_Account::get_instance();
                     </div>
                     <div class="bna-method-actions">
                         <button
-                                type="button"
-                                class="button bna-delete-method"
-                                data-method-id="<?php echo esc_attr($method['id']); ?>"
-                                title="<?php esc_attr_e('Delete this payment method', 'bna-smart-payment'); ?>"
+                            type="button"
+                            class="button bna-delete-method"
+                            data-method-id="<?php echo esc_attr($method['id']); ?>"
+                            title="<?php esc_attr_e('Delete this payment method', 'bna-smart-payment'); ?>"
                         >
-                            <?php _e('Delete', 'bna-smart-payment'); ?>
+                            <?php esc_html_e('Delete', 'bna-smart-payment'); ?>
                         </button>
                     </div>
                 </div>
@@ -60,7 +77,6 @@ $my_account = BNA_My_Account::get_instance();
 
         <script>
         jQuery(document).ready(function($) {
-            // Hide WooCommerce notice when BNA payment methods exist
             $('.woocommerce-MyAccount-content .woocommerce-info').hide();
             $('.woocommerce-MyAccount-content .woocommerce-message').hide();
         });

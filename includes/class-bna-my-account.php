@@ -138,19 +138,15 @@ class BNA_My_Account {
             'bna_customer_id' => get_user_meta($user_id, '_bna_customer_id', true)
         ));
 
-        $template_file = BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/my-account-payment-methods.php';
-
-        if (file_exists($template_file)) {
-            include $template_file;
-        } else {
-            echo '<div class="woocommerce-error">';
-            echo '<p>' . __('Payment methods template not found.', 'bna-smart-payment') . '</p>';
-            echo '</div>';
-
-            bna_error('Payment methods template not found', array(
-                'template_path' => $template_file
-            ));
-        }
+        wc_get_template(
+            'myaccount/payment-methods.php',
+            array(
+                'payment_methods' => $payment_methods,
+                'user_id' => $user_id
+            ),
+            '',
+            BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/'
+        );
     }
 
     public function subscriptions_content() {
@@ -182,20 +178,15 @@ class BNA_My_Account {
             'bna_customer_id' => $bna_customer_id
         ));
 
-        $template_file = BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/my-account-subscriptions.php';
-
-        if (file_exists($template_file)) {
-            include $template_file;
-        } else {
-            echo '<div class="woocommerce-error">';
-            echo '<p>' . __('Subscriptions template not found.', 'bna-smart-payment') . '</p>';
-            echo '</div>';
-
-            bna_error('Subscriptions template not found', array(
-                'template_path' => $template_file,
+        wc_get_template(
+            'myaccount/subscriptions.php',
+            array(
+                'subscriptions' => $subscriptions,
                 'user_id' => $user_id
-            ));
-        }
+            ),
+            '',
+            BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/'
+        );
     }
 
     private function sync_user_subscriptions_with_api($user_id, $bna_customer_id) {
@@ -442,7 +433,7 @@ class BNA_My_Account {
                 wp_send_json_error(__('Only active subscriptions can be paused.', 'bna-smart-payment'));
             }
 
-            bna_log('Suspending subscription via My Account (PAUSE)', array(
+            bna_log('Suspending subscription via My Account', array(
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
                 'subscription_id' => $subscription_id,
@@ -579,7 +570,7 @@ class BNA_My_Account {
                 wp_send_json_error(__('This subscription cannot be cancelled.', 'bna-smart-payment'));
             }
 
-            bna_log('Cancelling subscription via My Account (PERMANENT CANCEL)', array(
+            bna_log('Cancelling subscription via My Account', array(
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
                 'subscription_id' => $subscription_id,
@@ -666,7 +657,7 @@ class BNA_My_Account {
                 wp_send_json_error(__('Only cancelled subscriptions can be deleted permanently. Please cancel the subscription first.', 'bna-smart-payment'));
             }
 
-            bna_log('Deleting subscription record permanently via My Account (DELETE RECORD)', array(
+            bna_log('Deleting subscription record permanently via My Account', array(
                 'user_id' => get_current_user_id(),
                 'order_id' => $order_id,
                 'subscription_id' => $subscription_id,
@@ -1120,7 +1111,6 @@ class BNA_My_Account {
     }
 
     public static function is_subscription_action_allowed($status, $action) {
-        // Базові правила які завжди діють
         $allowed_actions = array(
             'active' => array('view'),
             'suspended' => array('resume', 'view'),
@@ -1131,18 +1121,15 @@ class BNA_My_Account {
             'deleted' => array('view')
         );
         
-        // Отримуємо налаштування з адмінки
         $allow_pause = get_option('bna_smart_payment_allow_customer_pause', 'yes') === 'yes';
         $allow_cancel = get_option('bna_smart_payment_allow_customer_cancel', 'yes') === 'yes';
         
-        // Додаємо pause якщо дозволено
         if ($allow_pause) {
             if (in_array($status, array('active', 'new'))) {
                 $allowed_actions[$status][] = 'suspend';
             }
         }
         
-        // Додаємо cancel якщо дозволено
         if ($allow_cancel) {
             if (in_array($status, array('active', 'suspended', 'new'))) {
                 $allowed_actions[$status][] = 'cancel';

@@ -10,13 +10,6 @@ if (!defined('ABSPATH')) {
 
 class BNA_Template {
 
-    /**
-     * Load template file with variables
-     * @param string $template Template filename without .php
-     * @param array $vars Variables to pass to template
-     * @param bool $return Whether to return output or echo it
-     * @return string|void
-     */
     public static function load($template, $vars = array(), $return = false) {
         $template_path = self::get_template_path($template);
         
@@ -37,30 +30,15 @@ class BNA_Template {
         }
     }
 
-    /**
-     * Get full path to template file
-     * @param string $template Template filename without .php
-     * @return string
-     */
     public static function get_template_path($template) {
         $template = str_replace('.php', '', $template);
         return BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/' . $template . '.php';
     }
 
-    /**
-     * Check if template exists
-     * @param string $template Template filename without .php
-     * @return bool
-     */
     public static function template_exists($template) {
         return file_exists(self::get_template_path($template));
     }
 
-    /**
-     * Render payment page with header and footer
-     * @param WC_Order $order
-     * @param string $iframe_url
-     */
     public static function render_payment_page($order, $iframe_url) {
         while (ob_get_level()) {
             ob_end_clean();
@@ -68,28 +46,24 @@ class BNA_Template {
 
         get_header();
         
-        self::load('payment-form', array(
-            'order' => $order,
-            'iframe_url' => $iframe_url
-        ));
+        wc_get_template(
+            'checkout/payment-form.php',
+            array(
+                'order' => $order,
+                'iframe_url' => $iframe_url
+            ),
+            '',
+            BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/'
+        );
         
         get_footer();
         exit;
     }
 
-    /**
-     * Render admin logs page
-     * @param array $data Log data and settings
-     */
     public static function render_admin_logs($data) {
         self::load('admin-logs', $data);
     }
 
-    /**
-     * Render subscriptions page in My Account (v1.9.0)
-     * @param array $subscriptions User subscriptions data
-     * @param int $user_id Current user ID
-     */
     public static function render_subscriptions_page($subscriptions, $user_id = null) {
         if (null === $user_id) {
             $user_id = get_current_user_id();
@@ -135,11 +109,6 @@ class BNA_Template {
         }
     }
 
-    /**
-     * Render subscription product fields (v1.9.0)
-     * Used in product edit page for subscription settings
-     * @param WC_Product|null $product
-     */
     public static function render_subscription_product_fields($product = null) {
         if (!BNA_Subscriptions::is_enabled()) {
             return;
@@ -155,15 +124,9 @@ class BNA_Template {
             self::load('admin-subscription-fields', $template_vars);
         } else {
             bna_debug('Subscription fields template not found, using inline HTML');
-            // Fallback handled in BNA_Subscription_Product class
         }
     }
 
-    /**
-     * Render subscription info on product page (v1.9.0)
-     * Shows subscription details to customers on product pages
-     * @param WC_Product $product
-     */
     public static function render_subscription_info($product) {
         if (!$product || !BNA_Subscriptions::is_subscription_product($product)) {
             return;
@@ -186,22 +149,14 @@ class BNA_Template {
             'price' => $product->get_price()
         );
 
-        if (self::template_exists('product-subscription-info')) {
-            self::load('product-subscription-info', $template_vars);
-        } else {
-            // Fallback inline display handled in BNA_Subscription_Product class
-            bna_debug('Product subscription info template not found, using inline HTML');
-        }
+        wc_get_template(
+            'single-product/bna-subscription-details.php',
+            $template_vars,
+            '',
+            BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/'
+        );
     }
 
-    /**
-     * Get template with error handling (v1.9.0)
-     * Safely loads template and returns content or error message
-     * @param string $template Template name
-     * @param array $vars Template variables
-     * @param string $fallback_message Message to show if template not found
-     * @return string
-     */
     public static function get_template($template, $vars = array(), $fallback_message = '') {
         if (self::template_exists($template)) {
             return self::load($template, $vars, true);
@@ -221,12 +176,6 @@ class BNA_Template {
                '</p></div>';
     }
 
-    /**
-     * Include template part (v1.9.0)
-     * For including smaller template parts within larger templates
-     * @param string $template Template part name
-     * @param array $vars Variables to pass
-     */
     public static function include_part($template, $vars = array()) {
         $part_path = BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/parts/' . $template . '.php';
         
