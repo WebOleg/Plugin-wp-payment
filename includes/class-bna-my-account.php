@@ -36,6 +36,9 @@ class BNA_My_Account {
         add_filter('woocommerce_account_menu_items', array($this, 'add_payment_methods_tab'), 40);
         add_filter('woocommerce_account_menu_items', array($this, 'add_subscriptions_tab'), 41);
 
+        // Remove WooCommerce default payment methods handler
+        remove_action('woocommerce_account_payment-methods_endpoint', 'woocommerce_account_payment_methods');
+
         add_action('woocommerce_account_payment-methods_endpoint', array($this, 'payment_methods_content'));
         add_action('woocommerce_account_subscriptions_endpoint', array($this, 'subscriptions_content'));
 
