@@ -17,6 +17,9 @@ class BNA_Product_Subscription_Fields {
         'annual' => 'Annual (Yearly)'
     );
 
+    const TRIAL_MAX_DAYS = 90;
+    const TRIAL_MIN_DAYS = 1;
+
     public static function get_instance() {
         if (null === self::$instance) {
             self::$instance = new self();
@@ -33,16 +36,12 @@ class BNA_Product_Subscription_Fields {
         add_action('woocommerce_process_product_meta', array($this, 'save_subscription_fields'));
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
         add_action('woocommerce_single_product_summary', array($this, 'display_subscription_info'), 25);
+        add_action('admin_notices', array($this, 'display_admin_notices'));
 
-        // === NEW: ADD BADGES ===
-        // Badge on product loop (shop/category pages)
         add_action('woocommerce_before_shop_loop_item_title', array($this, 'display_subscription_badge_loop'), 15);
-        // Badge on single product page (before title)
         add_action('woocommerce_single_product_summary', array($this, 'display_subscription_badge_single'), 5);
-        // === END NEW BADGES ===
     }
 
-    // === NEW: DISPLAY BADGE ON PRODUCT LOOP ===
     public function display_subscription_badge_loop() {
         global $product;
 
@@ -57,9 +56,7 @@ class BNA_Product_Subscription_Fields {
 
         echo '<span class="bna-subscription-badge">Subscription</span>';
     }
-    // === END BADGE ON LOOP ===
 
-    // === NEW: DISPLAY BADGE ON SINGLE PRODUCT ===
     public function display_subscription_badge_single() {
         global $product;
 
@@ -74,7 +71,6 @@ class BNA_Product_Subscription_Fields {
 
         echo '<span class="bna-subscription-badge">Subscription</span>';
     }
-    // === END BADGE ON SINGLE ===
 
     public function add_subscription_fields() {
         global $post;
@@ -138,7 +134,6 @@ class BNA_Product_Subscription_Fields {
         ));
         echo '</p>';
 
-        // === TRIAL PERIOD FIELDS - MINIMAL DESIGN ===
         echo '<div class="bna_trial_period_section">';
         echo '<h4>' . __('Trial Period Settings', 'bna-smart-payment') . '</h4>';
 
@@ -157,32 +152,41 @@ class BNA_Product_Subscription_Fields {
         woocommerce_wp_text_input(array(
             'id' => '_bna_trial_length',
             'label' => __('Trial Length (days)', 'bna-smart-payment'),
-            'description' => __('Number of days for the free trial period. First payment will be charged after this period.', 'bna-smart-payment'),
+            'description' => sprintf(
+                __('Enter number of free trial days. Valid range: %d-%d days. Maximum trial period is 3 months (%d days).', 'bna-smart-payment'),
+                self::TRIAL_MIN_DAYS,
+                self::TRIAL_MAX_DAYS,
+                self::TRIAL_MAX_DAYS
+            ),
             'desc_tip' => true,
             'type' => 'number',
             'custom_attributes' => array(
                 'step' => '1',
-                'min' => '1',
-                'max' => '365'
+                'min' => self::TRIAL_MIN_DAYS,
+                'max' => self::TRIAL_MAX_DAYS
             ),
             'value' => get_post_meta($post->ID, '_bna_trial_length', true) ?: '7',
             'placeholder' => '7'
         ));
 
         echo '<p class="description" style="margin-left: 150px; margin-top: -10px; color: #666;">';
-        echo __('Example: Set 7 days for a one-week free trial. Customer will be charged on day 8.', 'bna-smart-payment');
+        echo sprintf(
+            __('Example: Set 7 days for a one-week free trial. Customer will be charged on day 8. Valid range: %d-%d days.', 'bna-smart-payment'),
+            self::TRIAL_MIN_DAYS,
+            self::TRIAL_MAX_DAYS
+        );
         echo '</p>';
 
-        echo '</div>'; // .bna_trial_fields
-        echo '</div>'; // .bna_trial_period_section
-        // === END TRIAL PERIOD FIELDS ===
+        echo '</div>';
+        echo '</div>';
 
-        echo '</div>'; // .bna_subscription_fields
-        echo '</div>'; // .options_group
+        echo '</div>';
+        echo '</div>';
     }
 
     public function save_subscription_fields($post_id) {
         $subscriptions_enabled = get_option('bna_smart_payment_enable_subscriptions', 'no') === 'yes';
+
         if (!$subscriptions_enabled) {
             delete_post_meta($post_id, '_bna_is_subscription');
             delete_post_meta($post_id, '_bna_subscription_frequency');
@@ -197,7 +201,6 @@ class BNA_Product_Subscription_Fields {
         update_post_meta($post_id, '_bna_is_subscription', $is_subscription);
 
         if ($is_subscription === 'yes') {
-            // Save frequency
             if (isset($_POST['_bna_subscription_frequency'])) {
                 $frequency = sanitize_text_field($_POST['_bna_subscription_frequency']);
                 if (array_key_exists($frequency, self::FREQUENCIES)) {
@@ -207,7 +210,6 @@ class BNA_Product_Subscription_Fields {
                 }
             }
 
-            // Save length type and num payments
             if (isset($_POST['_bna_subscription_length_type'])) {
                 $length_type = sanitize_text_field($_POST['_bna_subscription_length_type']);
                 update_post_meta($post_id, '_bna_subscription_length_type', $length_type);
@@ -224,21 +226,37 @@ class BNA_Product_Subscription_Fields {
                 }
             }
 
-            // === SAVE TRIAL PERIOD ===
             $enable_trial = isset($_POST['_bna_enable_trial']) ? 'yes' : 'no';
             update_post_meta($post_id, '_bna_enable_trial', $enable_trial);
 
             if ($enable_trial === 'yes' && isset($_POST['_bna_trial_length'])) {
                 $trial_length = absint($_POST['_bna_trial_length']);
-                if ($trial_length > 0 && $trial_length <= 365) {
-                    update_post_meta($post_id, '_bna_trial_length', $trial_length);
-                } else {
-                    update_post_meta($post_id, '_bna_trial_length', 7);
+                $validation_errors = $this->validate_trial_length($trial_length);
+
+                if (!empty($validation_errors)) {
+                    foreach ($validation_errors as $error) {
+                        add_settings_error(
+                            'bna_trial_validation',
+                            'invalid_trial_length',
+                            $error,
+                            'error'
+                        );
+                    }
+
+                    $trial_length = 7;
+
+                    bna_error('Trial length validation failed', array(
+                        'product_id' => $post_id,
+                        'submitted_value' => absint($_POST['_bna_trial_length']),
+                        'errors' => $validation_errors,
+                        'fallback_value' => $trial_length
+                    ));
                 }
+
+                update_post_meta($post_id, '_bna_trial_length', $trial_length);
             } else {
                 delete_post_meta($post_id, '_bna_trial_length');
             }
-            // === END SAVE TRIAL PERIOD ===
 
         } else {
             delete_post_meta($post_id, '_bna_subscription_frequency');
@@ -248,13 +266,36 @@ class BNA_Product_Subscription_Fields {
             delete_post_meta($post_id, '_bna_trial_length');
         }
 
-        bna_debug('Subscription fields saved', array(
+        bna_log('Subscription fields saved', array(
             'product_id' => $post_id,
             'is_subscription' => $is_subscription,
             'enable_trial' => isset($_POST['_bna_enable_trial']) ? 'yes' : 'no',
-            'trial_length' => isset($_POST['_bna_trial_length']) ? absint($_POST['_bna_trial_length']) : 0,
-            'subscriptions_enabled' => $subscriptions_enabled
+            'trial_length' => isset($_POST['_bna_trial_length']) ? absint($_POST['_bna_trial_length']) : 0
         ));
+    }
+
+    private function validate_trial_length($trial_length) {
+        $errors = array();
+
+        if ($trial_length < self::TRIAL_MIN_DAYS) {
+            $errors[] = sprintf(
+                __('Trial length must be at least %d day. Value has been reset to default (7 days).', 'bna-smart-payment'),
+                self::TRIAL_MIN_DAYS
+            );
+        }
+
+        if ($trial_length > self::TRIAL_MAX_DAYS) {
+            $errors[] = sprintf(
+                __('Trial length cannot exceed %d days (3 months). Value has been reset to default (7 days).', 'bna-smart-payment'),
+                self::TRIAL_MAX_DAYS
+            );
+        }
+
+        return $errors;
+    }
+
+    public function display_admin_notices() {
+        settings_errors('bna_trial_validation');
     }
 
     public function admin_enqueue_scripts($hook) {
@@ -286,6 +327,15 @@ class BNA_Product_Subscription_Fields {
             array(),
             BNA_SMART_PAYMENT_VERSION
         );
+
+        wp_localize_script('bna-admin-subscription-fields', 'bnaTrialValidation', array(
+            'minDays' => self::TRIAL_MIN_DAYS,
+            'maxDays' => self::TRIAL_MAX_DAYS,
+            'messages' => array(
+                'tooLow' => sprintf(__('Trial length must be at least %d day', 'bna-smart-payment'), self::TRIAL_MIN_DAYS),
+                'tooHigh' => sprintf(__('Trial length cannot exceed %d days', 'bna-smart-payment'), self::TRIAL_MAX_DAYS)
+            )
+        ));
     }
 
     public function display_subscription_info() {
@@ -300,13 +350,11 @@ class BNA_Product_Subscription_Fields {
             return;
         }
 
-        // === NEW: CHECK IF USER ALREADY SUBSCRIBED ===
         if (is_user_logged_in()) {
             $user_id = get_current_user_id();
             $subscriptions_instance = BNA_Subscriptions::get_instance();
 
             if ($subscriptions_instance->user_has_active_subscription_for_product($user_id, $product->get_id())) {
-                // Show green notice that user is already subscribed
                 echo '<div class="bna-subscription-info bna-already-subscribed" style="background: #e8f5e9; border-left: 4px solid #4caf50; padding: 15px; margin-bottom: 20px; border-radius: 4px;">';
                 echo '<p style="margin: 0; color: #2e7d32; font-weight: 600; font-size: 16px;">';
                 echo '✓ ' . __('You are already subscribed to this product', 'bna-smart-payment');
@@ -320,26 +368,20 @@ class BNA_Product_Subscription_Fields {
                 echo '</p>';
                 echo '</div>';
 
-                bna_debug('User already subscribed - showing notice on product page', array(
+                bna_log('User already subscribed to product', array(
                     'user_id' => $user_id,
-                    'product_id' => $product->get_id(),
-                    'product_name' => $product->get_name()
+                    'product_id' => $product->get_id()
                 ));
 
-                // Don't show regular subscription info
                 return;
             }
         }
-        // === END ALREADY SUBSCRIBED CHECK ===
 
         $frequency = get_post_meta($product->get_id(), '_bna_subscription_frequency', true);
         $length_type = get_post_meta($product->get_id(), '_bna_subscription_length_type', true);
         $num_payments = get_post_meta($product->get_id(), '_bna_subscription_num_payments', true);
-
-        // === TRIAL PERIOD DISPLAY ===
         $enable_trial = get_post_meta($product->get_id(), '_bna_enable_trial', true) === 'yes';
         $trial_length = absint(get_post_meta($product->get_id(), '_bna_trial_length', true));
-        // === END TRIAL PERIOD DISPLAY ===
 
         echo '<div class="bna-subscription-info">';
 
@@ -347,7 +389,6 @@ class BNA_Product_Subscription_Fields {
         echo '<strong>' . __('Subscription Product', 'bna-smart-payment') . '</strong>';
         echo '</p>';
 
-        // === DISPLAY TRIAL INFO - MINIMAL ===
         if ($enable_trial && $trial_length > 0) {
             echo '<p class="subscription-trial" style="color: #666; font-weight: 500;">';
             printf(
@@ -356,7 +397,6 @@ class BNA_Product_Subscription_Fields {
             );
             echo '</p>';
         }
-        // === END DISPLAY TRIAL INFO ===
 
         if ($frequency && isset(self::FREQUENCIES[$frequency])) {
             echo '<p class="subscription-frequency">';
@@ -430,11 +470,8 @@ class BNA_Product_Subscription_Fields {
 
         $length_type = get_post_meta($product_id, '_bna_subscription_length_type', true) ?: 'unlimited';
         $num_payments = absint(get_post_meta($product_id, '_bna_subscription_num_payments', true));
-
-        // === TRIAL PERIOD DATA ===
         $enable_trial = get_post_meta($product_id, '_bna_enable_trial', true) === 'yes';
         $trial_length = absint(get_post_meta($product_id, '_bna_trial_length', true));
-        // === END TRIAL PERIOD DATA ===
 
         return array(
             'is_subscription' => get_post_meta($product_id, '_bna_is_subscription', true) === 'yes',
