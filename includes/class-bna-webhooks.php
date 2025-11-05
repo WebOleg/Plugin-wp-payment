@@ -87,106 +87,46 @@ class BNA_Webhooks {
 
     private static function verify_webhook_signature($raw_body, $signature, $timestamp, $webhook_secret) {
         if (empty($signature) || empty($timestamp) || empty($webhook_secret)) {
+            bna_error('Missing signature verification parameters');
             return false;
         }
 
         $timestamp_unix = strtotime($timestamp);
         if ($timestamp_unix === false || abs(time() - $timestamp_unix) > self::MAX_TIMESTAMP_AGE) {
-            bna_log('Webhook timestamp validation failed', array(
+            bna_error('Webhook timestamp validation failed', array(
                 'provided_timestamp' => $timestamp,
-                'current_time' => date('c'),
-                'age_seconds' => time() - $timestamp_unix
+                'age_seconds' => time() - $timestamp_unix,
+                'max_age' => self::MAX_TIMESTAMP_AGE
             ));
             return false;
         }
 
-        $payload_data = json_decode($raw_body, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            bna_error('Failed to parse webhook payload for signature verification', array(
-                'json_error' => json_last_error_msg()
-            ));
+        $data_json = self::extract_data_from_raw_json($raw_body);
+        if ($data_json === false) {
+            bna_error('Failed to extract data from webhook payload');
             return false;
         }
 
-        $data_part = isset($payload_data['data']) ? $payload_data['data'] : $payload_data;
+        $data_hash = hash('sha256', $data_json);
+        $signing_string = $data_hash . ':' . $timestamp;
+        $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
 
-        $all_tests = array();
+        $is_valid = hash_equals($signature, $computed_signature);
 
-        $raw_data_json = self::extract_data_from_raw_json($raw_body);
-        if ($raw_data_json !== false) {
-            $all_tests['raw_data_manual'] = $raw_data_json;
+        if ($is_valid) {
+            bna_log('Webhook signature verified', array(
+                'timestamp' => $timestamp,
+                'data_size' => strlen($data_json)
+            ));
+        } else {
+            bna_error('Webhook signature mismatch', array(
+                'provided' => substr($signature, 0, 16) . '...',
+                'computed' => substr($computed_signature, 0, 16) . '...',
+                'timestamp' => $timestamp
+            ));
         }
 
-        $all_tests['full_payload_raw'] = trim($raw_body);
-
-        $serialization_tests = array(
-            'compact_unescaped' => json_encode($data_part, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-            'compact_default' => json_encode($data_part),
-            'compact_numeric' => json_encode($data_part, JSON_NUMERIC_CHECK),
-            'compact_preserve_zero' => json_encode($data_part, JSON_PRESERVE_ZERO_FRACTION),
-            'compact_combined' => json_encode($data_part, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_NUMERIC_CHECK),
-            'compact_no_flags' => json_encode($data_part, 0),
-        );
-
-        $full_payload_tests = array(
-            'full_payload_unescaped' => json_encode($payload_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-            'full_payload_default' => json_encode($payload_data),
-        );
-
-        $all_tests = array_merge($all_tests, $serialization_tests, $full_payload_tests);
-
-        $debug_info = array();
-        $successful_approach = null;
-
-        foreach ($all_tests as $approach_name => $serialized_data) {
-            if ($serialized_data === false || $serialized_data === null) {
-                $debug_info[$approach_name] = array('error' => 'Serialization failed');
-                continue;
-            }
-
-            $data_hash = hash('sha256', $serialized_data);
-            $signing_string = $data_hash . ':' . $timestamp;
-            $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
-
-            $preview_length = 200;
-            $serialized_preview = strlen($serialized_data) > $preview_length
-                ? substr($serialized_data, 0, $preview_length) . '...'
-                : $serialized_data;
-
-            $debug_info[$approach_name] = array(
-                'data_hash' => $data_hash,
-                'signing_string' => $signing_string,
-                'computed_signature' => $computed_signature,
-                'provided_signature' => $signature,
-                'match' => hash_equals($signature, $computed_signature),
-                'serialized_preview' => $serialized_preview,
-                'serialized_length' => strlen($serialized_data)
-            );
-
-            if (hash_equals($signature, $computed_signature)) {
-                $successful_approach = $approach_name;
-                break;
-            }
-        }
-
-        bna_log('Webhook signature verification debug', array(
-            'successful_approach' => $successful_approach,
-            'provided_signature' => $signature,
-            'timestamp' => $timestamp,
-            'webhook_secret_length' => strlen($webhook_secret),
-            'data_part_keys' => is_array($data_part) ? array_keys($data_part) : 'invalid',
-            'raw_extraction_attempted' => true,
-            'raw_extraction_count' => 2,
-            'raw_body_preview' => substr($raw_body, 0, 100) . '...',
-            'total_tests' => count($all_tests)
-        ));
-
-        if ($successful_approach) {
-            bna_log('Webhook signature verified successfully', array('method' => $successful_approach));
-            return true;
-        }
-
-        return false;
+        return $is_valid;
     }
 
     private static function extract_data_from_raw_json($raw_body) {
