@@ -76,9 +76,7 @@ class BNA_API {
 
         bna_debug('BNA API initialized', array(
             'environment' => $this->environment,
-            'has_credentials' => $this->has_credentials(),
-            'subscriptions_supported' => true,
-            'trial_period_supported' => true
+            'has_credentials' => $this->has_credentials()
         ));
     }
 
@@ -130,25 +128,15 @@ class BNA_API {
             }
         }
 
-        bna_log('HTTP Request Details', array(
+        bna_log('HTTP Request', array(
             'method' => $method,
-            'url' => $url,
             'endpoint' => $endpoint,
-            'headers' => array(
-                'Authorization' => 'Basic [access_key: ' . substr($this->access_key, 0, 4) . '***, secret_key: ***]',
-                'Content-Type' => 'application/json',
-                'Accept' => 'application/json'
-            ),
-            'has_body' => !empty($args['body']),
-            'body_size' => isset($args['body']) ? strlen($args['body']) : 0,
-            'timeout' => $args['timeout']
+            'has_body' => !empty($args['body'])
         ));
 
         if (isset($args['body'])) {
-            bna_debug('Request Body Content', array(
-                'content_type' => 'application/json',
-                'body_preview' => substr($args['body'], 0, 300) . (strlen($args['body']) > 300 ? '...' : ''),
-                'full_length' => strlen($args['body'])
+            bna_debug('Request Body', array(
+                'preview' => substr($args['body'], 0, 300) . (strlen($args['body']) > 300 ? '...' : '')
             ));
         }
 
@@ -158,10 +146,8 @@ class BNA_API {
         if (is_wp_error($response)) {
             bna_error('HTTP Request Failed', array(
                 'endpoint' => $endpoint,
-                'method' => $method,
                 'duration_ms' => $duration_ms,
-                'error' => $response->get_error_message(),
-                'error_code' => $response->get_error_code()
+                'error' => $response->get_error_message()
             ));
             return $response;
         }
@@ -169,30 +155,15 @@ class BNA_API {
         $status_code = wp_remote_retrieve_response_code($response);
         $body = wp_remote_retrieve_body($response);
 
-        bna_log('HTTP Response Details', array(
+        bna_log('HTTP Response', array(
             'endpoint' => $endpoint,
-            'method' => $method,
-            'duration_ms' => $duration_ms,
             'status_code' => $status_code,
-            'status_message' => wp_remote_retrieve_response_message($response),
-            'response_headers' => wp_remote_retrieve_headers($response)->getAll(),
-            'body_size' => strlen($body),
-            'content_type' => wp_remote_retrieve_header($response, 'content-type')
+            'duration_ms' => $duration_ms
         ));
 
-        if (!empty($body)) {
-            bna_debug('Response Body Content', array(
-                'status_code' => $status_code,
-                'body_preview' => substr($body, 0, 300) . (strlen($body) > 300 ? '...' : ''),
-                'full_length' => strlen($body),
-                'is_empty' => empty($body)
-            ));
-        }
-
         if ($status_code >= 400) {
-            bna_error('API Error Response', array(
+            bna_error('API Error', array(
                 'endpoint' => $endpoint,
-                'method' => $method,
                 'status_code' => $status_code,
                 'response_body' => $body
             ));
@@ -200,22 +171,11 @@ class BNA_API {
         }
 
         if ($status_code === 204) {
-            bna_log('API Request Successful (No Content)', array(
-                'endpoint' => $endpoint,
-                'method' => $method,
-                'status_code' => $status_code,
-                'duration_ms' => $duration_ms
-            ));
+            bna_log('API Success (No Content)', array('endpoint' => $endpoint));
             return array('success' => true, 'status' => 'deleted');
         }
 
         if (empty($body) && $status_code >= 200 && $status_code < 300) {
-            bna_log('API Request Successful (Empty Response)', array(
-                'endpoint' => $endpoint,
-                'method' => $method,
-                'status_code' => $status_code,
-                'duration_ms' => $duration_ms
-            ));
             return array('success' => true);
         }
 
@@ -223,19 +183,12 @@ class BNA_API {
         if (json_last_error() !== JSON_ERROR_NONE) {
             bna_error('JSON Decode Error', array(
                 'endpoint' => $endpoint,
-                'json_error' => json_last_error_msg(),
-                'raw_body' => $body
+                'error' => json_last_error_msg()
             ));
             return new WP_Error('json_error', 'Failed to decode JSON response');
         }
 
-        bna_log('API Request Successful', array(
-            'endpoint' => $endpoint,
-            'method' => $method,
-            'status_code' => $status_code,
-            'duration_ms' => $duration_ms,
-            'response_keys' => is_array($decoded_response) ? array_keys($decoded_response) : array()
-        ));
+        bna_log('API Success', array('endpoint' => $endpoint, 'status_code' => $status_code));
 
         return $decoded_response;
     }
@@ -262,10 +215,9 @@ class BNA_API {
             if (!empty($additional_data['startPaymentDate'])) {
                 $subscription_data['startPaymentDate'] = $additional_data['startPaymentDate'];
 
-                bna_log('Trial period detected - setting startPaymentDate', array(
+                bna_log('Trial period detected', array(
                     'startPaymentDate' => $additional_data['startPaymentDate'],
-                    'current_date' => date('Y-m-d H:i:s'),
-                    'trial_info' => isset($additional_data['trial_days']) ? $additional_data['trial_days'] . ' days' : 'unknown'
+                    'trial_days' => isset($additional_data['trial_days']) ? $additional_data['trial_days'] : 'unknown'
                 ));
             }
 
@@ -273,14 +225,10 @@ class BNA_API {
                 $subscription_data = array_merge($subscription_data, $additional_data);
             }
 
-            bna_log('Creating BNA subscription', array(
+            bna_log('Creating subscription', array(
                 'customer_id' => $customer_id,
-                'frequency' => $frequency,
-                'bna_frequency' => $bna_frequency,
-                'amount' => $amount,
-                'currency' => $currency,
-                'has_start_date' => isset($subscription_data['startPaymentDate']),
-                'start_date' => $subscription_data['startPaymentDate'] ?? 'immediate'
+                'frequency' => $bna_frequency,
+                'amount' => $amount
             ));
 
             $response = $this->make_request('v1/subscription', 'POST', $subscription_data);
@@ -297,12 +245,9 @@ class BNA_API {
                 return new WP_Error('invalid_subscription_response', 'Subscription ID not found in response');
             }
 
-            bna_log('Subscription created successfully', array(
+            bna_log('Subscription created', array(
                 'subscription_id' => $response['id'],
-                'customer_id' => $customer_id,
-                'frequency' => $bna_frequency,
-                'amount' => $amount,
-                'start_payment_date' => $subscription_data['startPaymentDate'] ?? 'immediate'
+                'customer_id' => $customer_id
             ));
 
             return $response;
@@ -310,8 +255,7 @@ class BNA_API {
         } catch (Exception $e) {
             bna_error('Exception in create_subscription', array(
                 'customer_id' => $customer_id,
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine()
+                'exception' => $e->getMessage()
             ));
             return new WP_Error('subscription_creation_exception', 'Subscription creation failed: ' . $e->getMessage());
         }
@@ -322,8 +266,6 @@ class BNA_API {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
         }
 
-        bna_debug('Retrieving subscription', array('subscription_id' => $subscription_id));
-
         $response = $this->make_request('v1/subscription/' . $subscription_id, 'GET');
 
         if (is_wp_error($response)) {
@@ -333,11 +275,6 @@ class BNA_API {
             ));
             return $response;
         }
-
-        bna_log('Subscription retrieved successfully', array(
-            'subscription_id' => $subscription_id,
-            'status' => $response['status'] ?? 'unknown'
-        ));
 
         return $response;
     }
@@ -351,8 +288,6 @@ class BNA_API {
         if ($status) {
             $params['status'] = $status;
         }
-
-        bna_debug('Retrieving customer subscriptions', $params);
 
         $response = $this->make_request('v1/subscription', 'GET', $params);
 
@@ -368,7 +303,7 @@ class BNA_API {
 
         bna_log('Customer subscriptions retrieved', array(
             'customer_id' => $customer_id,
-            'subscriptions_count' => count($subscriptions)
+            'count' => count($subscriptions)
         ));
 
         return $subscriptions;
@@ -381,9 +316,7 @@ class BNA_API {
 
         bna_log('Suspending subscription', array('subscription_id' => $subscription_id));
 
-        $data = array('suspend' => true);
-
-        $response = $this->make_request('v1/subscription/' . $subscription_id . '/suspend', 'PATCH', $data);
+        $response = $this->make_request('v1/subscription/' . $subscription_id . '/suspend', 'PATCH', array('suspend' => true));
 
         if (is_wp_error($response)) {
             bna_error('Failed to suspend subscription', array(
@@ -392,8 +325,6 @@ class BNA_API {
             ));
             return $response;
         }
-
-        bna_log('Subscription suspended successfully', array('subscription_id' => $subscription_id));
 
         return $response;
     }
@@ -405,9 +336,7 @@ class BNA_API {
 
         bna_log('Resuming subscription', array('subscription_id' => $subscription_id));
 
-        $data = array('suspend' => false);
-
-        $response = $this->make_request('v1/subscription/' . $subscription_id . '/suspend', 'PATCH', $data);
+        $response = $this->make_request('v1/subscription/' . $subscription_id . '/suspend', 'PATCH', array('suspend' => false));
 
         if (is_wp_error($response)) {
             bna_error('Failed to resume subscription', array(
@@ -417,8 +346,6 @@ class BNA_API {
             return $response;
         }
 
-        bna_log('Subscription resumed successfully', array('subscription_id' => $subscription_id));
-
         return $response;
     }
 
@@ -427,7 +354,7 @@ class BNA_API {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
         }
 
-        bna_log('Cancelling subscription permanently', array('subscription_id' => $subscription_id));
+        bna_log('Cancelling subscription', array('subscription_id' => $subscription_id));
 
         $response = $this->make_request('v1/subscription/' . $subscription_id, 'DELETE');
 
@@ -439,8 +366,6 @@ class BNA_API {
             return $response;
         }
 
-        bna_log('Subscription cancelled successfully', array('subscription_id' => $subscription_id));
-
         return $response;
     }
 
@@ -448,8 +373,6 @@ class BNA_API {
         if (empty($subscription_id)) {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
         }
-
-        bna_log('Deleting subscription', array('subscription_id' => $subscription_id));
 
         $response = $this->make_request('v1/subscription/' . $subscription_id, 'DELETE');
 
@@ -461,8 +384,6 @@ class BNA_API {
             return $response;
         }
 
-        bna_log('Subscription deleted successfully', array('subscription_id' => $subscription_id));
-
         return $response;
     }
 
@@ -470,8 +391,6 @@ class BNA_API {
         if (empty($subscription_id)) {
             return new WP_Error('missing_subscription_id', 'Subscription ID is required');
         }
-
-        bna_log('Resending subscription notification', array('subscription_id' => $subscription_id));
 
         $response = $this->make_request('v1/subscription/' . $subscription_id . '/notify', 'POST');
 
@@ -482,8 +401,6 @@ class BNA_API {
             ));
             return $response;
         }
-
-        bna_log('Subscription notification sent successfully', array('subscription_id' => $subscription_id));
 
         return $response;
     }
@@ -523,9 +440,7 @@ class BNA_API {
 
         $same_as_billing = $order->get_meta('_bna_shipping_same_as_billing');
         if ($same_as_billing === '1') {
-            bna_debug('Shipping same as billing, using billing address', array(
-                'order_id' => $order->get_id()
-            ));
+            bna_debug('Shipping same as billing', array('order_id' => $order->get_id()));
             return $this->build_address($order);
         }
 
@@ -546,12 +461,7 @@ class BNA_API {
         }
 
         if (empty($shipping_country) || empty($shipping_address_1) || empty($shipping_city)) {
-            bna_debug('Shipping address incomplete, skipping', array(
-                'order_id' => $order->get_id(),
-                'has_country' => !empty($shipping_country),
-                'has_address' => !empty($shipping_address_1),
-                'has_city' => !empty($shipping_city)
-            ));
+            bna_debug('Shipping address incomplete', array('order_id' => $order->get_id()));
             return null;
         }
 
@@ -572,17 +482,14 @@ class BNA_API {
             $shipping_address['apartment'] = $apartment;
         }
 
-        bna_debug('Shipping address built successfully', array(
-            'final_address' => $shipping_address
-        ));
-
         return $shipping_address;
     }
 
-    private function build_customer_info($order) {
+    private function build_customer_info($order, $is_update = false) {
         try {
-            bna_debug('Building customer info for order', array(
-                'order_id' => $order->get_id()
+            bna_debug('Building customer info', array(
+                'order_id' => $order->get_id(),
+                'is_update' => $is_update
             ));
 
             $email = trim($order->get_billing_email());
@@ -591,9 +498,9 @@ class BNA_API {
 
             if (empty($email) || empty($first_name) || empty($last_name)) {
                 bna_error('Missing required customer data', array(
-                    'email' => !empty($email),
-                    'first_name' => !empty($first_name),
-                    'last_name' => !empty($last_name)
+                    'has_email' => !empty($email),
+                    'has_first_name' => !empty($first_name),
+                    'has_last_name' => !empty($last_name)
                 ));
                 return false;
             }
@@ -610,10 +517,6 @@ class BNA_API {
                 if ($phone_data) {
                     $customer_info['phoneCode'] = $phone_data['code'];
                     $customer_info['phoneNumber'] = $phone_data['number'];
-                    bna_log('Phone data added to customer', array(
-                        'phone_code' => $phone_data['code'],
-                        'phone_number' => $phone_data['number']
-                    ));
                 }
             }
 
@@ -630,20 +533,17 @@ class BNA_API {
             }
 
             $shipping_address = $this->build_shipping_address($order);
-            if ($shipping_address) {
+            if ($shipping_address !== null) {
                 $customer_info['shippingAddress'] = $shipping_address;
+            } elseif ($is_update) {
+                $customer_info['shippingAddress'] = null;
+                bna_log('Setting shippingAddress to null for UPDATE', array('order_id' => $order->get_id()));
             }
 
-            $has_phone = isset($customer_info['phoneCode']) && isset($customer_info['phoneNumber']);
-            $address_street = $customer_info['billingAddress']['streetName'] ?? 'unknown';
-            $address_number = $customer_info['billingAddress']['streetNumber'] ?? 'unknown';
-
-            bna_log('Customer info built successfully', array(
-                'fields_count' => count($customer_info),
+            bna_log('Customer info built', array(
                 'has_shipping' => isset($customer_info['shippingAddress']),
-                'has_phone' => $has_phone,
-                'address_street' => $address_street,
-                'address_number' => $address_number
+                'shipping_is_null' => (isset($customer_info['shippingAddress']) && $customer_info['shippingAddress'] === null),
+                'is_update' => $is_update
             ));
 
             return $customer_info;
@@ -651,8 +551,7 @@ class BNA_API {
         } catch (Exception $e) {
             bna_error('Exception in build_customer_info', array(
                 'order_id' => $order->get_id(),
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine()
+                'exception' => $e->getMessage()
             ));
             return false;
         }
@@ -660,10 +559,6 @@ class BNA_API {
 
     private function generate_customer_data_hash($customer_data) {
         try {
-            bna_debug('Generating hash for customer data', array(
-                'data_keys' => array_keys($customer_data)
-            ));
-
             $relevant_data = array();
             $fields_to_check = array(
                 'firstName',
@@ -688,22 +583,25 @@ class BNA_API {
                 }
             }
 
+            if (!isset($relevant_data['shippingAddress'])) {
+                $relevant_data['shippingAddress'] = null;
+            }
+
             ksort($relevant_data);
             $json_string = $this->safe_json_encode($relevant_data);
             $hash = md5($json_string);
 
-            bna_debug('Generated customer data hash', array(
+            bna_debug('Generated customer hash', array(
                 'hash' => $hash,
-                'data_keys' => array_keys($relevant_data)
+                'has_shipping' => isset($relevant_data['shippingAddress']),
+                'shipping_is_null' => $relevant_data['shippingAddress'] === null
             ));
 
             return $hash;
 
         } catch (Exception $e) {
             bna_error('Exception in generate_customer_data_hash', array(
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'customer_data' => $this->safe_json_encode($customer_data)
+                'exception' => $e->getMessage()
             ));
             return md5(serialize($customer_data));
         }
@@ -711,51 +609,28 @@ class BNA_API {
 
     private function has_customer_data_changed($order, $current_data) {
         try {
-            bna_debug('Checking if customer data changed', array(
-                'order_id' => $order->get_id()
-            ));
-
             $stored_hash = '';
 
             if (is_user_logged_in()) {
                 $wp_customer_id = $order->get_customer_id();
                 if ($wp_customer_id) {
                     $stored_hash = get_user_meta($wp_customer_id, '_bna_customer_data_hash', true);
-
-                    if (!empty($stored_hash)) {
-                        bna_debug('Found hash in user meta', array(
-                            'wp_customer_id' => $wp_customer_id,
-                            'stored_hash' => $stored_hash
-                        ));
-                    }
                 }
             }
 
             if (empty($stored_hash)) {
                 $stored_hash = $order->get_meta('_bna_customer_data_hash');
-
-                if (!empty($stored_hash)) {
-                    bna_debug('Found hash in order meta (fallback)', array(
-                        'order_id' => $order->get_id(),
-                        'stored_hash' => $stored_hash
-                    ));
-                }
             }
 
             $current_hash = $this->generate_customer_data_hash($current_data);
 
-            bna_debug('Comparing customer data hashes', array(
-                'order_id' => $order->get_id(),
-                'stored_hash' => $stored_hash,
-                'current_hash' => $current_hash,
-                'has_stored_hash' => !empty($stored_hash),
-                'are_different' => ($stored_hash !== $current_hash)
+            bna_debug('Comparing hashes', array(
+                'stored' => $stored_hash,
+                'current' => $current_hash,
+                'changed' => ($stored_hash !== $current_hash)
             ));
 
             if (empty($stored_hash)) {
-                bna_log('No stored hash found, considering data as changed', array(
-                    'order_id' => $order->get_id()
-                ));
                 return true;
             }
 
@@ -764,8 +639,7 @@ class BNA_API {
         } catch (Exception $e) {
             bna_error('Exception in has_customer_data_changed', array(
                 'order_id' => $order->get_id(),
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine()
+                'exception' => $e->getMessage()
             ));
             return true;
         }
@@ -783,13 +657,12 @@ class BNA_API {
 
             bna_log('Generating checkout token', array(
                 'order_id' => $order->get_id(),
-                'order_total' => $order->get_total(),
                 'is_subscription' => $is_subscription_order
             ));
 
             $customer_result = $this->get_or_create_customer($order);
             if (is_wp_error($customer_result)) {
-                bna_error('Customer creation/retrieval failed', array(
+                bna_error('Customer operation failed', array(
                     'order_id' => $order->get_id(),
                     'error' => $customer_result->get_error_message()
                 ));
@@ -798,9 +671,7 @@ class BNA_API {
 
             $payload = $this->create_checkout_payload($order, $customer_result);
             if (!$payload) {
-                bna_error('Failed to create checkout payload', array(
-                    'order_id' => $order->get_id()
-                ));
+                bna_error('Failed to create checkout payload', array('order_id' => $order->get_id()));
                 return new WP_Error('payload_error', 'Failed to create checkout payload');
             }
 
@@ -815,14 +686,11 @@ class BNA_API {
             }
 
             if (empty($response['token'])) {
-                bna_error('Token not found in response', array(
-                    'order_id' => $order->get_id(),
-                    'response_keys' => array_keys($response)
-                ));
+                bna_error('Token not found in response', array('order_id' => $order->get_id()));
                 return new WP_Error('missing_token', 'Token not found in API response');
             }
 
-            $customer_info = $this->build_customer_info($order);
+            $customer_info = $this->build_customer_info($order, false);
             if ($customer_info) {
                 $current_hash = $this->generate_customer_data_hash($customer_info);
 
@@ -830,10 +698,6 @@ class BNA_API {
                     $wp_customer_id = $order->get_customer_id();
                     if ($wp_customer_id) {
                         update_user_meta($wp_customer_id, '_bna_customer_data_hash', $current_hash);
-                        bna_log('Saved customer data hash to user meta after checkout', array(
-                            'wp_customer_id' => $wp_customer_id,
-                            'hash' => $current_hash
-                        ));
                     }
                 }
 
@@ -841,12 +705,9 @@ class BNA_API {
                 $order->save();
             }
 
-            bna_log('Checkout token generated successfully', array(
+            bna_log('Checkout token generated', array(
                 'order_id' => $order->get_id(),
-                'customer_id' => $customer_result['customer_id'] ?? 'unknown',
-                'was_updated' => $customer_result['was_updated'] ?? false,
-                'token_length' => strlen($response['token']),
-                'is_subscription' => $is_subscription_order
+                'customer_id' => $customer_result['customer_id'] ?? 'unknown'
             ));
 
             return $response;
@@ -854,10 +715,7 @@ class BNA_API {
         } catch (Exception $e) {
             bna_error('Exception in generate_checkout_token', array(
                 'order_id' => $order->get_id(),
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'file' => $e->getFile(),
-                'trace' => $e->getTraceAsString()
+                'exception' => $e->getMessage()
             ));
             return new WP_Error('checkout_exception', 'Token generation failed: ' . $e->getMessage());
         }
@@ -865,10 +723,6 @@ class BNA_API {
 
     private function get_or_create_customer($order) {
         try {
-            bna_debug('Starting get_or_create_customer', array(
-                'order_id' => $order->get_id()
-            ));
-
             $existing_customer_id = $order->get_meta('_bna_customer_id');
 
             if (empty($existing_customer_id) && is_user_logged_in()) {
@@ -879,41 +733,25 @@ class BNA_API {
                     $order->add_meta_data('_bna_customer_id', $existing_customer_id);
                     $order->save();
 
-                    bna_log('Found existing BNA customer ID in user meta', array(
+                    bna_log('Found existing BNA customer ID', array(
                         'wp_customer_id' => $wp_customer_id,
                         'bna_customer_id' => $existing_customer_id
                     ));
                 }
             }
 
-            bna_debug('Building customer info', array(
-                'order_id' => $order->get_id()
-            ));
-
-            $customer_data = $this->build_customer_info($order);
+            $customer_data = $this->build_customer_info($order, !empty($existing_customer_id));
             if (!$customer_data) {
-                bna_error('Failed to build customer data', array(
-                    'order_id' => $order->get_id()
-                ));
+                bna_error('Failed to build customer data', array('order_id' => $order->get_id()));
                 return new WP_Error('customer_data_error', 'Failed to build customer data');
             }
 
-            bna_debug('Customer data built successfully', array(
-                'order_id' => $order->get_id(),
-                'data_keys' => array_keys($customer_data)
-            ));
-
             if (!empty($existing_customer_id)) {
                 if ($this->has_customer_data_changed($order, $customer_data)) {
-                    bna_log('Customer data changed, updating', array(
-                        'customer_id' => $existing_customer_id,
-                        'order_id' => $order->get_id()
-                    ));
+                    bna_log('Customer data changed, updating', array('customer_id' => $existing_customer_id));
                     return $this->update_existing_customer($existing_customer_id, $customer_data, $order);
                 } else {
-                    bna_debug('Customer data unchanged, using existing customer', array(
-                        'customer_id' => $existing_customer_id
-                    ));
+                    bna_debug('Customer data unchanged', array('customer_id' => $existing_customer_id));
                     return array(
                         'customer_id' => $existing_customer_id,
                         'is_existing' => true,
@@ -927,8 +765,7 @@ class BNA_API {
         } catch (Exception $e) {
             bna_error('Exception in get_or_create_customer', array(
                 'order_id' => $order->get_id(),
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine()
+                'exception' => $e->getMessage()
             ));
             return new WP_Error('customer_exception', 'Customer operation failed: ' . $e->getMessage());
         }
@@ -955,24 +792,15 @@ class BNA_API {
                     $start_payment_date = BNA_Subscriptions::calculate_start_payment_date($subscription_data);
                     $payload['startPaymentDate'] = $start_payment_date;
 
-                    bna_log('Trial period added to checkout payload', array(
-                        'order_id' => $order->get_id(),
-                        'trial_enabled' => true,
+                    bna_log('Trial period added to payload', array(
                         'trial_days' => $subscription_data['trial_length'],
-                        'startPaymentDate' => $start_payment_date,
-                        'current_date' => date('Y-m-d H:i:s')
+                        'startPaymentDate' => $start_payment_date
                     ));
                 }
 
-                bna_log('Added subscription data to checkout payload', array(
-                    'order_id' => $order->get_id(),
-                    'frequency' => $subscription_data['frequency'],
-                    'bna_frequency' => $bna_frequency,
-                    'length_type' => $subscription_data['length_type'],
-                    'num_payments' => $subscription_data['num_payments'],
-                    'has_payment_limit' => isset($payload['remainingPayments']),
-                    'has_trial' => isset($payload['startPaymentDate']),
-                    'trial_days' => $subscription_data['trial_length'] ?? 0
+                bna_log('Subscription data added to payload', array(
+                    'frequency' => $bna_frequency,
+                    'has_trial' => isset($payload['startPaymentDate'])
                 ));
             }
         }
@@ -980,7 +808,7 @@ class BNA_API {
         if (!empty($customer_result['customer_id'])) {
             $payload['customerId'] = $customer_result['customer_id'];
         } else {
-            $customer_info = $this->build_customer_info($order);
+            $customer_info = $this->build_customer_info($order, false);
             if (!$customer_info) {
                 return false;
             }
@@ -1030,9 +858,7 @@ class BNA_API {
                 return $validation_result;
             }
 
-            bna_debug('Creating new customer', array(
-                'customer_email' => $customer_data['email']
-            ));
+            bna_debug('Creating new customer', array('email' => $customer_data['email']));
 
             $response = $this->make_request('v1/customers', 'POST', $customer_data);
 
@@ -1041,9 +867,7 @@ class BNA_API {
                 $error_data = $response->get_error_data();
 
                 if ($this->is_customer_exists_error($error_message, $error_data)) {
-                    bna_debug('Customer exists, searching', array(
-                        'customer_email' => $customer_data['email']
-                    ));
+                    bna_debug('Customer exists, searching', array('email' => $customer_data['email']));
                     return $this->find_existing_customer($customer_data['email'], $order);
                 }
 
@@ -1056,7 +880,7 @@ class BNA_API {
 
             bna_log('New customer created', array(
                 'customer_id' => $response['id'],
-                'customer_email' => $customer_data['email']
+                'email' => $customer_data['email']
             ));
 
             if ($order) {
@@ -1067,11 +891,6 @@ class BNA_API {
                     if ($wp_customer_id) {
                         update_user_meta($wp_customer_id, '_bna_customer_id', $response['id']);
                         update_user_meta($wp_customer_id, '_bna_customer_data_hash', $data_hash);
-                        bna_log('Saved BNA customer ID and hash to user meta', array(
-                            'wp_customer_id' => $wp_customer_id,
-                            'bna_customer_id' => $response['id'],
-                            'hash' => $data_hash
-                        ));
                     }
                 }
 
@@ -1087,8 +906,7 @@ class BNA_API {
         } catch (Exception $e) {
             bna_error('Exception in create_new_customer', array(
                 'exception' => $e->getMessage(),
-                'line' => $e->getLine(),
-                'customer_email' => $customer_data['email'] ?? 'unknown'
+                'email' => $customer_data['email'] ?? 'unknown'
             ));
             return new WP_Error('customer_creation_exception', 'Customer creation failed: ' . $e->getMessage());
         }
@@ -1100,13 +918,14 @@ class BNA_API {
 
             if (isset($update_data['email'])) {
                 unset($update_data['email']);
-                bna_debug('Removed email from update data - email cannot be updated for existing customers');
+                bna_debug('Removed email from update (cannot be changed)');
             }
 
             bna_log('Updating customer', array(
                 'customer_id' => $customer_id,
-                'fields_to_update' => array_keys($update_data),
-                'has_shipping_address' => isset($update_data['shippingAddress'])
+                'fields' => array_keys($update_data),
+                'has_shipping' => isset($update_data['shippingAddress']),
+                'shipping_is_null' => (isset($update_data['shippingAddress']) && $update_data['shippingAddress'] === null)
             ));
 
             $response = $this->make_request('v1/customers/' . $customer_id, 'PATCH', $update_data);
@@ -1119,9 +938,7 @@ class BNA_API {
                 return $response;
             }
 
-            bna_log('Customer updated successfully', array(
-                'customer_id' => $customer_id
-            ));
+            bna_log('Customer updated successfully', array('customer_id' => $customer_id));
 
             $data_hash = $this->generate_customer_data_hash($customer_data);
 
@@ -1129,20 +946,11 @@ class BNA_API {
                 $wp_customer_id = $order->get_customer_id();
                 if ($wp_customer_id) {
                     update_user_meta($wp_customer_id, '_bna_customer_data_hash', $data_hash);
-                    bna_log('Saved customer data hash to user meta', array(
-                        'wp_customer_id' => $wp_customer_id,
-                        'hash' => $data_hash
-                    ));
                 }
             }
 
             $order->update_meta_data('_bna_customer_data_hash', $data_hash);
             $order->save();
-
-            bna_log('Customer update completed successfully', array(
-                'customer_id' => $customer_id,
-                'order_id' => $order->get_id()
-            ));
 
             return array(
                 'customer_id' => $customer_id,
@@ -1153,8 +961,7 @@ class BNA_API {
         } catch (Exception $e) {
             bna_error('Exception in update_existing_customer', array(
                 'customer_id' => $customer_id,
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine()
+                'exception' => $e->getMessage()
             ));
             return new WP_Error('customer_update_exception', 'Customer update failed: ' . $e->getMessage());
         }
@@ -1179,7 +986,7 @@ class BNA_API {
 
             bna_log('Found existing customer', array(
                 'customer_id' => $customer['id'],
-                'customer_email' => $email
+                'email' => $email
             ));
 
             if ($order && is_user_logged_in()) {
@@ -1197,8 +1004,7 @@ class BNA_API {
         } catch (Exception $e) {
             bna_error('Exception in find_existing_customer', array(
                 'email' => $email,
-                'exception' => $e->getMessage(),
-                'line' => $e->getLine()
+                'exception' => $e->getMessage()
             ));
             return new WP_Error('customer_search_exception', 'Customer search failed: ' . $e->getMessage());
         }
@@ -1257,11 +1063,6 @@ class BNA_API {
         $postal_code = $order->get_billing_postcode();
 
         if (empty($country) || empty($address_1) || empty($city)) {
-            bna_debug('Address incomplete, skipping', array(
-                'has_country' => !empty($country),
-                'has_address' => !empty($address_1),
-                'has_city' => !empty($city)
-            ));
             return null;
         }
 
@@ -1282,10 +1083,6 @@ class BNA_API {
             $address['apartment'] = $apartment;
         }
 
-        bna_debug('Address built successfully', array(
-            'final_address' => $address
-        ));
-
         return $address;
     }
 
@@ -1297,29 +1094,13 @@ class BNA_API {
             return null;
         }
 
-        bna_debug('Processing phone number', array(
-            'original_phone' => $phone,
-            'billing_country' => $billing_country
-        ));
-
         $digits_only = preg_replace('/\D/', '', $phone);
         $phone_code = $this->determine_phone_country_code($digits_only, $billing_country);
         $phone_number = $this->format_phone_number($digits_only, $phone_code);
 
         if (!$phone_number) {
-            bna_debug('Phone number could not be processed', array(
-                'original' => $phone,
-                'digits_only' => $digits_only
-            ));
             return null;
         }
-
-        bna_log('Phone number processed successfully', array(
-            'original' => $phone,
-            'digits_only' => $digits_only,
-            'result_code' => $phone_code,
-            'result_number' => $phone_number
-        ));
 
         return array(
             'code' => $phone_code,
@@ -1328,23 +1109,11 @@ class BNA_API {
     }
 
     private function determine_phone_country_code($digits_only, $billing_country) {
-        bna_debug('Determining phone country code', array(
-            'digits_only' => $digits_only,
-            'length' => strlen($digits_only),
-            'billing_country' => $billing_country,
-            'first_digit' => substr($digits_only, 0, 1),
-            'first_three' => substr($digits_only, 0, 3)
-        ));
-
         $ukraine_mobile_prefixes = array('050', '063', '066', '067', '068', '091', '092', '093', '094', '095', '096', '097', '098', '099');
 
         if (strlen($digits_only) == 10 && substr($digits_only, 0, 1) === '0') {
             $prefix = substr($digits_only, 0, 3);
             if (in_array($prefix, $ukraine_mobile_prefixes)) {
-                bna_log('Detected Ukrainian mobile number', array(
-                    'prefix' => $prefix,
-                    'number' => $digits_only
-                ));
                 return '+380';
             }
         }
@@ -1417,41 +1186,21 @@ class BNA_API {
         $address_string = trim($address_string);
 
         if (preg_match('/^(\d+[a-zA-Z]?)\s+(.+)/', $address_string, $matches)) {
-            bna_debug('Street number found at beginning', array(
-                'number' => $matches[1],
-                'pattern' => 'beginning'
-            ));
             return $matches[1];
         }
 
         if (preg_match('/(.+)\s+(\d+[a-zA-Z]?)$/', $address_string, $matches)) {
-            bna_debug('Street number found at end', array(
-                'number' => $matches[2],
-                'pattern' => 'end'
-            ));
             return $matches[2];
         }
 
         if (preg_match('/(\d+[a-zA-Z]?)/', $address_string, $matches)) {
-            bna_debug('Street number found anywhere', array(
-                'number' => $matches[1],
-                'pattern' => 'anywhere'
-            ));
             return $matches[1];
         }
 
-        bna_debug('No street number found, using default', array(
-            'address' => $address_string
-        ));
         return '1';
     }
 
     private function clean_street_name($address_string, $street_number) {
-        bna_debug('Cleaning street name', array(
-            'original_street' => $address_string,
-            'street_number' => $street_number
-        ));
-
         $street_name = trim($address_string);
         $street_name = preg_replace('/^' . preg_quote($street_number, '/') . '\s*/', '', $street_name);
         $street_name = preg_replace('/\s*' . preg_quote($street_number, '/') . '$/', '', $street_name);
@@ -1460,12 +1209,6 @@ class BNA_API {
         if (empty($street_name)) {
             $street_name = 'Main Street';
         }
-
-        bna_debug('Street name cleaned', array(
-            'original' => $address_string,
-            'number_removed' => $street_number,
-            'final_street_name' => $street_name
-        ));
 
         return $street_name;
     }
@@ -1503,10 +1246,7 @@ class BNA_API {
         $json = wp_json_encode($data, $flags);
 
         if ($json === false) {
-            bna_error('JSON encode failed', array(
-                'error' => json_last_error_msg(),
-                'data_type' => gettype($data)
-            ));
+            bna_error('JSON encode failed', array('error' => json_last_error_msg()));
             return serialize($data);
         }
 
