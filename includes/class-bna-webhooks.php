@@ -363,15 +363,12 @@ class BNA_Webhooks {
     private static function process_transaction_status($order, $transaction_id, $status, $event, $data) {
         $order_id = $order->get_id();
 
-        $order->update_meta_data('_bna_processed_transaction_id', $transaction_id);
         if (!$order->get_meta('_bna_transaction_id')) {
             $order->update_meta_data('_bna_transaction_id', $transaction_id);
         }
 
-        // Зберігаємо payment method та details
         if (isset($data['paymentMethod'])) {
             $order->update_meta_data('_bna_payment_method', $data['paymentMethod']);
-
             bna_log('Saved payment method to order', array(
                 'order_id' => $order_id,
                 'payment_method' => $data['paymentMethod']
@@ -380,22 +377,25 @@ class BNA_Webhooks {
 
         if (isset($data['paymentDetails']) && is_array($data['paymentDetails'])) {
             $order->update_meta_data('_bna_payment_details', json_encode($data['paymentDetails']));
-
             bna_log('Saved payment details to order', array(
                 'order_id' => $order_id,
                 'details_keys' => array_keys($data['paymentDetails'])
             ));
         }
 
+        $is_final_status = false;
+
         switch (strtolower($status)) {
             case 'approved':
             case 'completed':
+                $is_final_status = true;
                 self::complete_order_properly($order, $transaction_id, __('Payment approved via BNA webhook.', 'bna-smart-payment'));
                 break;
 
             case 'processed':
                 $payment_method = $data['paymentMethod'] ?? '';
                 if ($payment_method === 'EFT' || $payment_method === 'E_TRANSFER') {
+                    $is_final_status = true;
                     self::complete_order_properly($order, $transaction_id, __('Payment processed via BNA webhook (EFT/eTransfer).', 'bna-smart-payment'));
                 } else {
                     $order->add_order_note(__('Payment processing via BNA webhook.', 'bna-smart-payment'));
@@ -404,6 +404,7 @@ class BNA_Webhooks {
 
             case 'declined':
             case 'failed':
+                $is_final_status = true;
                 if (!$order->has_status(array('failed', 'cancelled'))) {
                     $order->update_status('failed', __('Payment declined via BNA webhook.', 'bna-smart-payment'));
                 }
@@ -411,20 +412,35 @@ class BNA_Webhooks {
 
             case 'canceled':
             case 'cancelled':
+                $is_final_status = true;
                 if (!$order->has_status('cancelled')) {
                     $order->update_status('cancelled', __('Payment cancelled via BNA webhook.', 'bna-smart-payment'));
                 }
                 break;
 
             case 'expired':
+                $is_final_status = true;
                 if (!$order->has_status(array('cancelled', 'failed'))) {
                     $order->update_status('failed', __('Payment expired via BNA webhook.', 'bna-smart-payment'));
                 }
                 break;
 
+            case 'processing':
+                $order->add_order_note(__('Transaction created and sent to processing.', 'bna-smart-payment'));
+                break;
+
             default:
                 $order->add_order_note(sprintf(__('Transaction status updated: %s', 'bna-smart-payment'), $status));
                 break;
+        }
+
+        if ($is_final_status) {
+            $order->update_meta_data('_bna_processed_transaction_id', $transaction_id);
+            bna_log('Transaction marked as processed (final status)', array(
+                'order_id' => $order_id,
+                'transaction_id' => $transaction_id,
+                'status' => $status
+            ));
         }
 
         $order->save();
@@ -459,10 +475,8 @@ class BNA_Webhooks {
 
         if ($should_be_completed) {
             $order->update_status('completed', $note ?: __('Payment completed for virtual/subscription products.', 'bna-smart-payment'));
-
             $order->update_meta_data('_transaction_id', $transaction_id);
             $order->update_meta_data('_bna_transaction_id', $transaction_id);
-
             $order->set_date_paid(current_time('timestamp'));
 
             bna_log('Order set to completed (virtual/subscription products)', array(
@@ -472,7 +486,6 @@ class BNA_Webhooks {
             ));
         } else {
             $order->payment_complete($transaction_id);
-
             if (!empty($note)) {
                 $order->add_order_note($note);
             }
@@ -485,12 +498,11 @@ class BNA_Webhooks {
         }
 
         self::maybe_trigger_custom_email($order, $transaction_id);
-
         $order->save();
     }
 
     private static function maybe_trigger_custom_email($order, $transaction_id) {
-        bna_log('=== CHECKING IF SHOULD SEND CUSTOM EMAIL ===', array(
+        bna_log('Checking if should send custom email', array(
             'order_id' => $order->get_id(),
             'transaction_id' => $transaction_id
         ));
@@ -766,7 +778,6 @@ class BNA_Webhooks {
 
             $transaction_id = $data['transactionId'] ?? $data['id'];
 
-            // Зберігаємо payment details для першого платежу
             if (isset($data['paymentMethod'])) {
                 $order->update_meta_data('_bna_payment_method', $data['paymentMethod']);
             }
@@ -803,7 +814,6 @@ class BNA_Webhooks {
         if ($renewal_order) {
             $transaction_id = $data['transactionId'] ?? $data['id'];
 
-            // Зберігаємо payment details для renewal order
             if (isset($data['paymentMethod'])) {
                 $renewal_order->update_meta_data('_bna_payment_method', $data['paymentMethod']);
             }
@@ -1165,14 +1175,11 @@ class BNA_Webhooks {
 
             $renewal_order->set_address($original_order->get_address('billing'), 'billing');
             $renewal_order->set_address($original_order->get_address('shipping'), 'shipping');
-
             $renewal_order->set_payment_method('bna_smart_payment');
-
             $renewal_order->update_meta_data('_bna_subscription_renewal', 'yes');
             $renewal_order->update_meta_data('_bna_original_order_id', $original_order->get_id());
             $renewal_order->update_meta_data('_bna_subscription_id', $data['subscriptionId'] ?? $data['id']);
             $renewal_order->update_meta_data('_bna_customer_id', $data['customerId'] ?? '');
-
             $renewal_order->calculate_totals();
             $renewal_order->save();
 
@@ -1201,8 +1208,6 @@ class BNA_Webhooks {
             'customer_email' => $data['email'] ?? 'unknown'
         ));
 
-        // WordPress is the source of truth for customer data
-        // We update BNA when needed, not the other way around
         if ($event === 'customer.updated') {
             bna_log('Ignoring customer.updated webhook - WordPress is source of truth', array(
                 'customer_id' => $data['id'] ?? 'unknown',
@@ -1216,7 +1221,6 @@ class BNA_Webhooks {
             );
         }
 
-        // Only process customer.created if needed (rare case)
         if ($event === 'customer.created') {
             if (isset($data['email']) && !empty($data['email'])) {
                 $user = get_user_by('email', $data['email']);
@@ -1257,7 +1261,6 @@ class BNA_Webhooks {
             }
         }
 
-        // customer.deleted - just log it
         if ($event === 'customer.deleted') {
             bna_log('Customer deleted on BNA portal', array(
                 'customer_id' => $data['id'] ?? 'unknown',
