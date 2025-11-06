@@ -1252,4 +1252,23 @@ class BNA_API {
 
         return $json;
     }
+    public function test_generate_customer_hash($customer_data) {
+        return $this->generate_customer_data_hash($customer_data);
+    }
+
+    public function test_determine_phone_country($digits_only, $billing_country) {
+        return $this->determine_phone_country_code($digits_only, $billing_country);
+    }
+
+    public function test_format_phone($digits_only, $phone_code) {
+        return $this->format_phone_number($digits_only, $phone_code);
+    }
+
+    public function test_extract_street_number($address_string) {
+        return $this->extract_street_number($address_string);
+    }
+
+    public function test_clean_street_name($address_string, $street_number) {
+        return $this->clean_street_name($address_string, $street_number);
+    }
 }

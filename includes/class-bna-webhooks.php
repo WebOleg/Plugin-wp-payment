@@ -1473,4 +1473,16 @@ class BNA_Webhooks {
             )
         ), 200);
     }
+
+    public static function test_verify_signature($raw_body, $signature, $timestamp, $secret) {
+        return self::verify_webhook_signature($raw_body, $signature, $timestamp, $secret);
+    }
+
+    public static function test_extract_data_from_json($raw_body) {
+        return self::extract_data_from_raw_json($raw_body);
+    }
+
+    public static function test_transform_payment_method_data($webhook_data) {
+        return self::transform_webhook_payment_method_data($webhook_data);
+    }
 }
