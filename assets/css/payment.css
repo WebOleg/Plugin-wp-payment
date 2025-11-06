@@ -300,6 +300,110 @@
     clear: both;
 }
 
+/* Birthdate field styling - matching WooCommerce checkout fields */
+.woocommerce form .form-row input[type="date"]#billing_birthdate,
+.woocommerce-page form .form-row input[type="date"]#billing_birthdate {
+    width: 100%;
+    padding: 12px 16px;
+    background-color: #f0f0f1;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #2c3338;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+    box-sizing: border-box;
+}
+
+.woocommerce form .form-row input[type="date"]#billing_birthdate:hover,
+.woocommerce-page form .form-row input[type="date"]#billing_birthdate:hover {
+    background-color: #f6f7f7;
+    border-color: #c3c4c7;
+}
+
+.woocommerce form .form-row input[type="date"]#billing_birthdate:focus,
+.woocommerce-page form .form-row input[type="date"]#billing_birthdate:focus {
+    background-color: #fff;
+    border-color: #2271b1;
+    outline: 2px solid #2271b1;
+    outline-offset: 0;
+}
+
+/* Calendar picker icon */
+input[type="date"]#billing_birthdate::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+    padding: 4px;
+    border-radius: 3px;
+    filter: grayscale(0.3);
+}
+
+input[type="date"]#billing_birthdate::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+    background-color: rgba(0, 0, 0, 0.05);
+    filter: grayscale(0);
+}
+
+/* Validation states */
+.woocommerce form .form-row.woocommerce-validated input[type="date"]#billing_birthdate {
+    border-color: #46b450;
+}
+
+.woocommerce form .form-row.woocommerce-invalid input[type="date"]#billing_birthdate {
+    border-color: #d63638;
+}
+
+/* Label styling */
+#billing_birthdate_field label {
+    font-weight: 500;
+    color: #333;
+    margin-bottom: 4px;
+}
+
+#billing_birthdate_field .required {
+    color: #d63638;
+    text-decoration: none;
+    font-weight: 700;
+}
+
+/* Input wrapper */
+#billing_birthdate_field .woocommerce-input-wrapper {
+    display: block;
+}
+
+/* Responsive */
+@media screen and (max-width: 768px) {
+    .woocommerce form .form-row input[type="date"]#billing_birthdate,
+    .woocommerce-page form .form-row input[type="date"]#billing_birthdate {
+        padding: 10px 14px;
+        font-size: 16px;
+    }
+}
+
+/* Firefox date input styling */
+input[type="date"]#billing_birthdate::-moz-focus-inner {
+    border: 0;
+    padding: 0;
+}
+
+/* Remove spinner in Firefox */
+input[type="date"]#billing_birthdate {
+    -moz-appearance: textfield;
+}
+
+/* Placeholder color when empty */
+input[type="date"]#billing_birthdate::-webkit-datetime-edit-text,
+input[type="date"]#billing_birthdate::-webkit-datetime-edit-month-field,
+input[type="date"]#billing_birthdate::-webkit-datetime-edit-day-field,
+input[type="date"]#billing_birthdate::-webkit-datetime-edit-year-field {
+    color: #2c3338;
+}
+
+/* When input is invalid/empty */
+input[type="date"]#billing_birthdate:invalid {
+    color: #757575;
+}
+
 @media (max-width: 768px) {
     .form-row-first,
     .form-row-last {
