@@ -1,0 +1,16 @@
+{
+    "name": "bna/smart-payment",
+    "description": "BNA Smart Payment Plugin",
+    "type": "wordpress-plugin",
+    "require": {
+        "php": ">=7.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.5"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "BNA\\Tests\\": "tests/"
+        }
+    }
+}

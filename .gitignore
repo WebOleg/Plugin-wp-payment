@@ -63,3 +63,7 @@ tests/_output/*
 # Backup files
 *.sql
 *.backup
+
+vendor/
+composer.lock
+.phpunit.result.cache
