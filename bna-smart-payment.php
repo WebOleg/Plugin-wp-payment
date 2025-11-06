@@ -46,6 +46,8 @@ class BNA_Smart_Payment {
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
         add_action('plugins_loaded', array($this, 'init'));
+        add_action('admin_notices', array($this, 'activation_warning_notice'));
+        add_action('admin_notices', array($this, 'settings_page_field_check'));
     }
 
     private function load_core_dependencies() {
@@ -104,7 +106,6 @@ class BNA_Smart_Payment {
 
     private function load_woocommerce_dependencies() {
         require_once BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/class-bna-gateway.php';
-
     }
 
     public function add_gateway_class($gateways) {
@@ -114,9 +115,7 @@ class BNA_Smart_Payment {
 
     public function add_email_classes($email_classes) {
         $email_classes['WC_BNA_Payment_Approved_Email'] = include BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/emails/class-wc-bna-payment-approved-email.php';
-
         bna_debug('BNA custom email class registered');
-
         return $email_classes;
     }
 
@@ -412,11 +411,90 @@ class BNA_Smart_Payment {
         <?php
     }
 
+    public function activation_warning_notice() {
+        $missing_fields = get_transient('bna_activation_warning');
+
+        if ($missing_fields && !empty($missing_fields)) {
+            ?>
+            <div class="notice notice-warning is-dismissible">
+                <h3><?php _e('⚠️ BNA Smart Payment - Configuration Warning', 'bna-smart-payment'); ?></h3>
+                <p>
+                    <strong><?php _e('The following critical billing fields are not properly configured in WooCommerce:', 'bna-smart-payment'); ?></strong>
+                </p>
+                <ul style="list-style: disc; margin-left: 20px;">
+                    <?php foreach ($missing_fields as $field_key => $field_info): ?>
+                        <li>
+                            <strong><?php echo esc_html($field_info['label']); ?></strong>
+                            <?php if ($field_info['status'] === 'missing'): ?>
+                                <span style="color: #d63638;"><?php _e('(Missing)', 'bna-smart-payment'); ?></span>
+                            <?php else: ?>
+                                <span style="color: #dba617;"><?php _e('(Not Required)', 'bna-smart-payment'); ?></span>
+                            <?php endif; ?>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+                <p>
+                    <?php _e('BNA Smart Payment requires these fields to process payments correctly.', 'bna-smart-payment'); ?>
+                    <?php
+                    printf(
+                        __('Please check your <a href="%s">WooCommerce Settings</a>.', 'bna-smart-payment'),
+                        admin_url('admin.php?page=wc-settings&tab=checkout')
+                    );
+                    ?>
+                </p>
+                <p>
+                    <em><?php _e('Note: These are standard WooCommerce fields and should be enabled by default. This warning appears if they have been disabled by a theme or another plugin.', 'bna-smart-payment'); ?></em>
+                </p>
+            </div>
+            <?php
+
+            delete_transient('bna_activation_warning');
+        }
+    }
+
+    public function settings_page_field_check() {
+        $screen = get_current_screen();
+
+        if (!$screen || strpos($screen->id, 'woocommerce') === false) {
+            return;
+        }
+
+        $missing_fields = $this->check_critical_billing_fields();
+
+        if (!empty($missing_fields)) {
+            ?>
+            <div class="notice notice-error">
+                <h3><?php _e('🚨 BNA Smart Payment - Critical Configuration Issue', 'bna-smart-payment'); ?></h3>
+                <p>
+                    <strong><?php _e('The following required billing fields are not properly configured:', 'bna-smart-payment'); ?></strong>
+                </p>
+                <ul style="list-style: disc; margin-left: 20px;">
+                    <?php foreach ($missing_fields as $field_key => $field_info): ?>
+                        <li>
+                            <code><?php echo esc_html($field_key); ?></code> -
+                            <strong><?php echo esc_html($field_info['label']); ?></strong>
+                            <?php if ($field_info['status'] === 'missing'): ?>
+                                <span style="color: #d63638;"><?php _e('(Field is missing)', 'bna-smart-payment'); ?></span>
+                            <?php else: ?>
+                                <span style="color: #dba617;"><?php _e('(Field is not set as required)', 'bna-smart-payment'); ?></span>
+                            <?php endif; ?>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+                <p>
+                    <strong><?php _e('Payment processing will fail without these fields!', 'bna-smart-payment'); ?></strong><br>
+                    <?php _e('Please enable and set these fields as required in WooCommerce settings.', 'bna-smart-payment'); ?>
+                </p>
+            </div>
+            <?php
+        }
+    }
+
     public function activate() {
         bna_log('Plugin activated', array('version' => BNA_SMART_PAYMENT_VERSION));
         $this->check_requirements();
+        $this->check_billing_fields_on_activation();
         $this->set_default_options();
-
         $this->maybe_upgrade();
         flush_rewrite_rules();
     }
@@ -441,6 +519,58 @@ class BNA_Smart_Payment {
         }
     }
 
+    private function check_billing_fields_on_activation() {
+        if (!class_exists('WooCommerce')) {
+            return;
+        }
+
+        $missing_fields = $this->check_critical_billing_fields();
+
+        if (!empty($missing_fields)) {
+            set_transient('bna_activation_warning', $missing_fields, 60);
+
+            bna_log('Billing fields validation warning', array(
+                'missing_fields' => array_keys($missing_fields)
+            ));
+        }
+    }
+
+    private function check_critical_billing_fields() {
+        $critical_fields = array(
+            'billing_first_name' => __('First Name', 'bna-smart-payment'),
+            'billing_last_name'  => __('Last Name', 'bna-smart-payment'),
+            'billing_email'      => __('Email Address', 'bna-smart-payment'),
+            'billing_country'    => __('Country / Region', 'bna-smart-payment'),
+            'billing_address_1'  => __('Street Address', 'bna-smart-payment'),
+            'billing_city'       => __('Town / City', 'bna-smart-payment'),
+            'billing_postcode'   => __('Postcode / ZIP', 'bna-smart-payment')
+        );
+
+        $countries = new WC_Countries();
+        $billing_fields = $countries->get_address_fields('', 'billing_');
+
+        $missing_or_optional = array();
+
+        foreach ($critical_fields as $field_key => $field_label) {
+            if (!isset($billing_fields[$field_key])) {
+                $missing_or_optional[$field_key] = array(
+                    'label' => $field_label,
+                    'status' => 'missing'
+                );
+                continue;
+            }
+
+            if (empty($billing_fields[$field_key]['required'])) {
+                $missing_or_optional[$field_key] = array(
+                    'label' => $field_label,
+                    'status' => 'not_required'
+                );
+            }
+        }
+
+        return $missing_or_optional;
+    }
+
     private function set_default_options() {
         $defaults = array(
             'bna_smart_payment_environment' => 'staging',
@@ -453,7 +583,6 @@ class BNA_Smart_Payment {
             'bna_smart_payment_enable_birthdate' => 'yes',
             'bna_smart_payment_enable_shipping_address' => 'no',
             'bna_smart_payment_debug_mode' => 'no',
-
             'bna_smart_payment_enable_subscriptions' => 'no',
             'bna_smart_payment_allow_subscription_trials' => 'yes',
             'bna_smart_payment_allow_signup_fees' => 'yes',
