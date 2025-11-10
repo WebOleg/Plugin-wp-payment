@@ -3,7 +3,7 @@
  * Plugin Name: BNA Smart Payment Gateway
  * Plugin URI: https://bnasmartpayment.com
  * Description: WooCommerce payment gateway for BNA Smart Payment with iframe, HMAC webhooks, shipping address support, customer data sync, payment methods management and subscriptions.
- * Version: 1.9.0
+ * Version: 1.9.1
  * Author: BNA Smart Payment
  * Text Domain: bna-smart-payment
  * Requires at least: 5.0
@@ -11,6 +11,7 @@
  * WC requires at least: 5.0
  * WC tested up to: 8.0
  *
+ * @since 1.9.1 Added phone input mask with country selector
  * @since 1.9.0 Updated subscription support - replaced custom product type with product meta fields
  * @since 1.8.0 Added HMAC webhook signature verification and enhanced security
  * @since 1.7.0 Payment methods management and auto-saving
@@ -21,7 +22,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('BNA_SMART_PAYMENT_VERSION', '1.9.0');
+define('BNA_SMART_PAYMENT_VERSION', '1.9.1');
 define('BNA_SMART_PAYMENT_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_PATH', plugin_dir_path(__FILE__));
 define('BNA_SMART_PAYMENT_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -101,6 +102,8 @@ class BNA_Smart_Payment {
         add_action('wp_ajax_bna_validate_cart_item', array($this, 'ajax_validate_cart_item'));
         add_action('wp_ajax_nopriv_bna_validate_cart_item', array($this, 'ajax_validate_cart_item'));
 
+        add_filter('woocommerce_form_field_args', array($this, 'add_phone_field_class'), 10, 3);
+
         bna_log('BNA Smart Payment initialized successfully');
     }
 
@@ -117,6 +120,17 @@ class BNA_Smart_Payment {
         $email_classes['WC_BNA_Payment_Approved_Email'] = include BNA_SMART_PAYMENT_PLUGIN_PATH . 'includes/emails/class-wc-bna-payment-approved-email.php';
         bna_debug('BNA custom email class registered');
         return $email_classes;
+    }
+
+    public function add_phone_field_class($args, $key, $value) {
+        if ($key === 'billing_phone') {
+            if (!isset($args['class'])) {
+                $args['class'] = array();
+            }
+            $args['class'][] = 'bna-phone-input';
+            bna_debug('BNA phone input class added to billing_phone field');
+        }
+        return $args;
     }
 
     public function load_frontend_assets() {
@@ -154,6 +168,25 @@ class BNA_Smart_Payment {
                 BNA_SMART_PAYMENT_VERSION,
                 true
             );
+
+            if (is_checkout()) {
+                wp_enqueue_style(
+                    'bna-tel-css',
+                    BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/tel-flags-input/tel.css',
+                    array(),
+                    BNA_SMART_PAYMENT_VERSION
+                );
+
+                wp_enqueue_script(
+                    'bna-tel-js',
+                    BNA_SMART_PAYMENT_PLUGIN_URL . 'assets/tel-flags-input/tel.js',
+                    array('jquery'),
+                    BNA_SMART_PAYMENT_VERSION,
+                    true
+                );
+
+                bna_debug('Phone input mask assets loaded');
+            }
 
             if ($this->should_load_cart_validation()) {
                 wp_enqueue_script(
@@ -720,7 +753,8 @@ class BNA_Smart_Payment {
                 'error_handling' => '1.6.1',
                 'payment_methods' => '1.7.0',
                 'hmac_webhooks' => '1.8.0',
-                'subscriptions' => '1.9.0'
+                'subscriptions' => '1.9.0',
+                'phone_input_mask' => '1.9.1'
             )
         );
     }

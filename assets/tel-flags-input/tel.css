@@ -1,0 +1,92 @@
+@font-face {
+	font-family: "Twemoji Country Flags";
+	src: url(TwemojiCountryFlags.woff2)
+}
+
+.phone-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  z-index: 3;
+  > * {
+    box-sizing: border-box;
+  }
+}
+
+.phone-selected {
+  padding: 0 22px 0 16px;
+  cursor: pointer;
+  font-family: "Twemoji Country Flags";
+  position: absolute;
+  left: 0;
+  height: 100%;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.phone-selected::before {
+  content: "▼";
+  font-size: 9px;
+  margin-left: 6px;
+  color: #4d4d4d;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 6px;
+  transition: all 0.2s ease;
+}
+
+.phone-wrapper.open .phone-selected::before {
+  transform: translateY(-50%) rotateX(180deg);
+}
+
+.phone-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: all 0.2s ease;
+  z-index: 5;
+  margin-top: 6px;
+  padding: 6px;
+}
+
+.phone-dropdown .phone-list {
+  padding: 0 !important;
+  margin: 0 !important;
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.phone-wrapper.open .phone-dropdown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.phone-dropdown li {
+  padding: 6px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  font-family: "Twemoji Country Flags";
+  font-size: 14px;
+}
+
+.phone-dropdown li:hover {
+  background: #f2f2f2;
+}
+
+.phone-wrapper input {
+  padding-left: 52px !important;
+}
+

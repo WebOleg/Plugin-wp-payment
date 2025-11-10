@@ -1088,19 +1088,36 @@ class BNA_API {
 
     private function process_phone_number($order) {
         $phone = trim($order->get_billing_phone());
-        $billing_country = $order->get_billing_country();
 
         if (empty($phone)) {
             return null;
         }
 
-        $digits_only = preg_replace('/\D/', '', $phone);
-        $phone_code = $this->determine_phone_country_code($digits_only, $billing_country);
-        $phone_number = $this->format_phone_number($digits_only, $phone_code);
+        $phone_code = null;
+
+        $phone_code_from_meta = $order->get_meta('_billing_phone_code');
+        if (!empty($phone_code_from_meta)) {
+            $phone_code = sanitize_text_field($phone_code_from_meta);
+            bna_debug('Phone code from order meta', array('code' => $phone_code));
+        }
+
+        if (!$phone_code) {
+            $phone_code = $this->determine_phone_country_code($phone);
+            bna_debug('Phone code extracted from phone value', array('code' => $phone_code));
+        }
+
+        $phone_number = $this->format_phone_number($phone, $phone_code);
 
         if (!$phone_number) {
             return null;
         }
+
+        bna_debug('Phone processing result', array(
+            'original' => $phone,
+            'extracted_code' => $phone_code,
+            'formatted_number' => $phone_number,
+            'source' => !empty($phone_code_from_meta) ? 'order_meta' : 'extracted'
+        ));
 
         return array(
             'code' => $phone_code,
@@ -1108,57 +1125,58 @@ class BNA_API {
         );
     }
 
-    private function determine_phone_country_code($digits_only, $billing_country) {
-        $ukraine_mobile_prefixes = array('050', '063', '066', '067', '068', '091', '092', '093', '094', '095', '096', '097', '098', '099');
+    private function determine_phone_country_code($phone_value) {
+        $cleaned = preg_replace('/[^\d+]/', '', $phone_value);
 
-        if (strlen($digits_only) == 10 && substr($digits_only, 0, 1) === '0') {
-            $prefix = substr($digits_only, 0, 3);
-            if (in_array($prefix, $ukraine_mobile_prefixes)) {
-                return '+380';
+        if (preg_match('/^\+(\d{1,4})/', $cleaned, $matches)) {
+            $code = '+' . $matches[1];
+
+            $valid_codes = array(
+                '+1', '+30', '+31', '+32', '+33', '+34', '+36', '+39', '+40', '+41',
+                '+44', '+45', '+46', '+47', '+48', '+49', '+351', '+358', '+370',
+                '+371', '+372', '+380', '+420', '+421'
+            );
+
+            if (in_array($code, $valid_codes)) {
+                bna_debug('Country code extracted from phone', array(
+                    'original' => $phone_value,
+                    'extracted' => $code
+                ));
+                return $code;
             }
         }
 
-        $phone_country_map = array(
-            'CA' => '+1',
-            'US' => '+1',
-            'GB' => '+44',
-            'DE' => '+49',
-            'FR' => '+33',
-            'UA' => '+380',
-            'PL' => '+48',
-            'AU' => '+61',
-            'JP' => '+81',
-            'CN' => '+86',
-            'IN' => '+91',
-            'BR' => '+55',
-            'MX' => '+52'
-        );
-
-        if (isset($phone_country_map[$billing_country])) {
-            return $phone_country_map[$billing_country];
-        }
+        bna_error('Invalid phone format - no valid country code', array(
+            'phone' => $phone_value
+        ));
 
         return '+1';
     }
 
-    private function format_phone_number($digits_only, $phone_code) {
-        if ($phone_code === '+380') {
-            if (strlen($digits_only) == 10 && substr($digits_only, 0, 1) === '0') {
-                return substr($digits_only, 1);
-            }
-            if (strlen($digits_only) == 9) {
-                return $digits_only;
-            }
+    private function format_phone_number($phone_value, $phone_code) {
+        $digits_only = preg_replace('/\D/', '', $phone_value);
+
+        $code_digits = preg_replace('/\D/', '', $phone_code);
+
+        if (strpos($digits_only, $code_digits) === 0) {
+            $digits_only = substr($digits_only, strlen($code_digits));
         }
 
-        if ($phone_code === '+1') {
-            if (strlen($digits_only) == 11 && substr($digits_only, 0, 1) === '1') {
-                return substr($digits_only, 1);
-            }
-            if (strlen($digits_only) == 10) {
-                return $digits_only;
-            }
+        $codes_with_leading_zero = array(
+            '+30', '+31', '+32', '+33', '+36', '+39', '+40', '+41',
+            '+44', '+45', '+46', '+47', '+48', '+49', '+351', '+358',
+            '+370', '+371', '+372', '+380', '+420', '+421'
+        );
+
+        if (in_array($phone_code, $codes_with_leading_zero)) {
+            $digits_only = ltrim($digits_only, '0');
         }
+
+        bna_debug('Phone number formatted', array(
+            'original' => $phone_value,
+            'phone_code' => $phone_code,
+            'result' => $digits_only
+        ));
 
         return $digits_only;
     }
@@ -1252,6 +1270,7 @@ class BNA_API {
 
         return $json;
     }
+
     public function test_generate_customer_hash($customer_data) {
         return $this->generate_customer_data_hash($customer_data);
     }
