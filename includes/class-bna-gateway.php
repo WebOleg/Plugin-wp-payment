@@ -54,6 +54,10 @@ class BNA_Gateway extends WC_Payment_Gateway {
         add_action('woocommerce_checkout_update_customer_data', array($this, 'save_updated_billing_data'));
         add_action('woocommerce_checkout_update_order_meta', array($this, 'update_customer_from_order'), 20);
 
+        if ($this->get_option('enable_phone') === 'yes') {
+            add_action('woocommerce_checkout_update_order_meta', array($this, 'save_phone_code_to_order'), 10, 1);
+        }
+
         if ($this->get_option('enable_birthdate') === 'yes') {
             add_filter('woocommerce_billing_fields', array($this, 'add_birthdate_field'));
             add_action('woocommerce_checkout_process', array($this, 'validate_birthdate'));
@@ -278,6 +282,22 @@ class BNA_Gateway extends WC_Payment_Gateway {
         }
 
         return $saved;
+    }
+
+    public function save_phone_code_to_order($order_id) {
+        if (isset($_POST['billing_phone_code']) && !empty($_POST['billing_phone_code'])) {
+            $order = wc_get_order($order_id);
+            if ($order) {
+                $phone_code = sanitize_text_field($_POST['billing_phone_code']);
+                $order->update_meta_data('_billing_phone_code', $phone_code);
+                $order->save();
+
+                bna_debug('Phone code saved to order meta', array(
+                    'order_id' => $order_id,
+                    'phone_code' => $phone_code
+                ));
+            }
+        }
     }
 
     public function validate_subscription_checkout() {
@@ -944,12 +964,12 @@ class BNA_Gateway extends WC_Payment_Gateway {
         $order->save();
     }
 
-        private function get_or_create_iframe_url($order) {
+    private function get_or_create_iframe_url($order) {
         $stored_token = $order->get_meta('_bna_checkout_token');
         $token_created = $order->get_meta('_bna_token_created');
-        
+
         $token_age = $token_created ? (time() - intval($token_created)) : 9999;
-        
+
         if ($stored_token && $token_created && $token_age > 0 && $token_age < 1800) {
             bna_log('Using existing token', array(
                 'order_id' => $order->get_id(),
@@ -958,12 +978,12 @@ class BNA_Gateway extends WC_Payment_Gateway {
             ));
             return $this->api->get_iframe_url($stored_token);
         }
-        
+
         bna_log('Generating new checkout token', array(
             'order_id' => $order->get_id(),
             'reason' => !$stored_token ? 'no_token' : ($token_age >= 1800 ? 'expired' : 'invalid_age')
         ));
-        
+
         $token_result = $this->api->generate_checkout_token($order);
         if (is_wp_error($token_result)) {
             bna_error('Token generation failed', array(
@@ -972,44 +992,35 @@ class BNA_Gateway extends WC_Payment_Gateway {
             ));
             return false;
         }
-        
+
         $order->update_meta_data('_bna_checkout_token', $token_result['token']);
         $order->update_meta_data('_bna_token_created', time());
         $order->save();
-        
+
         bna_log('New token saved', array(
             'order_id' => $order->get_id(),
             'token_length' => strlen($token_result['token'])
         ));
-        
+
         return $this->api->get_iframe_url($token_result['token']);
     }
+
     private function redirect_with_error($order, $message) {
         wc_add_notice($message, 'error');
         wp_safe_redirect(wc_get_checkout_url());
         exit;
     }
 
-    /**
-     * Check if custom emails are enabled
-     *
-     * @return bool
-     */
     public function is_custom_emails_enabled() {
         return $this->get_option('enable_custom_emails') === 'yes';
     }
 
-    /**
-     * Display admin notice when custom emails are enabled
-     */
     public function display_custom_email_notice() {
-        // Only show on WooCommerce settings page
         $screen = get_current_screen();
         if (!$screen || $screen->id !== 'woocommerce_page_wc-settings') {
             return;
         }
 
-        // Only show if custom emails are enabled
         if ($this->get_option('enable_custom_emails') !== 'yes') {
             return;
         }
