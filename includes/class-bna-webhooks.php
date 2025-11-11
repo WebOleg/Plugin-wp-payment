@@ -55,7 +55,20 @@ class BNA_Webhooks {
             'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
         ));
 
-        $webhook_secret = get_option('bna_smart_payment_webhook_secret', '');
+        $webhook_secret = '';
+        $gateways = WC()->payment_gateways->get_available_payment_gateways();
+        if (isset($gateways['bna_smart_payment'])) {
+            $gateway = $gateways['bna_smart_payment'];
+            $webhook_secret = $gateway->get_option('webhook_secret', '');
+
+            bna_log('Webhook secret retrieved from gateway', array(
+                'has_secret' => !empty($webhook_secret),
+                'secret_length' => strlen($webhook_secret)
+            ));
+        } else {
+            bna_error('BNA gateway not available for webhook processing');
+        }
+
         if (!empty($webhook_secret)) {
             $signature_valid = self::verify_webhook_signature($raw_body, $signature, $timestamp, $webhook_secret);
 
@@ -101,22 +114,24 @@ class BNA_Webhooks {
             return false;
         }
 
-        $data_json = self::extract_data_from_raw_json($raw_body);
-        if ($data_json === false) {
-            bna_error('Failed to extract data from webhook payload');
+        $payload = json_decode($raw_body, true);
+        if (!$payload || !isset($payload['data'])) {
+            bna_error('Invalid payload structure - missing data field');
             return false;
         }
 
-        $data_hash = hash('sha256', $data_json);
-        $signing_string = $data_hash . ':' . $timestamp;
-        $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
+        $computed_signature = self::generate_signature($payload['data'], $webhook_secret, $timestamp);
+
+        if (!$computed_signature) {
+            bna_error('Failed to generate signature');
+            return false;
+        }
 
         $is_valid = hash_equals($signature, $computed_signature);
 
         if ($is_valid) {
-            bna_log('Webhook signature verified', array(
-                'timestamp' => $timestamp,
-                'data_size' => strlen($data_json)
+            bna_log('Webhook signature verified successfully', array(
+                'timestamp' => $timestamp
             ));
         } else {
             bna_error('Webhook signature mismatch', array(
@@ -129,18 +144,35 @@ class BNA_Webhooks {
         return $is_valid;
     }
 
-    private static function extract_data_from_raw_json($raw_body) {
-        $pattern = '/"data"\s*:\s*(\{[^}]*(?:\{[^}]*\}[^}]*)*\})\s*\}$/';
-        if (preg_match($pattern, $raw_body, $matches)) {
-            return trim($matches[1]);
+    private static function generate_signature($payload, $secret, $timestamp) {
+        if (is_string($payload)) {
+            $decoded = json_decode($payload, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                bna_error('Invalid JSON payload', array('error' => json_last_error_msg()));
+                return false;
+            }
+            $payload = $decoded;
         }
 
-        $pattern = '/"data"\s*:\s*(\{(?:[^{}]|(?1))*\})/';
-        if (preg_match($pattern, $raw_body, $matches)) {
-            return trim($matches[1]);
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+
+        if ($json === false) {
+            bna_error('Failed to encode JSON payload');
+            return false;
         }
 
-        return false;
+        $data_hash = hash('sha256', $json);
+        $signing_string = $data_hash . ':' . $timestamp;
+        $signature = hash_hmac('sha256', $signing_string, $secret);
+
+        bna_log('Signature generation details', array(
+            'json_length' => strlen($json),
+            'data_hash' => substr($data_hash, 0, 16) . '...',
+            'timestamp' => $timestamp,
+            'signature' => substr($signature, 0, 16) . '...'
+        ));
+
+        return $signature;
     }
 
     private static function process_webhook($payload) {
@@ -1217,7 +1249,6 @@ class BNA_Webhooks {
         return array('status' => 'processed', 'event' => $event);
     }
 
-
     private static function handle_payment_method_event($event, $data) {
         if (!isset($data['customerId'])) {
             bna_error('Payment method event missing customerId', array(
@@ -1448,11 +1479,7 @@ class BNA_Webhooks {
         );
 
         $timestamp = gmdate('Y-m-d\TH:i:s.000\Z');
-
-        $string_data = json_encode($test_payload, 0);
-        $data_hash = hash('sha256', $string_data);
-        $signing_string = $data_hash . ':' . $timestamp;
-        $signature = hash_hmac('sha256', $signing_string, $webhook_secret);
+        $signature = self::generate_signature($test_payload['data'], $webhook_secret, $timestamp);
 
         return new WP_REST_Response(array(
             'webhook_url' => rest_url('bna/v1/webhook'),
@@ -1476,10 +1503,6 @@ class BNA_Webhooks {
 
     public static function test_verify_signature($raw_body, $signature, $timestamp, $secret) {
         return self::verify_webhook_signature($raw_body, $signature, $timestamp, $secret);
-    }
-
-    public static function test_extract_data_from_json($raw_body) {
-        return self::extract_data_from_raw_json($raw_body);
     }
 
     public static function test_transform_payment_method_data($webhook_data) {

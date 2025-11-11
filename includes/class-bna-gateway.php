@@ -967,21 +967,38 @@ class BNA_Gateway extends WC_Payment_Gateway {
     private function get_or_create_iframe_url($order) {
         $stored_token = $order->get_meta('_bna_checkout_token');
         $token_created = $order->get_meta('_bna_token_created');
+        $stored_iframe_id = $order->get_meta('_bna_token_iframe_id');
 
+        $current_iframe_id = $this->iframe_id;
         $token_age = $token_created ? (time() - intval($token_created)) : 9999;
 
-        if ($stored_token && $token_created && $token_age > 0 && $token_age < 1800) {
+        if ($stored_token &&
+            $token_created &&
+            $token_age > 0 &&
+            $token_age < 1800 &&
+            $stored_iframe_id === $current_iframe_id) {
+
             bna_log('Using existing token', array(
                 'order_id' => $order->get_id(),
                 'token_age_seconds' => $token_age,
-                'token_created_timestamp' => $token_created
+                'iframe_id' => $current_iframe_id
             ));
             return $this->api->get_iframe_url($stored_token);
         }
 
+        if ($stored_token && $stored_iframe_id && $stored_iframe_id !== $current_iframe_id) {
+            bna_log('iFrame ID changed - invalidating token', array(
+                'order_id' => $order->get_id(),
+                'old_iframe_id' => $stored_iframe_id,
+                'new_iframe_id' => $current_iframe_id
+            ));
+        }
+
         bna_log('Generating new checkout token', array(
             'order_id' => $order->get_id(),
-            'reason' => !$stored_token ? 'no_token' : ($token_age >= 1800 ? 'expired' : 'invalid_age')
+            'reason' => !$stored_token ? 'no_token' :
+                ($stored_iframe_id !== $current_iframe_id ? 'iframe_changed' :
+                    ($token_age >= 1800 ? 'expired' : 'invalid_age'))
         ));
 
         $token_result = $this->api->generate_checkout_token($order);
@@ -995,11 +1012,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         $order->update_meta_data('_bna_checkout_token', $token_result['token']);
         $order->update_meta_data('_bna_token_created', time());
+        $order->update_meta_data('_bna_token_iframe_id', $current_iframe_id);
         $order->save();
 
         bna_log('New token saved', array(
             'order_id' => $order->get_id(),
-            'token_length' => strlen($token_result['token'])
+            'token_length' => strlen($token_result['token']),
+            'iframe_id' => $current_iframe_id
         ));
 
         return $this->api->get_iframe_url($token_result['token']);

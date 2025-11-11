@@ -9,40 +9,59 @@ class BNA_Order_Display {
     public static function init() {
         add_filter('woocommerce_my_account_my_orders_columns', array(__CLASS__, 'add_payment_method_column'));
         add_action('woocommerce_my_account_my_orders_column_bna-payment-method', array(__CLASS__, 'render_payment_method_column'));
-        
+
         add_filter('woocommerce_get_order_item_totals', array(__CLASS__, 'add_all_details_to_order_totals'), 10, 2);
-        
+
         add_action('wp_head', array(__CLASS__, 'add_custom_styles'), 999);
-        
-        add_filter('woocommerce_locate_template', array(__CLASS__, 'locate_bna_template'), 10, 3);
+
+        add_filter('woocommerce_locate_template', array(__CLASS__, 'locate_bna_template'), 20, 3);
     }
 
     public static function locate_bna_template($template, $template_name, $template_path) {
+        if (strpos($template_name, 'order-details-customer') !== false) {
+            bna_log('Template locate request', array(
+                'template_name' => $template_name,
+                'template_path' => $template_path,
+                'current_template' => $template
+            ));
+        }
+
         $our_templates = array(
             'checkout/payment-form.php',
             'myaccount/subscriptions.php',
-            'single-product/bna-subscription-details.php'
+            'single-product/bna-subscription-details.php',
+            'order/order-details-customer.php'
         );
-        
+
         if (!in_array($template_name, $our_templates)) {
             return $template;
         }
-        
+
         $theme_template = locate_template(array(
             'woocommerce/' . $template_name,
             $template_name
         ));
-        
+
         if ($theme_template) {
+            bna_log('Using theme template', array('path' => $theme_template));
             return $theme_template;
         }
-        
+
         $plugin_template = BNA_SMART_PAYMENT_PLUGIN_PATH . 'templates/' . $template_name;
-        
+
         if (file_exists($plugin_template)) {
+            bna_log('Using plugin template', array(
+                'path' => $plugin_template,
+                'exists' => true
+            ));
             return $plugin_template;
         }
-        
+
+        bna_log('Template not found in plugin', array(
+            'expected_path' => $plugin_template,
+            'exists' => false
+        ));
+
         return $template;
     }
 
@@ -67,15 +86,15 @@ class BNA_Order_Display {
 
     public static function add_payment_method_column($columns) {
         $new_columns = array();
-        
+
         foreach ($columns as $key => $label) {
             $new_columns[$key] = $label;
-            
+
             if ($key === 'order-status') {
                 $new_columns['bna-payment-method'] = __('Payment Method', 'bna-smart-payment');
             }
         }
-        
+
         return $new_columns;
     }
 
@@ -106,10 +125,10 @@ class BNA_Order_Display {
         }
 
         $new_rows = array();
-        
+
         foreach ($total_rows as $key => $row) {
             $new_rows[$key] = $row;
-            
+
             if ($key === 'payment_method' && !empty($transaction_id)) {
                 $new_rows['transaction_id'] = array(
                     'label' => __('Transaction ID:', 'bna-smart-payment'),
@@ -117,7 +136,7 @@ class BNA_Order_Display {
                 );
             }
         }
-        
+
         $billing_email = $order->get_billing_email();
         $billing_phone = $order->get_billing_phone();
         $billing_address = $order->get_formatted_billing_address();
