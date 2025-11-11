@@ -69,9 +69,11 @@ class BNA_API {
     );
 
     public function __construct() {
-        $this->access_key = get_option('bna_smart_payment_access_key', '');
-        $this->secret_key = get_option('bna_smart_payment_secret_key', '');
-        $this->environment = get_option('bna_smart_payment_environment', 'staging');
+        $gateway_settings = get_option('woocommerce_bna_smart_payment_settings', array());
+
+        $this->access_key = isset($gateway_settings['access_key']) ? $gateway_settings['access_key'] : '';
+        $this->secret_key = isset($gateway_settings['secret_key']) ? $gateway_settings['secret_key'] : '';
+        $this->environment = isset($gateway_settings['environment']) ? $gateway_settings['environment'] : 'staging';
         $this->base_url = $this->get_api_url();
 
         bna_debug('BNA API initialized', array(
@@ -89,6 +91,11 @@ class BNA_API {
             return 'https://api-service.bnasmartpayment.com';
         }
         return 'https://dev-api-service.bnasmartpayment.com';
+    }
+
+    private function get_current_iframe_id() {
+        $gateway_settings = get_option('woocommerce_bna_smart_payment_settings', array());
+        return isset($gateway_settings['iframe_id']) ? $gateway_settings['iframe_id'] : '';
     }
 
     public function test_connection() {
@@ -645,9 +652,44 @@ class BNA_API {
         }
     }
 
+    private function clear_customer_data($order) {
+        try {
+            $order->delete_meta_data('_bna_customer_id');
+            $order->delete_meta_data('_bna_customer_iframe_id');
+            $order->delete_meta_data('_bna_customer_data_hash');
+
+            if (is_user_logged_in()) {
+                $wp_customer_id = $order->get_customer_id();
+                if ($wp_customer_id) {
+                    delete_user_meta($wp_customer_id, '_bna_customer_id');
+                    delete_user_meta($wp_customer_id, '_bna_customer_iframe_id');
+                    delete_user_meta($wp_customer_id, '_bna_customer_data_hash');
+
+                    bna_log('Cleared customer data from user meta', array(
+                        'wp_customer_id' => $wp_customer_id
+                    ));
+                }
+            }
+
+            $order->save();
+
+            bna_log('Cleared customer data from order', array(
+                'order_id' => $order->get_id()
+            ));
+
+        } catch (Exception $e) {
+            bna_error('Exception in clear_customer_data', array(
+                'order_id' => $order->get_id(),
+                'exception' => $e->getMessage()
+            ));
+        }
+    }
+
     public function generate_checkout_token($order) {
         try {
-            $iframe_id = get_option('bna_smart_payment_iframe_id');
+            $gateway_settings = get_option('woocommerce_bna_smart_payment_settings');
+            $iframe_id = isset($gateway_settings['iframe_id']) ? $gateway_settings['iframe_id'] : '';
+
             if (empty($iframe_id)) {
                 bna_error('iFrame ID not configured');
                 return new WP_Error('missing_iframe_id', 'iFrame ID not configured');
@@ -657,7 +699,8 @@ class BNA_API {
 
             bna_log('Generating checkout token', array(
                 'order_id' => $order->get_id(),
-                'is_subscription' => $is_subscription_order
+                'is_subscription' => $is_subscription_order,
+                'iframe_id' => $iframe_id
             ));
 
             $customer_result = $this->get_or_create_customer($order);
@@ -723,20 +766,47 @@ class BNA_API {
 
     private function get_or_create_customer($order) {
         try {
+            $current_iframe_id = $this->get_current_iframe_id();
+
+            if (empty($current_iframe_id)) {
+                bna_error('Current iframe_id not available');
+                return new WP_Error('missing_iframe_id', 'iFrame ID not configured');
+            }
+
             $existing_customer_id = $order->get_meta('_bna_customer_id');
+            $stored_iframe_id = $order->get_meta('_bna_customer_iframe_id');
 
             if (empty($existing_customer_id) && is_user_logged_in()) {
                 $wp_customer_id = $order->get_customer_id();
                 $existing_customer_id = get_user_meta($wp_customer_id, '_bna_customer_id', true);
+                $stored_iframe_id = get_user_meta($wp_customer_id, '_bna_customer_iframe_id', true);
 
                 if (!empty($existing_customer_id)) {
-                    $order->add_meta_data('_bna_customer_id', $existing_customer_id);
+                    $order->update_meta_data('_bna_customer_id', $existing_customer_id);
+                    if (!empty($stored_iframe_id)) {
+                        $order->update_meta_data('_bna_customer_iframe_id', $stored_iframe_id);
+                    }
                     $order->save();
 
-                    bna_log('Found existing BNA customer ID', array(
+                    bna_log('Found existing BNA customer ID from user meta', array(
                         'wp_customer_id' => $wp_customer_id,
-                        'bna_customer_id' => $existing_customer_id
+                        'bna_customer_id' => $existing_customer_id,
+                        'stored_iframe_id' => $stored_iframe_id
                     ));
+                }
+            }
+
+            if (!empty($existing_customer_id)) {
+                if (empty($stored_iframe_id) || $stored_iframe_id !== $current_iframe_id) {
+                    bna_log('iFrame ID missing or changed - creating new customer', array(
+                        'stored_iframe_id' => $stored_iframe_id ?: 'empty',
+                        'current_iframe_id' => $current_iframe_id,
+                        'old_customer_id' => $existing_customer_id
+                    ));
+
+                    $this->clear_customer_data($order);
+                    $existing_customer_id = '';
+                    $stored_iframe_id = '';
                 }
             }
 
@@ -772,8 +842,11 @@ class BNA_API {
     }
 
     private function create_checkout_payload($order, $customer_result) {
+        $gateway_settings = get_option('woocommerce_bna_smart_payment_settings');
+        $iframe_id = isset($gateway_settings['iframe_id']) ? $gateway_settings['iframe_id'] : '';
+
         $payload = array(
-            'iframeId' => get_option('bna_smart_payment_iframe_id'),
+            'iframeId' => $iframe_id,
             'subtotal' => (float) $order->get_total(),
             'items' => $this->get_order_items($order)
         );
@@ -800,6 +873,7 @@ class BNA_API {
 
                 bna_log('Subscription data added to payload', array(
                     'frequency' => $bna_frequency,
+                    'iframe_id' => $iframe_id,
                     'has_trial' => isset($payload['startPaymentDate'])
                 ));
             }
@@ -885,17 +959,33 @@ class BNA_API {
 
             if ($order) {
                 $data_hash = $this->generate_customer_data_hash($customer_data);
+                $current_iframe_id = $this->get_current_iframe_id();
 
                 if (is_user_logged_in()) {
                     $wp_customer_id = $order->get_customer_id();
                     if ($wp_customer_id) {
                         update_user_meta($wp_customer_id, '_bna_customer_id', $response['id']);
+                        update_user_meta($wp_customer_id, '_bna_customer_iframe_id', $current_iframe_id);
                         update_user_meta($wp_customer_id, '_bna_customer_data_hash', $data_hash);
+
+                        bna_log('Saved customer data to user meta', array(
+                            'wp_customer_id' => $wp_customer_id,
+                            'bna_customer_id' => $response['id'],
+                            'iframe_id' => $current_iframe_id
+                        ));
                     }
                 }
 
+                $order->update_meta_data('_bna_customer_id', $response['id']);
+                $order->update_meta_data('_bna_customer_iframe_id', $current_iframe_id);
                 $order->update_meta_data('_bna_customer_data_hash', $data_hash);
                 $order->save();
+
+                bna_log('Saved customer data to order meta', array(
+                    'order_id' => $order->get_id(),
+                    'bna_customer_id' => $response['id'],
+                    'iframe_id' => $current_iframe_id
+                ));
             }
 
             return array(
@@ -989,11 +1079,32 @@ class BNA_API {
                 'email' => $email
             ));
 
-            if ($order && is_user_logged_in()) {
-                $wp_customer_id = $order->get_customer_id();
-                if ($wp_customer_id) {
-                    update_user_meta($wp_customer_id, '_bna_customer_id', $customer['id']);
+            if ($order) {
+                $current_iframe_id = $this->get_current_iframe_id();
+
+                if (is_user_logged_in()) {
+                    $wp_customer_id = $order->get_customer_id();
+                    if ($wp_customer_id) {
+                        update_user_meta($wp_customer_id, '_bna_customer_id', $customer['id']);
+                        update_user_meta($wp_customer_id, '_bna_customer_iframe_id', $current_iframe_id);
+
+                        bna_log('Saved found customer to user meta', array(
+                            'wp_customer_id' => $wp_customer_id,
+                            'bna_customer_id' => $customer['id'],
+                            'iframe_id' => $current_iframe_id
+                        ));
+                    }
                 }
+
+                $order->update_meta_data('_bna_customer_id', $customer['id']);
+                $order->update_meta_data('_bna_customer_iframe_id', $current_iframe_id);
+                $order->save();
+
+                bna_log('Saved found customer to order meta', array(
+                    'order_id' => $order->get_id(),
+                    'bna_customer_id' => $customer['id'],
+                    'iframe_id' => $current_iframe_id
+                ));
             }
 
             return array(
