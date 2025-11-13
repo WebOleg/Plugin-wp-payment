@@ -46,13 +46,18 @@ class BNA_Webhooks {
         $payload = $request->get_json_params();
         $raw_body = $request->get_body();
 
-        bna_log('Webhook received', array(
-            'has_signature' => !empty($signature),
-            'has_timestamp' => !empty($timestamp),
-            'payload_size' => strlen($raw_body),
-            'payload_keys' => is_array($payload) ? array_keys($payload) : 'invalid',
-            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown',
-            'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'unknown'
+        bna_log('=== WEBHOOK RECEIVED ===', array(
+            'raw_body_length' => strlen($raw_body),
+            'signature' => $signature ? substr($signature, 0, 16) . '...' : 'MISSING',
+            'timestamp' => $timestamp ?: 'MISSING'
+        ));
+
+        // FULL DEBUG
+        bna_debug('=== FULL WEBHOOK HEADERS ===', array(
+            'all_headers' => $request->get_headers(),
+            'signature_full' => $signature,
+            'timestamp_full' => $timestamp,
+            'content_type' => $request->get_header('Content-Type')
         ));
 
         $webhook_secret = '';
@@ -60,26 +65,26 @@ class BNA_Webhooks {
         if (isset($gateways['bna_smart_payment'])) {
             $gateway = $gateways['bna_smart_payment'];
             $webhook_secret = $gateway->get_option('webhook_secret', '');
-
-            bna_log('Webhook secret retrieved from gateway', array(
-                'has_secret' => !empty($webhook_secret),
-                'secret_length' => strlen($webhook_secret)
-            ));
-        } else {
-            bna_error('BNA gateway not available for webhook processing');
         }
+
+        bna_debug('=== WEBHOOK SECRET CHECK ===', array(
+            'has_secret' => !empty($webhook_secret),
+            'secret_length' => strlen($webhook_secret),
+            'secret_first_10' => !empty($webhook_secret) ? substr($webhook_secret, 0, 10) : 'EMPTY',
+            'raw_body_preview' => substr($raw_body, 0, 300)
+        ));
 
         if (!empty($webhook_secret)) {
             $signature_valid = self::verify_webhook_signature($raw_body, $signature, $timestamp, $webhook_secret);
 
             if (!$signature_valid) {
-                bna_error('Webhook signature verification failed');
+                bna_error('Webhook signature verification FAILED');
                 return new WP_REST_Response(array('error' => 'Invalid signature'), 401);
             }
 
             bna_log('Webhook signature verified successfully');
         } else {
-            bna_log('Webhook signature verification skipped (no secret configured)');
+            bna_log('Webhook signature verification SKIPPED (no secret configured)');
         }
 
         if (!is_array($payload)) {
@@ -104,83 +109,82 @@ class BNA_Webhooks {
             return false;
         }
 
-        $timestamp_unix = strtotime($timestamp);
-        if ($timestamp_unix === false || abs(time() - $timestamp_unix) > self::MAX_TIMESTAMP_AGE) {
-            bna_error('Webhook timestamp validation failed', array(
-                'provided_timestamp' => $timestamp,
-                'age_seconds' => time() - $timestamp_unix,
-                'max_age' => self::MAX_TIMESTAMP_AGE
-            ));
+        // Декодуємо БЕЗ true
+        $payload = json_decode($raw_body);
+
+        if (!is_object($payload) || !isset($payload->data)) {
+            bna_error('Invalid payload structure');
             return false;
         }
 
-        $payload = json_decode($raw_body, true);
-        if (!$payload || !isset($payload['data'])) {
-            bna_error('Invalid payload structure - missing data field');
-            return false;
-        }
+        // Енкодуємо
+        $json = json_encode($payload->data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-        $computed_signature = self::generate_signature($payload['data'], $webhook_secret, $timestamp);
+        // КРИТИЧНО: виводимо ПОВНИЙ JSON для порівняння
+        bna_error('=== FULL JSON FOR COMPARISON ===', array(
+            'FULL_JSON' => $json,
+            'length' => strlen($json)
+        ));
 
-        if (!$computed_signature) {
-            bna_error('Failed to generate signature');
-            return false;
-        }
+        $data_hash = hash('sha256', $json);
+        $signing_string = $data_hash . ':' . $timestamp;
+        $computed_signature = hash_hmac('sha256', $signing_string, $webhook_secret);
 
-        $is_valid = hash_equals($signature, $computed_signature);
+        $is_valid = hash_equals($computed_signature, $signature);
 
-        if ($is_valid) {
-            bna_log('Webhook signature verified successfully', array(
-                'timestamp' => $timestamp
-            ));
-        } else {
-            bna_error('Webhook signature mismatch', array(
-                'provided' => substr($signature, 0, 16) . '...',
-                'computed' => substr($computed_signature, 0, 16) . '...',
-                'timestamp' => $timestamp
+        if (!$is_valid) {
+            bna_error('Signature mismatch FULL DEBUG', array(
+                'provided_signature' => $signature,
+                'computed_signature' => $computed_signature,
+                'data_hash' => $data_hash,
+                'signing_string' => $signing_string,
+                'secret_first_10' => substr($webhook_secret, 0, 10)
             ));
         }
 
         return $is_valid;
     }
 
-    private static function generate_signature($payload, $secret, $timestamp) {
-        if (is_string($payload)) {
-            $decoded = json_decode($payload, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                bna_error('Invalid JSON payload', array('error' => json_last_error_msg()));
-                return false;
-            }
-            $payload = $decoded;
-        }
-
-        $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+    private static function generate_signature_ilya($data, $secret, $timestamp) {
+        // $data - це вже тільки data поле, не весь payload
+        $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         if ($json === false) {
-            bna_error('Failed to encode JSON payload');
+            bna_error('Failed to encode JSON in signature generation');
             return false;
         }
+
+        bna_debug('=== SIGNATURE GENERATION ===', array(
+            'json_length' => strlen($json),
+            'json_preview' => substr($json, 0, 200),
+            'timestamp' => $timestamp
+        ));
 
         $data_hash = hash('sha256', $json);
         $signing_string = $data_hash . ':' . $timestamp;
         $signature = hash_hmac('sha256', $signing_string, $secret);
 
-        bna_log('Signature generation details', array(
-            'json_length' => strlen($json),
+        bna_debug('=== SIGNATURE RESULT ===', array(
             'data_hash' => substr($data_hash, 0, 16) . '...',
-            'timestamp' => $timestamp,
+            'signing_string' => substr($signing_string, 0, 100),
             'signature' => substr($signature, 0, 16) . '...'
         ));
 
         return $signature;
     }
 
+
+
+
+
     private static function process_webhook($payload) {
-        if (isset($payload['event']) && isset($payload['data'])) {
-            return self::process_event_webhook($payload);
+        $payload_array = json_decode(json_encode($payload), true);
+
+        if (isset($payload_array['event']) && isset($payload_array['data'])) {
+            return self::process_event_webhook($payload_array);
         }
 
-        return self::process_legacy_webhook($payload);
+        return self::process_legacy_webhook($payload_array);
     }
 
     private static function process_event_webhook($payload) {
@@ -577,10 +581,6 @@ class BNA_Webhooks {
             }
         }
         return true;
-    }
-
-    private static function order_has_only_subscription_products($order) {
-        return self::order_should_be_completed($order);
     }
 
     private static function handle_subscription_event($event, $data) {
@@ -1032,100 +1032,6 @@ class BNA_Webhooks {
         );
     }
 
-    private static function is_subscription_renewal_transaction($order, $data) {
-        if (!isset($data['subscriptionId']) || empty($data['subscriptionId'])) {
-            return false;
-        }
-
-        bna_log('Checking if transaction is renewal', array(
-            'order_id' => $order->get_id(),
-            'order_status' => $order->get_status(),
-            'has_subscription_id' => !empty($data['subscriptionId']),
-            'subscription_id' => $data['subscriptionId'] ?? 'none'
-        ));
-
-        if ($order->has_status(['pending', 'on-hold'])) {
-            bna_log('Order has pending/on-hold status - this is FIRST payment, not renewal', array(
-                'order_id' => $order->get_id(),
-                'status' => $order->get_status()
-            ));
-            return false;
-        }
-
-        $existing_subscription_id = $order->get_meta('_bna_subscription_id');
-        if (empty($existing_subscription_id)) {
-            bna_log('Order has no existing subscription ID - this is FIRST payment', array(
-                'order_id' => $order->get_id()
-            ));
-            return false;
-        }
-
-        if ($order->get_meta('_bna_subscription_renewal') === 'yes') {
-            bna_log('Order marked as renewal order - this is renewal', array(
-                'order_id' => $order->get_id()
-            ));
-            return true;
-        }
-
-        if ($order->has_status(['completed', 'processing']) && !empty($existing_subscription_id)) {
-            bna_log('Order completed with subscription ID - this could be renewal', array(
-                'order_id' => $order->get_id(),
-                'status' => $order->get_status(),
-                'existing_subscription_id' => $existing_subscription_id
-            ));
-            return true;
-        }
-
-        bna_log('Default case - not a renewal transaction', array(
-            'order_id' => $order->get_id(),
-            'status' => $order->get_status()
-        ));
-        return false;
-    }
-
-    private static function handle_subscription_renewal_transaction($original_order, $data) {
-        $subscription_id = $data['subscriptionId'];
-        $transaction_id = $data['id'];
-        $status = strtolower($data['status'] ?? '');
-
-        bna_log('Handling subscription renewal transaction', array(
-            'original_order_id' => $original_order->get_id(),
-            'subscription_id' => $subscription_id,
-            'transaction_id' => $transaction_id,
-            'status' => $status
-        ));
-
-        if (in_array($status, array('approved', 'completed', 'processed'))) {
-            $renewal_order = self::create_subscription_renewal_order($original_order, $data);
-
-            if ($renewal_order) {
-                self::complete_order_properly(
-                    $renewal_order,
-                    $transaction_id,
-                    __('Subscription renewal payment completed.', 'bna-smart-payment')
-                );
-
-                $original_order->update_meta_data('_bna_subscription_last_payment', current_time('Y-m-d H:i:s'));
-                $original_order->save();
-
-                return array(
-                    'status' => 'processed',
-                    'event' => 'subscription.renewal',
-                    'original_order_id' => $original_order->get_id(),
-                    'renewal_order_id' => $renewal_order->get_id(),
-                    'transaction_id' => $transaction_id
-                );
-            }
-        }
-
-        return array(
-            'status' => 'processed',
-            'event' => 'subscription.renewal_failed',
-            'original_order_id' => $original_order->get_id(),
-            'transaction_id' => $transaction_id
-        );
-    }
-
     private static function create_subscription_renewal_order($original_order, $data) {
         try {
             $renewal_order = wc_create_order(array(
@@ -1473,13 +1379,13 @@ class BNA_Webhooks {
             'data' => array(
                 'id' => 'test-transaction-id',
                 'status' => 'APPROVED',
-                'amount' => 100.00,
+                'amount' => 100.0,
                 'currency' => 'CAD'
             )
         );
 
         $timestamp = gmdate('Y-m-d\TH:i:s.000\Z');
-        $signature = self::generate_signature($test_payload['data'], $webhook_secret, $timestamp);
+        $signature = self::generate_signature_ilya($test_payload['data'], $webhook_secret, $timestamp);
 
         return new WP_REST_Response(array(
             'webhook_url' => rest_url('bna/v1/webhook'),
@@ -1505,7 +1411,11 @@ class BNA_Webhooks {
         return self::verify_webhook_signature($raw_body, $signature, $timestamp, $secret);
     }
 
-    public static function test_transform_payment_method_data($webhook_data) {
-        return self::transform_webhook_payment_method_data($webhook_data);
+    public static function test_extract_data_from_json($raw_body) {
+        $payload = json_decode($raw_body, true);
+        if (!$payload || !isset($payload['data'])) {
+            return false;
+        }
+        return json_encode($payload['data'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 }
