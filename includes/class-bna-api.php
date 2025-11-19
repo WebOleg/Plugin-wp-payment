@@ -129,7 +129,11 @@ class BNA_API {
 
         if (!empty($data)) {
             if ($method === 'GET') {
-                $url = add_query_arg($data, $url);
+                $encoded_params = array();
+                foreach ($data as $key => $value) {
+                    $encoded_params[urlencode($key)] = urlencode($value);
+                }
+                $url = add_query_arg($encoded_params, $url);
             } else {
                 $args['body'] = wp_json_encode($data);
             }
@@ -1065,11 +1069,32 @@ class BNA_API {
                 return $response;
             }
 
+            bna_debug('=== API SEARCH RESPONSE ===', array(
+                'email_searched' => $email,
+                'response_type' => gettype($response),
+                'response_keys' => is_array($response) ? array_keys($response) : 'not_array',
+                'has_data_key' => isset($response['data']),
+                'data_type' => isset($response['data']) ? gettype($response['data']) : 'not_set',
+                'data_count' => (isset($response['data']) && is_array($response['data'])) ? count($response['data']) : 0,
+                'full_response_json' => wp_json_encode($response)
+            ));
+
             if (empty($response['data']) || !is_array($response['data'])) {
+                bna_error('Customer not found in response', array(
+                    'email' => $email,
+                    'response_structure' => wp_json_encode($response)
+                ));
                 return new WP_Error('customer_not_found', 'Customer not found');
             }
 
             $customer = reset($response['data']);
+
+            bna_debug('=== FIRST CUSTOMER FROM DATA ===', array(
+                'customer_data' => wp_json_encode($customer),
+                'has_id' => isset($customer['id']),
+                'customer_email' => isset($customer['email']) ? $customer['email'] : 'no_email'
+            ));
+
             if (empty($customer['id'])) {
                 return new WP_Error('invalid_customer_data', 'Invalid customer data received');
             }
