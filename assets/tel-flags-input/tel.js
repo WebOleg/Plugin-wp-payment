@@ -83,6 +83,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   telInputs.forEach(input => {
+    const prefilledValue = input.value || '';
+    const prefilledDigits = onlyDigits(prefilledValue);
+
     const wrapper = document.createElement('div');
     wrapper.className = 'phone-wrapper';
     input.parentNode.insertBefore(wrapper, input);
@@ -111,23 +114,51 @@ document.addEventListener('DOMContentLoaded', async () => {
       list.appendChild(li);
     });
 
-    const setCountry = (country) => {
+    const setCountry = (country, preserveValue = false) => {
       selected.innerHTML = `<span class="flag">${country.flag}</span>`;
       input.setAttribute('data-dial', country.dial);
       input.setAttribute('data-format', country.format);
       input.setAttribute('data-max', country.max);
       hiddenCodeInput.value = country.dial;
-      input.value = country.dial + ' ';
+
+      if (!preserveValue) {
+        input.value = country.dial + ' ';
+      }
+
       wrapper.classList.remove('open');
     };
 
-    const current = countries.find(c => c.code === userCountry) || countries[0];
-    setCountry(current);
+    let initialCountry = countries.find(c => c.code === userCountry) || countries[0];
+
+    if (prefilledDigits.length > 0) {
+      for (let c of countries) {
+        const dialDigits = onlyDigits(c.dial);
+        if (prefilledDigits.startsWith(dialDigits)) {
+          initialCountry = c;
+          break;
+        }
+      }
+
+      setCountry(initialCountry, true);
+
+      const dialDigits = onlyDigits(initialCountry.dial);
+      let numberOnly = prefilledDigits;
+
+      if (numberOnly.startsWith(dialDigits)) {
+        numberOnly = numberOnly.slice(dialDigits.length);
+      }
+
+      const formatted = formatFromDigits(numberOnly, initialCountry.format, initialCountry.dial);
+      input.value = formatted;
+    } else {
+      setCountry(initialCountry);
+    }
 
     selected.addEventListener('click', (e) => {
       e.stopPropagation();
       wrapper.classList.toggle('open');
     });
+
     document.addEventListener('click', (e) => {
       if (!wrapper.contains(e.target)) wrapper.classList.remove('open');
     });
