@@ -56,6 +56,7 @@ class BNA_Gateway extends WC_Payment_Gateway {
 
         if ($this->get_option('enable_phone') === 'yes') {
             add_action('woocommerce_checkout_update_order_meta', array($this, 'save_phone_code_to_order'), 10, 1);
+            add_filter('woocommerce_checkout_get_value', array($this, 'populate_phone_field'), 10, 2);
         }
 
         if ($this->get_option('enable_birthdate') === 'yes') {
@@ -109,12 +110,13 @@ class BNA_Gateway extends WC_Payment_Gateway {
             'environment' => array(
                 'title' => 'Environment',
                 'type' => 'select',
-                'default' => 'staging',
+                'default' => 'dev',
                 'options' => array(
+                    'dev' => 'Development (Dev)',
                     'staging' => 'Staging (Test)',
                     'production' => 'Production (Live)'
                 ),
-                'description' => 'Select staging for testing or production for live payments.',
+                'description' => 'Select dev for development, staging for testing, or production for live payments.',
             ),
             'access_key' => array(
                 'title' => 'Access Key',
@@ -386,7 +388,40 @@ class BNA_Gateway extends WC_Payment_Gateway {
         if ($key === 'billing_birthdate' && is_user_logged_in()) {
             $customer_id = get_current_user_id();
             $birthdate = get_user_meta($customer_id, 'billing_birthdate', true);
-            return $birthdate ?: $value;
+
+            if (!empty($birthdate)) {
+                // Remove timestamp if exists (2003-06-22T00:00:00.000Z → 2003-06-22)
+                if (strpos($birthdate, 'T') !== false) {
+                    $birthdate = substr($birthdate, 0, 10);
+                }
+
+                bna_debug('Populating birthdate from user meta', array(
+                    'user_id' => $customer_id,
+                    'birthdate' => $birthdate
+                ));
+
+                return $birthdate;
+            }
+        }
+        return $value;
+    }
+
+    public function populate_phone_field($value, $key) {
+        if ($key === 'billing_phone' && is_user_logged_in() && empty($value)) {
+            $customer_id = get_current_user_id();
+            $saved_phone = get_user_meta($customer_id, 'billing_phone', true);
+
+            if (!empty($saved_phone)) {
+                $phone_digits_only = preg_replace('/\D/', '', $saved_phone);
+
+                bna_debug('Populating phone from user meta', array(
+                    'user_id' => $customer_id,
+                    'saved_phone' => $saved_phone,
+                    'digits_only' => $phone_digits_only
+                ));
+
+                return $phone_digits_only;
+            }
         }
         return $value;
     }

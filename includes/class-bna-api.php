@@ -73,7 +73,7 @@ class BNA_API {
 
         $this->access_key = isset($gateway_settings['access_key']) ? $gateway_settings['access_key'] : '';
         $this->secret_key = isset($gateway_settings['secret_key']) ? $gateway_settings['secret_key'] : '';
-        $this->environment = isset($gateway_settings['environment']) ? $gateway_settings['environment'] : 'staging';
+        $this->environment = isset($gateway_settings['environment']) ? $gateway_settings['environment'] : 'dev';
         $this->base_url = $this->get_api_url();
 
         bna_debug('BNA API initialized', array(
@@ -88,7 +88,9 @@ class BNA_API {
 
     public function get_api_url() {
         if ($this->environment === 'production') {
-            return 'https://api-service.bnasmartpayment.com';
+            return 'https://api.bnasmartpayment.com';
+        } elseif ($this->environment === 'staging') {
+            return 'https://stage-api-service.bnasmartpayment.com';
         }
         return 'https://dev-api-service.bnasmartpayment.com';
     }

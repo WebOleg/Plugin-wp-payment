@@ -20,6 +20,55 @@ class BNA_Webhooks {
         'deleted' => 'cancelled'
     );
 
+    private static $COUNTRY_REVERSE_MAP = array(
+        'United States' => 'US',
+        'Canada' => 'CA',
+        'United Kingdom' => 'GB',
+        'Germany' => 'DE',
+        'France' => 'FR',
+        'Italy' => 'IT',
+        'Spain' => 'ES',
+        'Australia' => 'AU',
+        'New Zealand' => 'NZ',
+        'Japan' => 'JP',
+        'China' => 'CN',
+        'India' => 'IN',
+        'Brazil' => 'BR',
+        'Mexico' => 'MX',
+        'Argentina' => 'AR',
+        'Chile' => 'CL',
+        'Colombia' => 'CO',
+        'Peru' => 'PE',
+        'Venezuela' => 'VE',
+        'Uruguay' => 'UY',
+        'Paraguay' => 'PY',
+        'Bolivia' => 'BO',
+        'Ecuador' => 'EC',
+        'Guyana' => 'GY',
+        'Suriname' => 'SR',
+        'French Guiana' => 'GF',
+        'Falkland Islands' => 'FK',
+        'Ukraine' => 'UA',
+        'Poland' => 'PL',
+        'Romania' => 'RO',
+        'Hungary' => 'HU',
+        'Czech Republic' => 'CZ',
+        'Slovakia' => 'SK',
+        'Slovenia' => 'SI',
+        'Croatia' => 'HR',
+        'Serbia' => 'RS',
+        'Bosnia and Herzegovina' => 'BA',
+        'Montenegro' => 'ME',
+        'North Macedonia' => 'MK',
+        'Albania' => 'AL',
+        'Bulgaria' => 'BG',
+        'Moldova' => 'MD',
+        'Belarus' => 'BY',
+        'Lithuania' => 'LT',
+        'Latvia' => 'LV',
+        'Estonia' => 'EE'
+    );
+
     public static function init() {
         add_action('rest_api_init', array(__CLASS__, 'register_routes'));
     }
@@ -52,7 +101,6 @@ class BNA_Webhooks {
             'timestamp' => $timestamp ?: 'MISSING'
         ));
 
-        // FULL DEBUG
         bna_debug('=== FULL WEBHOOK HEADERS ===', array(
             'all_headers' => $request->get_headers(),
             'signature_full' => $signature,
@@ -109,7 +157,6 @@ class BNA_Webhooks {
             return false;
         }
 
-        // Декодуємо БЕЗ true
         $payload = json_decode($raw_body);
 
         if (!is_object($payload) || !isset($payload->data)) {
@@ -117,10 +164,8 @@ class BNA_Webhooks {
             return false;
         }
 
-        // Енкодуємо
         $json = json_encode($payload->data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-        // КРИТИЧНО: виводимо ПОВНИЙ JSON для порівняння
         bna_error('=== FULL JSON FOR COMPARISON ===', array(
             'FULL_JSON' => $json,
             'length' => strlen($json)
@@ -146,7 +191,6 @@ class BNA_Webhooks {
     }
 
     private static function generate_signature_ilya($data, $secret, $timestamp) {
-        // $data - це вже тільки data поле, не весь payload
         $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         if ($json === false) {
@@ -172,10 +216,6 @@ class BNA_Webhooks {
 
         return $signature;
     }
-
-
-
-
 
     private static function process_webhook($payload) {
         $payload_array = json_decode(json_encode($payload), true);
@@ -1087,16 +1127,7 @@ class BNA_Webhooks {
         ));
 
         if ($event === 'customer.updated') {
-            bna_log('Ignoring customer.updated webhook - WordPress is source of truth', array(
-                'customer_id' => $data['id'] ?? 'unknown',
-                'reason' => 'WP manages customer data, BNA updates triggered by checkout only'
-            ));
-
-            return array(
-                'status' => 'ignored',
-                'event' => $event,
-                'reason' => 'WordPress is source of truth for customer data'
-            );
+            return self::sync_customer_data_from_bna($event, $data);
         }
 
         if ($event === 'customer.created') {
@@ -1153,6 +1184,300 @@ class BNA_Webhooks {
         }
 
         return array('status' => 'processed', 'event' => $event);
+    }
+
+    private static function sync_customer_data_from_bna($event, $data) {
+        try {
+            bna_log('=== CUSTOMER SYNC START ===', array(
+                'event' => $event,
+                'bna_customer_id' => $data['id'] ?? 'unknown',
+                'email' => $data['email'] ?? 'unknown'
+            ));
+
+            $user = self::find_wordpress_user_for_customer($data);
+
+            if (!$user) {
+                bna_log('WordPress user not found for customer sync', array(
+                    'bna_customer_id' => $data['id'] ?? 'unknown',
+                    'email' => $data['email'] ?? 'unknown'
+                ));
+
+                return array(
+                    'status' => 'ignored',
+                    'event' => $event,
+                    'reason' => 'WordPress user not found'
+                );
+            }
+
+            $user_id = $user->ID;
+
+            bna_log('WordPress user found for sync', array(
+                'wp_user_id' => $user_id,
+                'wp_email' => $user->user_email,
+                'bna_customer_id' => $data['id'] ?? 'unknown'
+            ));
+
+            $stored_hash = get_user_meta($user_id, '_bna_customer_data_hash', true);
+            $new_hash = self::calculate_customer_hash_from_webhook($data);
+
+            bna_log('Hash comparison', array(
+                'stored_hash' => $stored_hash ?: 'EMPTY',
+                'new_hash' => $new_hash,
+                'data_changed' => ($stored_hash !== $new_hash)
+            ));
+
+            if ($stored_hash === $new_hash && !empty($stored_hash)) {
+                bna_log('Customer data unchanged, skipping sync', array(
+                    'wp_user_id' => $user_id,
+                    'hash' => $new_hash
+                ));
+
+                return array(
+                    'status' => 'skipped',
+                    'event' => $event,
+                    'reason' => 'Data unchanged (hash match)',
+                    'wp_user_id' => $user_id
+                );
+            }
+
+            $updated_fields = self::update_wordpress_user_from_webhook($user_id, $data);
+
+            update_user_meta($user_id, '_bna_customer_data_hash', $new_hash);
+
+            bna_log('=== CUSTOMER SYNC COMPLETED ===', array(
+                'wp_user_id' => $user_id,
+                'updated_fields' => $updated_fields,
+                'new_hash' => $new_hash
+            ));
+
+            return array(
+                'status' => 'processed',
+                'event' => $event,
+                'wp_user_id' => $user_id,
+                'updated_fields' => $updated_fields
+            );
+
+        } catch (Exception $e) {
+            bna_error('Exception during customer sync', array(
+                'event' => $event,
+                'exception' => $e->getMessage(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ));
+
+            return array(
+                'status' => 'error',
+                'event' => $event,
+                'reason' => 'Exception: ' . $e->getMessage()
+            );
+        }
+    }
+
+    private static function find_wordpress_user_for_customer($data) {
+        if (isset($data['id']) && !empty($data['id'])) {
+            $users = get_users(array(
+                'meta_key' => '_bna_customer_id',
+                'meta_value' => $data['id'],
+                'number' => 1
+            ));
+
+            if (!empty($users)) {
+                bna_log('User found by BNA customer ID', array(
+                    'wp_user_id' => $users[0]->ID,
+                    'bna_customer_id' => $data['id']
+                ));
+                return $users[0];
+            }
+        }
+
+        if (isset($data['email']) && !empty($data['email'])) {
+            $user = get_user_by('email', $data['email']);
+            if ($user) {
+                bna_log('User found by email', array(
+                    'wp_user_id' => $user->ID,
+                    'email' => $data['email']
+                ));
+                return $user;
+            }
+        }
+
+        return null;
+    }
+
+    private static function calculate_customer_hash_from_webhook($data) {
+        $relevant_data = array();
+        $fields_to_check = array(
+            'firstName',
+            'lastName',
+            'email',
+            'phoneCode',
+            'phoneNumber',
+            'birthDate',
+            'billingAddress',
+            'shippingAddress',
+            'type'
+        );
+
+        foreach ($fields_to_check as $field) {
+            if (isset($data[$field])) {
+                if (is_array($data[$field])) {
+                    ksort($data[$field]);
+                    $relevant_data[$field] = $data[$field];
+                } else {
+                    $relevant_data[$field] = trim($data[$field]);
+                }
+            }
+        }
+
+        if (!isset($relevant_data['shippingAddress'])) {
+            $relevant_data['shippingAddress'] = null;
+        }
+
+        ksort($relevant_data);
+
+        $flags = JSON_UNESCAPED_UNICODE;
+        if (defined('JSON_SORT_KEYS')) {
+            $flags |= JSON_SORT_KEYS;
+        }
+
+        $json_string = wp_json_encode($relevant_data, $flags);
+        $hash = md5($json_string);
+
+        bna_debug('Generated hash from webhook', array(
+            'hash' => $hash,
+            'has_shipping' => isset($relevant_data['shippingAddress']),
+            'shipping_is_null' => ($relevant_data['shippingAddress'] === null)
+        ));
+
+        return $hash;
+    }
+
+    private static function update_wordpress_user_from_webhook($user_id, $data) {
+        $updated_fields = array();
+
+        if (isset($data['email']) && !empty($data['email'])) {
+            $current_user = get_user_by('ID', $user_id);
+            if ($current_user && $current_user->user_email !== $data['email']) {
+                bna_log('⚠️ Email changed on BNA portal - NOT updating in WordPress (security)', array(
+                    'wp_user_id' => $user_id,
+                    'old_email' => $current_user->user_email,
+                    'new_email' => $data['email']
+                ));
+            }
+        }
+
+        $simple_fields = array(
+            'firstName' => array('billing_first_name', 'first_name'),
+            'lastName' => array('billing_last_name', 'last_name'),
+            'birthDate' => array('billing_birthdate')
+        );
+
+        foreach ($simple_fields as $webhook_field => $wp_fields) {
+            if (isset($data[$webhook_field]) && !empty($data[$webhook_field])) {
+                $value = sanitize_text_field($data[$webhook_field]);
+                foreach ((array)$wp_fields as $wp_field) {
+                    update_user_meta($user_id, $wp_field, $value);
+                    $updated_fields[] = $wp_field;
+                }
+            }
+        }
+
+        if (isset($data['phoneCode']) && isset($data['phoneNumber'])) {
+            $phone_code = sanitize_text_field($data['phoneCode']);
+            $phone_number = sanitize_text_field($data['phoneNumber']);
+            $full_phone = $phone_code . $phone_number;
+
+            update_user_meta($user_id, 'billing_phone', $full_phone);
+            update_user_meta($user_id, '_billing_phone_code', $phone_code);
+            $updated_fields[] = 'billing_phone';
+            $updated_fields[] = '_billing_phone_code';
+        }
+
+        if (isset($data['billingAddress']) && is_array($data['billingAddress'])) {
+            $billing_updated = self::update_address_fields($user_id, $data['billingAddress'], 'billing');
+            $updated_fields = array_merge($updated_fields, $billing_updated);
+        }
+
+        if (isset($data['shippingAddress']) && is_array($data['shippingAddress'])) {
+            $shipping_updated = self::update_address_fields($user_id, $data['shippingAddress'], 'shipping');
+            $updated_fields = array_merge($updated_fields, $shipping_updated);
+        }
+
+        bna_log('User meta updated from webhook', array(
+            'wp_user_id' => $user_id,
+            'updated_fields' => $updated_fields,
+            'fields_count' => count($updated_fields)
+        ));
+
+        return $updated_fields;
+    }
+
+    private static function update_address_fields($user_id, $address_data, $type) {
+        $updated_fields = array();
+
+        $street_address = '';
+        if (isset($address_data['streetNumber'])) {
+            $street_address .= sanitize_text_field($address_data['streetNumber']) . ' ';
+        }
+        if (isset($address_data['streetName'])) {
+            $street_address .= sanitize_text_field($address_data['streetName']);
+        }
+        $street_address = trim($street_address);
+
+        if (!empty($street_address)) {
+            update_user_meta($user_id, $type . '_address_1', $street_address);
+            $updated_fields[] = $type . '_address_1';
+        }
+
+        if (isset($address_data['apartment']) && !empty($address_data['apartment'])) {
+            update_user_meta($user_id, $type . '_address_2', sanitize_text_field($address_data['apartment']));
+            $updated_fields[] = $type . '_address_2';
+        }
+
+        $simple_address_fields = array(
+            'city' => $type . '_city',
+            'province' => $type . '_state',
+            'postalCode' => $type . '_postcode'
+        );
+
+        foreach ($simple_address_fields as $webhook_field => $wp_field) {
+            if (isset($address_data[$webhook_field]) && !empty($address_data[$webhook_field])) {
+                update_user_meta($user_id, $wp_field, sanitize_text_field($address_data[$webhook_field]));
+                $updated_fields[] = $wp_field;
+            }
+        }
+
+        if (isset($address_data['country']) && !empty($address_data['country'])) {
+            $country_code = self::reverse_country_lookup($address_data['country']);
+            update_user_meta($user_id, $type . '_country', $country_code);
+            $updated_fields[] = $type . '_country';
+
+            bna_log('Country mapping', array(
+                'webhook_country' => $address_data['country'],
+                'wp_country_code' => $country_code,
+                'type' => $type
+            ));
+        }
+
+        return $updated_fields;
+    }
+
+    private static function reverse_country_lookup($country_name) {
+        if (isset(self::$COUNTRY_REVERSE_MAP[$country_name])) {
+            return self::$COUNTRY_REVERSE_MAP[$country_name];
+        }
+
+        foreach (self::$COUNTRY_REVERSE_MAP as $full_name => $code) {
+            if (strcasecmp($full_name, $country_name) === 0) {
+                return $code;
+            }
+        }
+
+        bna_log('Country not found in reverse map, returning as-is', array(
+            'country_name' => $country_name
+        ));
+
+        return $country_name;
     }
 
     private static function handle_payment_method_event($event, $data) {
